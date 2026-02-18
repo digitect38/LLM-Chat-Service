@@ -15,7 +15,10 @@ public static class RedisServiceExtensions
         services.AddSingleton<IConnectionMultiplexer>(sp =>
         {
             var options = configuration.GetSection(RedisOptions.SectionName).Get<RedisOptions>() ?? new RedisOptions();
-            return ConnectionMultiplexer.Connect(options.ConnectionString);
+            var configOptions = ConfigurationOptions.Parse(options.ConnectionString);
+            configOptions.AbortOnConnectFail = false;
+            configOptions.DefaultDatabase = options.DefaultDatabase;
+            return ConnectionMultiplexer.Connect(configOptions);
         });
 
         services.AddSingleton<IConversationStore, RedisConversationStore>();
