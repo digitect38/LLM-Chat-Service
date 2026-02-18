@@ -92,12 +92,17 @@ public sealed class LlmWorker : BackgroundService
 
             await foreach (var token in _llmClient.StreamChatAsync(llmMessages, options: null, ct))
             {
-                fullResponse.Append(token);
+                // Filter out special tokens that Qwen2.5 sometimes leaks
+                var filtered = SanitizeToken(token);
+                if (string.IsNullOrEmpty(filtered))
+                    continue;
+
+                fullResponse.Append(filtered);
 
                 var chunk = new ChatStreamChunk
                 {
                     ConversationId = request.ConversationId,
-                    Token = token,
+                    Token = filtered,
                     IsComplete = false
                 };
 
@@ -199,7 +204,9 @@ public sealed class LlmWorker : BackgroundService
     {
         var prompt = $"You are an equipment copilot assistant for semiconductor fab equipment. " +
                      $"You help engineers diagnose issues, find procedures, and troubleshoot problems. " +
-                     $"Equipment: {equipmentId}.";
+                     $"Equipment: {equipmentId}. " +
+                     $"항상 한국어로만 응답하세요. 절대로 중국어(한문)를 사용하지 마세요. " +
+                     $"기술 용어는 영어 원문을 그대로 사용해도 됩니다.";
 
         if (context is null)
         {
@@ -226,5 +233,17 @@ public sealed class LlmWorker : BackgroundService
         }
 
         return prompt;
+    }
+
+    private static string SanitizeToken(string token)
+    {
+        if (string.IsNullOrEmpty(token))
+            return token;
+
+        // Strip Qwen2.5 special tokens that leak into output
+        return token
+            .Replace("<|im_start|>", "")
+            .Replace("<|im_end|>", "")
+            .Replace("<|endoftext|>", "");
     }
 }
