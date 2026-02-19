@@ -356,20 +356,31 @@ public sealed class LlmWorker : BackgroundService
 
     private static string ExtractSourceName(RetrievalResult result)
     {
-        // Try file_name from FileWatcher metadata
-        if (result.Metadata.TryGetValue("file_name", out var fileName) && fileName is string fn && !string.IsNullOrEmpty(fn))
-            return fn;
+        // Metadata values may be JsonElement after NATS serialization, so use ToString()
+        if (TryGetMetadataString(result.Metadata, "file_name", out var fileName))
+            return fileName;
 
-        // Try file_path (relative path used as document_id by FileWatcher)
-        if (result.Metadata.TryGetValue("file_path", out var filePath) && filePath is string fp && !string.IsNullOrEmpty(fp))
-            return fp;
+        if (TryGetMetadataString(result.Metadata, "file_path", out var filePath))
+            return filePath;
 
-        // Try document_id from payload
-        if (result.Metadata.TryGetValue("document_id", out var docId) && docId is string did && !string.IsNullOrEmpty(did))
-            return did;
+        if (TryGetMetadataString(result.Metadata, "document_id", out var docId))
+            return docId;
 
-        // Fallback to DocumentId field
         return !string.IsNullOrEmpty(result.DocumentId) ? result.DocumentId : "unknown";
+    }
+
+    private static bool TryGetMetadataString(Dictionary<string, object> metadata, string key, out string value)
+    {
+        value = string.Empty;
+        if (!metadata.TryGetValue(key, out var raw) || raw is null)
+            return false;
+
+        var str = raw.ToString()?.Trim('"') ?? string.Empty;
+        if (string.IsNullOrEmpty(str))
+            return false;
+
+        value = str;
+        return true;
     }
 
     private static string SanitizeToken(string token)

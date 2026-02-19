@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Contracts.Models;
 using FabCopilot.LlmService;
@@ -121,5 +122,43 @@ public class LlmWorkerPromptTests
 
         prompt.Should().Contain("Head1");
         prompt.Should().Contain("OX_CMP_01");
+    }
+
+    [Fact]
+    public void BuildSystemPrompt_WithJsonElementMetadata_ExtractsFileName()
+    {
+        // Simulate NATS JSON deserialization: metadata values arrive as JsonElement, not string
+        var json = JsonSerializer.Deserialize<JsonElement>("\"cmp-troubleshooting.md\"");
+        var ragResults = new List<RetrievalResult>
+        {
+            new()
+            {
+                ChunkText = "CMP pad lifetime guide.",
+                Score = 0.9f,
+                Metadata = new Dictionary<string, object> { ["file_name"] = json }
+            }
+        };
+
+        var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
+
+        prompt.Should().Contain("cmp-troubleshooting.md");
+    }
+
+    [Fact]
+    public void BuildSystemPrompt_WithStringMetadata_ExtractsFileName()
+    {
+        var ragResults = new List<RetrievalResult>
+        {
+            new()
+            {
+                ChunkText = "Some content.",
+                Score = 0.9f,
+                Metadata = new Dictionary<string, object> { ["file_name"] = "my-doc.txt" }
+            }
+        };
+
+        var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
+
+        prompt.Should().Contain("my-doc.txt");
     }
 }
