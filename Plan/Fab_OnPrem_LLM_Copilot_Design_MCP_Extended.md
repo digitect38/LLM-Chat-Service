@@ -8,9 +8,10 @@
 ---
 
 ## 0. 문서 버전
-- Version: 1.0
-- Date: 2026-02-18
+- Version: 1.1
+- Date: 2026-02-19
 - Scope: Architecture Design + Implementation Spec (SDS-lite)
+- Changes: RAG 파이프라인 연결 완료, 구현 현황 섹션 추가, NATS RAG 토픽 추가
 
 ---
 
@@ -197,6 +198,8 @@ flowchart LR
 - Platform topics:
   - `chat.request`
   - `chat.stream.<conversationId>`
+  - `rag.request`
+  - `rag.response.<conversationId>`
   - `knowledge.extract.request`
   - `knowledge.extract.result`
   - `mcp.log.query.request`
@@ -542,13 +545,77 @@ flowchart TB
 
 ---
 
-# 9. Next Steps Checklist
+# 9. Implementation Status
 
-- [ ] MCP Tool schema 확정 및 테스트 데이터로 검증  
-- [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)  
-- [ ] CMP 신호 매핑 테이블 정의(장비 tag → canonical signal)  
-- [ ] RCA Playbook(알람 코드별) 1차 정의  
-- [ ] Governance UI(승인/폐기/버전) 최소 기능 구현  
-- [ ] 성능 벤치(대표 시나리오: A123, pressure oscillation)  
+## 9.1 구현 완료
+
+| 항목 | 상태 | 비고 |
+|---|---|---|
+| Chat Gateway (WebSocket) | ✅ 완료 | port 5000, `/ws/chat/{equipmentId}` |
+| LLM Service (Worker Pool) | ✅ 완료 | NATS `chat.request` 구독, Ollama 스트리밍 |
+| RAG Service (Vector Search) | ✅ 완료 | NATS `rag.request` 구독, Qdrant 검색 |
+| **RAG → LLM 파이프라인 연결** | ✅ 완료 | LlmWorker에서 RAG 호출 후 시스템 프롬프트에 주입 |
+| Knowledge Service (REST API) | ✅ 완료 | 문서 등록/승인/인덱싱 워크플로 |
+| RCA Agent (Orchestrator) | ✅ 완료 | RAG + MCP 증거 수집 → LLM 분석 |
+| Web Client (Blazor Server) | ✅ 완료 | port 5010, Markdown + KaTeX 렌더링 |
+| Redis 대화 저장 | ✅ 완료 | AbortOnConnectFail 복원력 적용 |
+| Observability (Serilog + OTEL) | ✅ 완료 | 공유 라이브러리 |
+| NATS Messaging | ✅ 완료 | Pub/Sub + Request/Reply 지원 |
+| Vector Store (Qdrant Client) | ✅ 완료 | Upsert/Search/Delete/EnsureCollection |
+
+## 9.2 현재 설정
+
+| 항목 | 값 |
+|---|---|
+| LLM 모델 | Qwen2.5:7b (CPU, ~3-4 tok/s) |
+| 임베딩 모델 | nomic-embed-text (768차원) |
+| 벡터 컬렉션 | `knowledge` (Qdrant) |
+| 시스템 프롬프트 | 한국어 전용, 한문 금지, Markdown + LaTeX |
+| RAG 타임아웃 | 10초 (타임아웃 시 RAG 없이 동작) |
+
+## 9.3 RAG 채팅 흐름 (구현 완료)
+
+```mermaid
+sequenceDiagram
+    participant Client as WebClient
+    participant GW as ChatGateway
+    participant NATS
+    participant LLM as LlmWorker
+    participant RAG as RagService
+    participant QD as Qdrant
+
+    Client->>GW: WebSocket message
+    GW->>NATS: publish(chat.request)
+    NATS->>LLM: chat.request
+    LLM->>NATS: subscribe(rag.response.{id})
+    LLM->>NATS: publish(rag.request)
+    NATS->>RAG: rag.request
+    RAG->>QD: vector search
+    QD-->>RAG: results
+    RAG->>NATS: publish(rag.response.{id})
+    NATS-->>LLM: rag.response
+    LLM->>LLM: inject RAG into system prompt
+    LLM->>NATS: stream(chat.stream.{id})
+    NATS-->>GW: stream chunks
+    GW-->>Client: WebSocket stream
+```
+
+---
+
+# 10. Next Steps Checklist
+
+- [x] Chat Gateway + LLM Service 기본 채팅 흐름 구현
+- [x] RAG Service 벡터 검색 구현
+- [x] **RAG → LLM 파이프라인 연결 (chat.request → rag.request → 프롬프트 주입)**
+- [x] Web Client Markdown + KaTeX 렌더링
+- [x] 한국어 전용 시스템 프롬프트 (한문 방지)
+- [ ] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP)
+- [ ] MCP Tool schema 확정 및 테스트 데이터로 검증
+- [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)
+- [ ] CMP 신호 매핑 테이블 정의(장비 tag → canonical signal)
+- [ ] RCA Playbook(알람 코드별) 1차 정의
+- [ ] Governance UI(승인/폐기/버전) 최소 기능 구현
+- [ ] 성능 벤치(대표 시나리오: A123, pressure oscillation)
+- [ ] GPU 서버 배포 (현재 CPU 전용)
 
 ---
