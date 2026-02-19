@@ -209,7 +209,7 @@ public sealed class LlmWorker : BackgroundService
         return messages;
     }
 
-    private static string BuildSystemPrompt(
+    internal static string BuildSystemPrompt(
         string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults)
     {
         var prompt = $"""
@@ -232,38 +232,38 @@ public sealed class LlmWorker : BackgroundService
             - Block math: $$formula$$ (e.g. $$MRR = K_p \times P \times V$$)
             """;
 
-        if (context is null)
+        if (context is not null)
         {
-            return prompt;
-        }
+            var contextParts = new List<string>();
 
-        var contextParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(context.Module))
+                contextParts.Add($"Module: {context.Module}");
 
-        if (!string.IsNullOrWhiteSpace(context.Module))
-            contextParts.Add($"Module: {context.Module}");
+            if (!string.IsNullOrWhiteSpace(context.Recipe))
+                contextParts.Add($"Recipe: {context.Recipe}");
 
-        if (!string.IsNullOrWhiteSpace(context.Recipe))
-            contextParts.Add($"Recipe: {context.Recipe}");
+            if (!string.IsNullOrWhiteSpace(context.ProcessState))
+                contextParts.Add($"Process State: {context.ProcessState}");
 
-        if (!string.IsNullOrWhiteSpace(context.ProcessState))
-            contextParts.Add($"Process State: {context.ProcessState}");
+            if (context.RecentAlarms is { Count: > 0 })
+                contextParts.Add($"Recent Alarms: {string.Join(", ", context.RecentAlarms)}");
 
-        if (context.RecentAlarms is { Count: > 0 })
-            contextParts.Add($"Recent Alarms: {string.Join(", ", context.RecentAlarms)}");
-
-        if (contextParts.Count > 0)
-        {
-            prompt += $" Current context - {string.Join("; ", contextParts)}.";
+            if (contextParts.Count > 0)
+            {
+                prompt += $" Current context - {string.Join("; ", contextParts)}.";
+            }
         }
 
         if (ragResults is { Count: > 0 })
         {
             prompt += """
 
-            [REFERENCE DOCUMENTS]
-            The following are relevant excerpts from the equipment knowledge base.
-            Use them to provide accurate, grounded answers. If the information doesn't
-            help answer the question, you may ignore it.
+            [REFERENCE DOCUMENTS - MANDATORY USE]
+            1. ALWAYS use the following reference documents as your PRIMARY source of information.
+            2. Base your answer on the documents FIRST, before using general knowledge.
+            3. Cite which document you are referencing: "문서 1에 따르면..."
+            4. If NONE of the documents are relevant to the question, explicitly state: "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."
+            5. NEVER contradict information in the reference documents.
 
             """;
 

@@ -3,6 +3,7 @@ using FabCopilot.Llm.Extensions;
 using FabCopilot.VectorStore.Extensions;
 using FabCopilot.Observability.Extensions;
 using FabCopilot.RagService;
+using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Services;
 
 Host.CreateDefaultBuilder(args)
@@ -19,7 +20,10 @@ Host.CreateDefaultBuilder(args)
         services.AddFabLlm(ctx.Configuration);
         services.AddFabVectorStore(ctx.Configuration);
         services.AddFabTelemetry(ctx.Configuration);
+        services.Configure<RagOptions>(ctx.Configuration.GetSection(RagOptions.SectionName));
         services.AddSingleton<DocumentIngestor>();
+        services.AddSingleton<FileTextExtractor>();
+        services.AddHostedService<FileWatcherIngestorService>();
         services.AddHostedService<RagWorker>();
     })
     .Build()

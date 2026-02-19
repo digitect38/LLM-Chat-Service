@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <InternalsVisibleTo Include="FabCopilot.RagPipeline.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Qdrant.Client" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>

@@ -2,8 +2,10 @@ using FabCopilot.Contracts.Constants;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Llm.Interfaces;
 using FabCopilot.Messaging.Interfaces;
+using FabCopilot.RagService.Configuration;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
+using FabCopilot.VectorStore.Models;
 using Microsoft.Extensions.Options;
 
 namespace FabCopilot.RagService;
@@ -16,6 +18,7 @@ public sealed class RagWorker : BackgroundService
     private readonly ILlmClient _llmClient;
     private readonly IVectorStore _vectorStore;
     private readonly QdrantOptions _qdrantOptions;
+    private readonly RagOptions _ragOptions;
     private readonly ILogger<RagWorker> _logger;
 
     public RagWorker(
@@ -23,12 +26,14 @@ public sealed class RagWorker : BackgroundService
         ILlmClient llmClient,
         IVectorStore vectorStore,
         IOptions<QdrantOptions> qdrantOptions,
+        IOptions<RagOptions> ragOptions,
         ILogger<RagWorker> logger)
     {
         _messageBus = messageBus;
         _llmClient = llmClient;
         _vectorStore = vectorStore;
         _qdrantOptions = qdrantOptions.Value;
+        _ragOptions = ragOptions.Value;
         _logger = logger;
     }
 
@@ -90,8 +95,15 @@ public sealed class RagWorker : BackgroundService
                 "Vector search completed. ConversationId={ConversationId}, ResultCount={ResultCount}",
                 conversationId, searchResults.Count);
 
+            // 3.5 Filter results by minimum score
+            var filtered = FilterByScore(searchResults, _ragOptions.MinScore);
+
+            _logger.LogInformation(
+                "Score filtering applied. ConversationId={ConversationId}, Before={Before}, After={After}, MinScore={MinScore}",
+                conversationId, searchResults.Count, filtered.Count, _ragOptions.MinScore);
+
             // 4. Map results to response
-            var retrievalResults = searchResults.Select(r => new RetrievalResult
+            var retrievalResults = filtered.Select(r => new RetrievalResult
             {
                 DocumentId = r.Id,
                 ChunkText = r.Payload.TryGetValue("text", out var text) ? text.ToString() ?? string.Empty : string.Empty,
@@ -146,4 +158,8 @@ public sealed class RagWorker : BackgroundService
             }
         }
     }
+
+    internal static List<VectorSearchResult> FilterByScore(
+        IReadOnlyList<VectorSearchResult> results, float minScore)
+        => results.Where(r => r.Score >= minScore).ToList();
 }

@@ -13,5 +13,7 @@ public interface IVectorStore
 
     Task DeleteAsync(string collection, string id, CancellationToken ct = default);
 
+    Task DeleteByDocumentIdAsync(string collection, string documentId, CancellationToken ct = default);
+
     Task EnsureCollectionAsync(string collection, int vectorSize, CancellationToken ct = default);
 }

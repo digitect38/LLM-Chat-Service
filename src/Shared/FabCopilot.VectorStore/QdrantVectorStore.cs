@@ -64,10 +64,13 @@ public sealed class QdrantVectorStore : IVectorStore
         Dictionary<string, object>? filter = null,
         CancellationToken ct = default)
     {
+        var qdrantFilter = BuildQdrantFilter(filter);
+
         var results = await _client.QueryAsync(
             collection,
             query: queryVector,
             limit: (ulong)topK,
+            filter: qdrantFilter,
             payloadSelector: true,
             cancellationToken: ct);
 
@@ -89,6 +92,42 @@ public sealed class QdrantVectorStore : IVectorStore
     {
         var guid = ToGuid(id);
         await _client.DeleteAsync(collection, [guid], cancellationToken: ct);
+    }
+
+    public async Task DeleteByDocumentIdAsync(string collection, string documentId, CancellationToken ct = default)
+    {
+        var filter = new Filter();
+        filter.Must.Add(new Condition
+        {
+            Field = new FieldCondition
+            {
+                Key = "document_id",
+                Match = new Match { Keyword = documentId }
+            }
+        });
+
+        await _client.DeleteAsync(collection, filter, cancellationToken: ct);
+    }
+
+    internal static Filter? BuildQdrantFilter(Dictionary<string, object>? filter)
+    {
+        if (filter is null || filter.Count == 0)
+            return null;
+
+        var f = new Filter();
+        foreach (var (key, value) in filter)
+        {
+            f.Must.Add(new Condition
+            {
+                Field = new FieldCondition
+                {
+                    Key = key,
+                    Match = new Match { Keyword = value?.ToString() ?? "" }
+                }
+            });
+        }
+
+        return f;
     }
 
     /// <summary>

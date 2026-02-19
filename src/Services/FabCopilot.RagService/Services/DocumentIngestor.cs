@@ -94,7 +94,8 @@ public sealed class DocumentIngestor
     }
 
     /// <summary>
-    /// Splits text into overlapping chunks of the specified size.
+    /// Splits text into overlapping chunks of the specified size,
+    /// respecting sentence boundaries where possible.
     /// </summary>
     internal static List<string> ChunkText(string text, int chunkSize, int overlap)
     {
@@ -109,19 +110,78 @@ public sealed class DocumentIngestor
             return chunks;
         }
 
-        var step = chunkSize - overlap;
-        if (step <= 0) step = 1;
-
-        for (var offset = 0; offset < text.Length; offset += step)
+        var offset = 0;
+        while (offset < text.Length)
         {
-            var length = Math.Min(chunkSize, text.Length - offset);
-            chunks.Add(text.Substring(offset, length));
-
-            // If this chunk reaches the end, stop
-            if (offset + length >= text.Length)
+            var remaining = text.Length - offset;
+            if (remaining <= chunkSize)
+            {
+                chunks.Add(text.Substring(offset));
                 break;
+            }
+
+            // Take up to chunkSize characters
+            var candidate = text.Substring(offset, chunkSize);
+
+            // Find the best sentence boundary to split at
+            var splitAt = FindLastSentenceBoundary(candidate);
+            var chunk = text.Substring(offset, splitAt);
+            chunks.Add(chunk);
+
+            // Advance with overlap: back up by overlap amount from the split point
+            var advance = splitAt - overlap;
+            if (advance <= 0) advance = 1;
+            offset += advance;
         }
 
         return chunks;
+    }
+
+    /// <summary>
+    /// Finds the last sentence boundary in the text, searching backward from the end.
+    /// Looks for sentence-ending punctuation (. ! ? or newline) after the 50% mark.
+    /// Protects decimal numbers (e.g. 3.14) from being treated as sentence boundaries.
+    /// Falls back to the last whitespace, then to the full length.
+    /// </summary>
+    internal static int FindLastSentenceBoundary(string text)
+    {
+        var minPos = text.Length / 2;
+        var lastBoundary = -1;
+
+        for (var i = text.Length - 1; i >= minPos; i--)
+        {
+            var ch = text[i];
+            if (ch == '\n')
+            {
+                lastBoundary = i + 1;
+                break;
+            }
+
+            if (ch is '.' or '!' or '?')
+            {
+                // Protect decimal numbers: digit.digit is not a sentence end
+                if (ch == '.' && i > 0 && i < text.Length - 1
+                    && char.IsDigit(text[i - 1]) && char.IsDigit(text[i + 1]))
+                {
+                    continue;
+                }
+
+                lastBoundary = i + 1;
+                break;
+            }
+        }
+
+        if (lastBoundary > 0)
+            return lastBoundary;
+
+        // Fallback: find last whitespace after 50% mark
+        for (var i = text.Length - 1; i >= minPos; i--)
+        {
+            if (char.IsWhiteSpace(text[i]))
+                return i + 1;
+        }
+
+        // Final fallback: use full length
+        return text.Length;
     }
 }
