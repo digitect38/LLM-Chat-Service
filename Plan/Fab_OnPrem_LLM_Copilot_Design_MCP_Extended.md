@@ -8,10 +8,11 @@
 ---
 
 ## 0. 문서 버전
-- Version: 1.3
+- Version: 1.4
 - Date: 2026-02-20
 - Scope: Architecture Design + Implementation Spec (SDS-lite)
 - Changes:
+  - v1.4: RAG 출처 인용 기능 추가 (LLM 응답에 참고 문서명 자동 표시), NATS JsonElement 메타데이터 역직렬화 버그 수정
   - v1.3: FileSystemWatcher 기반 자동 RAG 문서 수집 기능 추가 (폴더 감시 → 텍스트 추출 → 벡터 스토어 자동 수집/삭제)
   - v1.2: 다중 LLM 모델 선택 기능 추가 (WebClient 드롭다운 → ChatRequest.ModelId → LlmWorker per-request 오버라이드)
   - v1.1: RAG 파이프라인 연결 완료, 구현 현황 섹션 추가, NATS RAG 토픽 추가
@@ -568,6 +569,8 @@ flowchart TB
 | NATS Messaging | ✅ 완료 | Pub/Sub + Request/Reply 지원 |
 | Vector Store (Qdrant Client) | ✅ 완료 | Upsert/Search/Delete/DeleteByDocumentId/EnsureCollection |
 | **FileWatcher 자동 문서 수집** | ✅ 완료 | FileSystemWatcher → 텍스트 추출(MD/TXT/PDF) → 벡터 수집/삭제 |
+| **RAG 출처 인용** | ✅ 완료 | LLM 응답에 참고 문서명 자동 인용 (📄 파일명에 따르면...) |
+| **메타데이터 역직렬화 수정** | ✅ 완료 | NATS JsonElement→string 변환 (TryGetMetadataString 헬퍼) |
 
 ## 9.2 현재 설정
 
@@ -578,7 +581,7 @@ flowchart TB
 | 모델 선택 방식 | WebClient 드롭다운 → ChatRequest.ModelId → per-request 오버라이드 |
 | 임베딩 모델 | nomic-embed-text (768차원) |
 | 벡터 컬렉션 | `knowledge` (Qdrant) |
-| 시스템 프롬프트 | 한국어 전용, 한문 금지, Markdown + LaTeX |
+| 시스템 프롬프트 | 한국어 전용, 한문 금지, Markdown + LaTeX, RAG 출처 인용 필수 |
 | RAG 타임아웃 | 10초 (타임아웃 시 RAG 없이 동작) |
 
 ## 9.3 RAG 채팅 흐름 (구현 완료)
@@ -654,6 +657,43 @@ RagService의 `FileWatcherIngestorService`가 지정 폴더를 감시하여 `.md
 - PDF 추출: PdfPig (순수 .NET, MIT 라이선스)
 - 메타데이터: `source=file-watcher`, `file_path`, `file_name`, `file_extension`, `ingested_at`
 
+## 9.6 RAG 출처 인용 (구현 완료)
+
+LlmWorker의 시스템 프롬프트에 **참고 문서 필수 인용 규칙**을 적용하여, RAG 검색 결과가 있을 때 LLM이 반드시 출처를 명시합니다.
+
+### 프롬프트 규칙
+
+```
+[REFERENCE DOCUMENTS - MANDATORY USE]
+1. ALWAYS use the following reference documents as your PRIMARY source of information.
+2. Base your answer on the documents FIRST, before using general knowledge.
+3. Cite the source document name: "📄 [파일명]에 따르면..."
+4. If NONE of the documents are relevant, explicitly state so.
+5. NEVER contradict information in the reference documents.
+6. List all referenced sources under "📚 참고 문서:" section.
+```
+
+### 문서명 추출 (ExtractSourceName)
+
+RAG 결과의 메타데이터에서 파일명을 추출하여 프롬프트에 주입합니다.
+
+```
+우선순위: file_name → file_path → document_id → DocumentId → "unknown"
+```
+
+- NATS JSON 역직렬화 시 메타데이터 값이 `JsonElement`로 수신되는 문제를 `TryGetMetadataString` 헬퍼로 해결
+- `ToString()?.Trim('"')` 패턴으로 `string`과 `JsonElement` 모두 처리
+
+### 프롬프트 내 문서 포맷
+
+```
+--- Document 1: cmp-troubleshooting.md (score: 0.892) ---
+CMP 장비 트러블슈팅 가이드...
+
+--- Document 2: pad-maintenance.md (score: 0.756) ---
+Pad 유지보수 절차...
+```
+
 ---
 
 # 10. Next Steps Checklist
@@ -665,6 +705,7 @@ RagService의 `FileWatcherIngestorService`가 지정 폴더를 감시하여 `.md
 - [x] 한국어 전용 시스템 프롬프트 (한문 방지)
 - [x] **다중 LLM 모델 선택 (EXAONE / Qwen / Llama UI 드롭다운)**
 - [x] **FileWatcher 자동 문서 수집 (knowledge-docs/ 폴더 감시 → MD/TXT/PDF 자동 수집)**
+- [x] **RAG 출처 인용 (응답에 참고 문서명 자동 표시 + JsonElement 메타데이터 수정)**
 - [ ] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP)
 - [ ] MCP Tool schema 확정 및 테스트 데이터로 검증
 - [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)
