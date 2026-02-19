@@ -1,9 +1,11 @@
+using FabCopilot.WebClient.Configuration;
 using FabCopilot.WebClient.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
+builder.Services.Configure<ModelOptions>(builder.Configuration.GetSection(ModelOptions.SectionName));
 builder.Services.AddScoped<ChatService>();
 
 var app = builder.Build();

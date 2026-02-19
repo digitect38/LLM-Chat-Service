@@ -14,6 +14,9 @@ public sealed class ChatRequest
     [JsonPropertyName("userMessage")]
     public string UserMessage { get; set; } = string.Empty;
 
+    [JsonPropertyName("modelId")]
+    public string? ModelId { get; set; }
+
     [JsonPropertyName("context")]
     public EquipmentContext? Context { get; set; }
 }

@@ -94,7 +94,11 @@ public sealed class LlmWorker : BackgroundService
             // 4. Stream the response from the LLM
             var fullResponse = new StringBuilder();
 
-            await foreach (var token in _llmClient.StreamChatAsync(llmMessages, options: null, ct))
+            var llmOptions = !string.IsNullOrEmpty(request.ModelId)
+                ? new LlmOptions { Model = request.ModelId }
+                : null;
+
+            await foreach (var token in _llmClient.StreamChatAsync(llmMessages, llmOptions, ct))
             {
                 // Filter out special tokens that Qwen2.5 sometimes leaks
                 var filtered = SanitizeToken(token);

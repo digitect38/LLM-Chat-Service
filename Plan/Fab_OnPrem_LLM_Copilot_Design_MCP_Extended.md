@@ -8,10 +8,12 @@
 ---
 
 ## 0. 문서 버전
-- Version: 1.1
+- Version: 1.2
 - Date: 2026-02-19
 - Scope: Architecture Design + Implementation Spec (SDS-lite)
-- Changes: RAG 파이프라인 연결 완료, 구현 현황 섹션 추가, NATS RAG 토픽 추가
+- Changes:
+  - v1.2: 다중 LLM 모델 선택 기능 추가 (WebClient 드롭다운 → ChatRequest.ModelId → LlmWorker per-request 오버라이드)
+  - v1.1: RAG 파이프라인 연결 완료, 구현 현황 섹션 추가, NATS RAG 토픽 추가
 
 ---
 
@@ -23,6 +25,7 @@
 - 장비 단위 Chat 세션(Equipment-centric)
 - WebSocket 기반 양방향 통신 + 토큰 스트리밍
 - 장비 Context 자동 첨부(장비ID, 모듈, 레시피, 공정상태, 최근 알람 등)
+- **다중 LLM 모델 선택** (WebClient UI 드롭다운으로 per-request 모델 오버라이드)
 - 대화 이력 저장 및 재조회
 
 ### Knowledge / RAG
@@ -557,7 +560,8 @@ flowchart TB
 | **RAG → LLM 파이프라인 연결** | ✅ 완료 | LlmWorker에서 RAG 호출 후 시스템 프롬프트에 주입 |
 | Knowledge Service (REST API) | ✅ 완료 | 문서 등록/승인/인덱싱 워크플로 |
 | RCA Agent (Orchestrator) | ✅ 완료 | RAG + MCP 증거 수집 → LLM 분석 |
-| Web Client (Blazor Server) | ✅ 완료 | port 5010, Markdown + KaTeX 렌더링 |
+| Web Client (Blazor Server) | ✅ 완료 | port 5010, Markdown + KaTeX 렌더링, 모델 선택 UI |
+| **다중 LLM 모델 선택** | ✅ 완료 | ChatRequest.ModelId → LlmWorker per-request 오버라이드 |
 | Redis 대화 저장 | ✅ 완료 | AbortOnConnectFail 복원력 적용 |
 | Observability (Serilog + OTEL) | ✅ 완료 | 공유 라이브러리 |
 | NATS Messaging | ✅ 완료 | Pub/Sub + Request/Reply 지원 |
@@ -567,7 +571,9 @@ flowchart TB
 
 | 항목 | 값 |
 |---|---|
-| LLM 모델 | Qwen2.5:7b (CPU, ~3-4 tok/s) |
+| LLM 기본 모델 | EXAONE 3.5:7.8b (기본값, 한국어 최적) |
+| LLM 선택 가능 모델 | EXAONE 3.5 (7.8B), Qwen 2.5 (7B), Llama 3.1 (8B) |
+| 모델 선택 방식 | WebClient 드롭다운 → ChatRequest.ModelId → per-request 오버라이드 |
 | 임베딩 모델 | nomic-embed-text (768차원) |
 | 벡터 컬렉션 | `knowledge` (Qdrant) |
 | 시스템 프롬프트 | 한국어 전용, 한문 금지, Markdown + LaTeX |
@@ -583,9 +589,10 @@ sequenceDiagram
     participant LLM as LlmWorker
     participant RAG as RagService
     participant QD as Qdrant
+    participant Ollama
 
-    Client->>GW: WebSocket message
-    GW->>NATS: publish(chat.request)
+    Client->>GW: WebSocket message (+ modelId)
+    GW->>NATS: publish(chat.request, modelId)
     NATS->>LLM: chat.request
     LLM->>NATS: subscribe(rag.response.{id})
     LLM->>NATS: publish(rag.request)
@@ -594,11 +601,24 @@ sequenceDiagram
     QD-->>RAG: results
     RAG->>NATS: publish(rag.response.{id})
     NATS-->>LLM: rag.response
-    LLM->>LLM: inject RAG into system prompt
+    LLM->>LLM: inject RAG + resolve model
+    LLM->>Ollama: StreamChatAsync(model override)
+    Ollama-->>LLM: token stream
     LLM->>NATS: stream(chat.stream.{id})
     NATS-->>GW: stream chunks
     GW-->>Client: WebSocket stream
 ```
+
+## 9.4 다중 모델 선택 데이터 흐름
+
+```
+WebClient(모델 드롭다운) → ChatService(modelId 포함) → ChatGateway(패스스루)
+  → NATS(ChatRequest.ModelId) → LlmWorker(LlmOptions 생성) → OllamaLlmClient(model 오버라이드)
+```
+
+- `ChatRequest.ModelId`는 nullable → 미지정 시 appsettings의 `ChatModel` 기본값 사용
+- `OllamaLlmClient.StreamChatAsync`가 `options?.Model ?? _options.ChatModel` 로직으로 처리
+- ChatGateway는 JSON 패스스루이므로 별도 수정 불필요
 
 ---
 
@@ -609,6 +629,7 @@ sequenceDiagram
 - [x] **RAG → LLM 파이프라인 연결 (chat.request → rag.request → 프롬프트 주입)**
 - [x] Web Client Markdown + KaTeX 렌더링
 - [x] 한국어 전용 시스템 프롬프트 (한문 방지)
+- [x] **다중 LLM 모델 선택 (EXAONE / Qwen / Llama UI 드롭다운)**
 - [ ] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP)
 - [ ] MCP Tool schema 확정 및 테스트 데이터로 검증
 - [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)

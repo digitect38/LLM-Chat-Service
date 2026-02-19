@@ -52,7 +52,7 @@ public sealed class ChatService : IAsyncDisposable
         }
     }
 
-    public async Task SendMessageAsync(string conversationId, string equipmentId, string message)
+    public async Task SendMessageAsync(string conversationId, string equipmentId, string message, string? modelId = null)
     {
         if (_webSocket is null || _webSocket.State != WebSocketState.Open)
         {
@@ -64,6 +64,7 @@ public sealed class ChatService : IAsyncDisposable
             ConversationId = conversationId,
             EquipmentId = equipmentId,
             UserMessage = message,
+            ModelId = modelId,
             Context = null
         };
 

@@ -1,6 +1,9 @@
 @page "/"
+@using Microsoft.Extensions.Options
+@using FabCopilot.WebClient.Configuration
 @inject ChatService ChatService
 @inject IJSRuntime JS
+@inject IOptions<ModelOptions> ModelOptionsAccessor
 @implements IAsyncDisposable
 
 <div class="chat-container">
@@ -30,6 +33,19 @@
                 <span class="status-dot @(ChatService.IsConnected ? "status-connected" : "status-disconnected")"></span>
                 <span class="status-text">@(ChatService.IsConnected ? "Connected" : "Disconnected")</span>
             </div>
+
+            <div class="model-separator"></div>
+
+            <label class="equipment-label" for="modelSelect">Model</label>
+            <select id="modelSelect"
+                    class="model-select"
+                    @bind="_selectedModelId"
+                    disabled="@_isSending">
+                @foreach (var model in _availableModels)
+                {
+                    <option value="@model.Id">@model.DisplayName</option>
+                }
+            </select>
         </div>
 
         @if (!string.IsNullOrEmpty(_connectionError))
@@ -105,6 +121,8 @@
     private bool _isConnecting;
     private bool _isSending;
     private int _renderCounter;
+    private string _selectedModelId = string.Empty;
+    private List<ModelEntry> _availableModels = new();
 
     private readonly List<ChatMessageViewModel> _messages = new();
 
@@ -112,6 +130,12 @@
     {
         ChatService.OnMessageReceived += HandleChunkReceived;
         ChatService.OnStateChanged += HandleStateChanged;
+
+        var modelOptions = ModelOptionsAccessor.Value;
+        _availableModels = modelOptions.Available;
+        _selectedModelId = !string.IsNullOrEmpty(modelOptions.Default)
+            ? modelOptions.Default
+            : _availableModels.FirstOrDefault()?.Id ?? string.Empty;
     }
 
     private async Task ConnectAsync()
@@ -173,7 +197,7 @@
 
         try
         {
-            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text);
+            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId);
         }
         catch (Exception ex)
         {
