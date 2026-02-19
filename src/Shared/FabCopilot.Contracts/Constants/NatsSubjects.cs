@@ -17,6 +17,8 @@ public static class NatsSubjects
     public const string McpLogQueryResult = "mcp.log.query.result";
     public const string RcaRunRequest = "rca.run.request";
     public const string RcaRunResult = "rca.run.result";
+    public const string RagRequest = "rag.request";
+    public static string RagResponse(string conversationId) => $"rag.response.{conversationId}";
 
     // JetStream Streams
     public const string StreamChatRequests = "CHAT_REQUESTS";

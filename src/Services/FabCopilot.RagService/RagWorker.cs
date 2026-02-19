@@ -1,7 +1,7 @@
+using FabCopilot.Contracts.Constants;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Llm.Interfaces;
 using FabCopilot.Messaging.Interfaces;
-using FabCopilot.RagService.Messages;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -10,7 +10,6 @@ namespace FabCopilot.RagService;
 
 public sealed class RagWorker : BackgroundService
 {
-    private const string Subject = "rag.request";
     private const string QueueGroup = "rag-workers";
 
     private readonly IMessageBus _messageBus;
@@ -37,10 +36,10 @@ public sealed class RagWorker : BackgroundService
     {
         _logger.LogInformation(
             "RagWorker started. Subscribing to {Subject} with queue group {QueueGroup}",
-            Subject, QueueGroup);
+            NatsSubjects.RagRequest, QueueGroup);
 
         await foreach (var envelope in _messageBus.SubscribeAsync<RagRequest>(
-                           Subject, QueueGroup, stoppingToken))
+                           NatsSubjects.RagRequest, QueueGroup, stoppingToken))
         {
             var request = envelope.Payload;
             if (request is null)
@@ -64,7 +63,7 @@ public sealed class RagWorker : BackgroundService
     private async Task ProcessRagRequestAsync(RagRequest request, CancellationToken ct)
     {
         var conversationId = request.ConversationId ?? Guid.NewGuid().ToString();
-        var responseSubject = $"rag.response.{conversationId}";
+        var responseSubject = NatsSubjects.RagResponse(conversationId);
 
         try
         {

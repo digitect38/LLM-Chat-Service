@@ -55,7 +55,14 @@
                 <div class="message-row @(msg.IsUser ? "message-row-user" : "message-row-assistant")">
                     <div class="message-bubble @(msg.IsUser ? "bubble-user" : "bubble-assistant")">
                         <div class="message-sender">@(msg.IsUser ? "You" : "Fab Copilot")</div>
-                        <div class="message-text">@msg.Text</div>
+                        @if (msg.IsUser)
+                        {
+                            <div class="message-text">@msg.Text</div>
+                        }
+                        else
+                        {
+                            <div class="message-text rendered-markdown">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
+                        }
                         @if (msg.IsStreaming)
                         {
                             <span class="streaming-cursor">|</span>
@@ -97,6 +104,7 @@
     private string? _connectionError;
     private bool _isConnecting;
     private bool _isSending;
+    private int _renderCounter;
 
     private readonly List<ChatMessageViewModel> _messages = new();
 
@@ -201,10 +209,18 @@
             {
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
+                // Final render with full text
+                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
             }
             else
             {
                 assistantMsg.Text += chunk.Token;
+                // Render periodically during streaming (every 5 chunks)
+                _renderCounter++;
+                if (_renderCounter % 5 == 0)
+                {
+                    assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+                }
             }
 
             StateHasChanged();
@@ -240,9 +256,22 @@
         await ChatService.DisposeAsync();
     }
 
+    private async Task<string> RenderMarkdownAsync(string text)
+    {
+        try
+        {
+            return await JS.InvokeAsync<string>("chatRenderer.renderMarkdown", text);
+        }
+        catch
+        {
+            return text;
+        }
+    }
+
     private sealed class ChatMessageViewModel
     {
         public string Text { get; set; } = string.Empty;
+        public string? RenderedHtml { get; set; }
         public bool IsUser { get; set; }
         public bool IsStreaming { get; set; }
         public string? Error { get; set; }

@@ -84,8 +84,12 @@ public sealed class LlmWorker : BackgroundService
             };
             await _conversationStore.AppendMessageAsync(request.ConversationId, userMessage, ct);
 
-            // 3. Build the LLM prompt messages
-            var llmMessages = BuildPromptMessages(request, conversation);
+            // 2.5. Retrieve RAG context from vector store
+            var ragResults = await RetrieveRagContextAsync(
+                request.ConversationId, request.UserMessage, request.EquipmentId, ct);
+
+            // 3. Build the LLM prompt messages (with RAG context)
+            var llmMessages = BuildPromptMessages(request, conversation, ragResults);
 
             // 4. Stream the response from the LLM
             var fullResponse = new StringBuilder();
@@ -169,12 +173,13 @@ public sealed class LlmWorker : BackgroundService
         }
     }
 
-    private static List<LlmChatMessage> BuildPromptMessages(ChatRequest request, Conversation conversation)
+    private static List<LlmChatMessage> BuildPromptMessages(
+        ChatRequest request, Conversation conversation, List<RetrievalResult> ragResults)
     {
         var messages = new List<LlmChatMessage>();
 
-        // System message with equipment context
-        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context);
+        // System message with equipment context and RAG documents
+        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context, ragResults);
         messages.Add(LlmChatMessage.System(systemPrompt));
 
         // Conversation history
@@ -200,13 +205,28 @@ public sealed class LlmWorker : BackgroundService
         return messages;
     }
 
-    private static string BuildSystemPrompt(string equipmentId, EquipmentContext? context)
+    private static string BuildSystemPrompt(
+        string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults)
     {
-        var prompt = $"You are an equipment copilot assistant for semiconductor fab equipment. " +
-                     $"You help engineers diagnose issues, find procedures, and troubleshoot problems. " +
-                     $"Equipment: {equipmentId}. " +
-                     $"항상 한국어로만 응답하세요. 절대로 중국어(한문)를 사용하지 마세요. " +
-                     $"기술 용어는 영어 원문을 그대로 사용해도 됩니다.";
+        var prompt = $"""
+            You are an equipment copilot assistant for semiconductor fab equipment.
+            You help engineers diagnose issues, find procedures, and troubleshoot problems.
+            Equipment: {equipmentId}.
+
+            [CRITICAL LANGUAGE RULE - YOU MUST FOLLOW THIS]
+            - You MUST respond ONLY in Korean (한국어).
+            - NEVER use Chinese characters (中文/漢字/한문). This is strictly forbidden.
+            - If you catch yourself writing any Chinese character, stop and rewrite in Korean.
+            - Technical terms (e.g. CMP, slurry, polishing pad) may remain in English.
+            - Example of WRONG output: "이 문제는 設備의 故障으로..." (contains 漢字)
+            - Example of CORRECT output: "이 문제는 장비의 고장으로..." (pure Korean)
+
+            [FORMATTING RULES]
+            - Use Markdown for structured responses (headings, lists, bold, etc.).
+            - When expressing mathematical formulas, use LaTeX notation.
+            - Inline math: $formula$ (e.g. $v = r \times \omega$)
+            - Block math: $$formula$$ (e.g. $$MRR = K_p \times P \times V$$)
+            """;
 
         if (context is null)
         {
@@ -232,7 +252,100 @@ public sealed class LlmWorker : BackgroundService
             prompt += $" Current context - {string.Join("; ", contextParts)}.";
         }
 
+        if (ragResults is { Count: > 0 })
+        {
+            prompt += """
+
+            [REFERENCE DOCUMENTS]
+            The following are relevant excerpts from the equipment knowledge base.
+            Use them to provide accurate, grounded answers. If the information doesn't
+            help answer the question, you may ignore it.
+
+            """;
+
+            for (var i = 0; i < ragResults.Count; i++)
+            {
+                var result = ragResults[i];
+                prompt += $"""
+                --- Document {i + 1} (score: {result.Score:F3}) ---
+                {result.ChunkText}
+
+                """;
+            }
+        }
+
         return prompt;
+    }
+
+    private async Task<List<RetrievalResult>> RetrieveRagContextAsync(
+        string conversationId, string userMessage, string equipmentId, CancellationToken ct)
+    {
+        var responseSubject = NatsSubjects.RagResponse(conversationId);
+
+        using var ragCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        ragCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            // 1. Get the enumerator to trigger NATS subscription registration
+            var enumerator = _messageBus.SubscribeAsync<RagResponse>(
+                    responseSubject, queueGroup: null, ragCts.Token)
+                .GetAsyncEnumerator(ragCts.Token);
+
+            // Start waiting for the first message (triggers SubscribeCoreAsync internally)
+            var moveNextTask = enumerator.MoveNextAsync().AsTask();
+
+            // Brief yield to ensure subscription is registered on NATS server
+            await Task.Delay(50, ragCts.Token);
+
+            // 2. Publish the RAG request
+            var ragRequest = new RagRequest
+            {
+                Query = userMessage,
+                EquipmentId = equipmentId,
+                TopK = 5,
+                ConversationId = conversationId
+            };
+
+            await _messageBus.PublishAsync(
+                NatsSubjects.RagRequest,
+                MessageEnvelope<RagRequest>.Create("rag.request", ragRequest, equipmentId),
+                ragCts.Token);
+
+            _logger.LogDebug("Published RAG request. ConversationId={ConversationId}", conversationId);
+
+            // 3. Wait for the response
+            if (await moveNextTask)
+            {
+                var envelope = enumerator.Current;
+                if (envelope.Payload is not null)
+                {
+                    _logger.LogInformation(
+                        "Received RAG response. ConversationId={ConversationId}, ResultCount={Count}",
+                        conversationId, envelope.Payload.Results.Count);
+
+                    await enumerator.DisposeAsync();
+                    return envelope.Payload.Results;
+                }
+            }
+
+            await enumerator.DisposeAsync();
+            return [];
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning(
+                "RAG request timed out or cancelled. Proceeding without RAG. ConversationId={ConversationId}",
+                conversationId);
+            return [];
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "RAG request failed. Proceeding without RAG. ConversationId={ConversationId}",
+                conversationId);
+            return [];
+        }
     }
 
     private static string SanitizeToken(string token)

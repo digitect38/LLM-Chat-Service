@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
     <link href="css/app.css" rel="stylesheet" />
     <link href="FabCopilot.WebClient.styles.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
     <title>Fab Copilot</title>
     <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
 </head>
@@ -29,6 +30,8 @@
     </div>
 
     <script src="_framework/blazor.server.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <script>
         window.chatScroll = {
             scrollToBottom: function (elementId) {
@@ -36,6 +39,53 @@
                 if (element) {
                     element.scrollTop = element.scrollHeight;
                 }
+            }
+        };
+
+        window.chatRenderer = {
+            renderMarkdown: function (text) {
+                if (!text) return '';
+
+                // Replace block math $$...$$ with placeholders before marked processes them
+                var blockMath = [];
+                text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (match, formula) {
+                    var idx = blockMath.length;
+                    blockMath.push(formula.trim());
+                    return '%%BLOCKMATH' + idx + '%%';
+                });
+
+                // Replace inline math $...$ with placeholders (avoid greediness)
+                var inlineMath = [];
+                text = text.replace(/\$([^\$\n]+?)\$/g, function (match, formula) {
+                    var idx = inlineMath.length;
+                    inlineMath.push(formula.trim());
+                    return '%%INLINEMATH' + idx + '%%';
+                });
+
+                // Render markdown
+                var html = marked.parse(text);
+
+                // Restore block math with KaTeX rendering
+                html = html.replace(/%%BLOCKMATH(\d+)%%/g, function (match, idx) {
+                    try {
+                        return '<div class="katex-block">' +
+                            katex.renderToString(blockMath[parseInt(idx)], { displayMode: true, throwOnError: false }) +
+                            '</div>';
+                    } catch (e) {
+                        return '<div class="katex-block katex-error">' + blockMath[parseInt(idx)] + '</div>';
+                    }
+                });
+
+                // Restore inline math with KaTeX rendering
+                html = html.replace(/%%INLINEMATH(\d+)%%/g, function (match, idx) {
+                    try {
+                        return katex.renderToString(inlineMath[parseInt(idx)], { displayMode: false, throwOnError: false });
+                    } catch (e) {
+                        return '<span class="katex-error">' + inlineMath[parseInt(idx)] + '</span>';
+                    }
+                });
+
+                return html;
             }
         };
     </script>
