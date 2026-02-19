@@ -261,17 +261,19 @@ public sealed class LlmWorker : BackgroundService
             [REFERENCE DOCUMENTS - MANDATORY USE]
             1. ALWAYS use the following reference documents as your PRIMARY source of information.
             2. Base your answer on the documents FIRST, before using general knowledge.
-            3. Cite which document you are referencing: "문서 1에 따르면..."
+            3. Cite the source document name in your answer: "📄 [파일명]에 따르면..." (e.g. "📄 cmp-troubleshooting.md에 따르면...")
             4. If NONE of the documents are relevant to the question, explicitly state: "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."
             5. NEVER contradict information in the reference documents.
+            6. At the end of your answer, list all referenced sources under "---\n📚 **참고 문서:**" section.
 
             """;
 
             for (var i = 0; i < ragResults.Count; i++)
             {
                 var result = ragResults[i];
+                var sourceName = ExtractSourceName(result);
                 prompt += $"""
-                --- Document {i + 1} (score: {result.Score:F3}) ---
+                --- Document {i + 1}: {sourceName} (score: {result.Score:F3}) ---
                 {result.ChunkText}
 
                 """;
@@ -350,6 +352,24 @@ public sealed class LlmWorker : BackgroundService
                 conversationId);
             return [];
         }
+    }
+
+    private static string ExtractSourceName(RetrievalResult result)
+    {
+        // Try file_name from FileWatcher metadata
+        if (result.Metadata.TryGetValue("file_name", out var fileName) && fileName is string fn && !string.IsNullOrEmpty(fn))
+            return fn;
+
+        // Try file_path (relative path used as document_id by FileWatcher)
+        if (result.Metadata.TryGetValue("file_path", out var filePath) && filePath is string fp && !string.IsNullOrEmpty(fp))
+            return fp;
+
+        // Try document_id from payload
+        if (result.Metadata.TryGetValue("document_id", out var docId) && docId is string did && !string.IsNullOrEmpty(did))
+            return did;
+
+        // Fallback to DocumentId field
+        return !string.IsNullOrEmpty(result.DocumentId) ? result.DocumentId : "unknown";
     }
 
     private static string SanitizeToken(string token)

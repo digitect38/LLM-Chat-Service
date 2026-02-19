@@ -76,20 +76,11 @@ public sealed class RagWorker : BackgroundService
             _logger.LogDebug("Generating embedding for query. ConversationId={ConversationId}", conversationId);
             var queryVector = await _llmClient.GetEmbeddingAsync(request.Query, ct);
 
-            // 2. Build equipment filter for scoped search
-            Dictionary<string, object>? filter = null;
-            if (!string.IsNullOrWhiteSpace(request.EquipmentId))
-            {
-                filter = new Dictionary<string, object>
-                {
-                    ["equipment_id"] = request.EquipmentId
-                };
-            }
-
-            // 3. Search the vector store
+            // 2. Search the vector store (no equipment filter — shared + equipment-specific docs are both included,
+            //    cosine similarity + MinScore filtering handles relevance)
             var collection = _qdrantOptions.DefaultCollection;
             var searchResults = await _vectorStore.SearchAsync(
-                collection, queryVector, request.TopK, filter, ct);
+                collection, queryVector, request.TopK, filter: null, ct);
 
             _logger.LogInformation(
                 "Vector search completed. ConversationId={ConversationId}, ResultCount={ResultCount}",
