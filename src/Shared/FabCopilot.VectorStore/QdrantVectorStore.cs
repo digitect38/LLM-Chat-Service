@@ -19,11 +19,6 @@ public sealed class QdrantVectorStore : IVectorStore
         _client = new QdrantClient(opts.Host, opts.GrpcPort);
     }
 
-    public QdrantVectorStore(QdrantClient client)
-    {
-        _client = client ?? throw new ArgumentNullException(nameof(client));
-    }
-
     public async Task EnsureCollectionAsync(string collection, int vectorSize, CancellationToken ct = default)
     {
         var exists = await _client.CollectionExistsAsync(collection, ct);
