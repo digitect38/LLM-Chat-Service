@@ -45,6 +45,9 @@ infra/certs/
 logs/
 *.log
 
+## Test results
+scripts/test-result*.txt
+
 ## Runtime data (infrastructure)
 storage/
 appendonlydir/
