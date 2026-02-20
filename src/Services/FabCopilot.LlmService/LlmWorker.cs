@@ -127,7 +127,28 @@ public sealed class LlmWorker : BackgroundService
                     ct);
             }
 
-            // 5. Publish final chunk with IsComplete = true
+            // 5. Append source citations if RAG results were used and LLM didn't already include them
+            var responseText = fullResponse.ToString();
+            var alreadyHasCitations = responseText.Contains("참고 문서") || responseText.Contains("참고문서");
+            var sourceSuffix = alreadyHasCitations ? null : BuildSourceCitations(ragResults);
+            if (!string.IsNullOrEmpty(sourceSuffix))
+            {
+                fullResponse.Append(sourceSuffix);
+
+                var sourceChunk = new ChatStreamChunk
+                {
+                    ConversationId = request.ConversationId,
+                    Token = sourceSuffix,
+                    IsComplete = false
+                };
+
+                await _messageBus.PublishAsync(
+                    streamSubject,
+                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", sourceChunk, request.EquipmentId),
+                    ct);
+            }
+
+            // 6. Publish final chunk with IsComplete = true
             var completeChunk = new ChatStreamChunk
             {
                 ConversationId = request.ConversationId,
@@ -140,7 +161,7 @@ public sealed class LlmWorker : BackgroundService
                 MessageEnvelope<ChatStreamChunk>.Create("chat.stream.complete", completeChunk, request.EquipmentId),
                 ct);
 
-            // 6. Append the assistant message to the Redis conversation
+            // 7. Append the assistant message to the Redis conversation
             var assistantMessage = new ChatMessage
             {
                 Role = MessageRole.Assistant,
@@ -360,6 +381,33 @@ public sealed class LlmWorker : BackgroundService
                 conversationId);
             return [];
         }
+    }
+
+    internal static string BuildSourceCitations(List<RetrievalResult> ragResults)
+    {
+        if (ragResults is not { Count: > 0 })
+            return string.Empty;
+
+        var sources = ragResults
+            .Select(r => ExtractSourceName(r))
+            .Where(name => name != "unknown")
+            .Distinct()
+            .ToList();
+
+        if (sources.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine("📚 **참고 문서:**");
+        foreach (var source in sources)
+        {
+            sb.AppendLine($"- 📄 {source} (score: {ragResults.First(r => ExtractSourceName(r) == source).Score:F3})");
+        }
+
+        return sb.ToString();
     }
 
     private static string ExtractSourceName(RetrievalResult result)
