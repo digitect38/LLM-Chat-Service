@@ -1,6 +1,6 @@
 # FabCopilot Windows 환경 인프라 구축 SOP
 
-> **버전**: 1.2
+> **버전**: 1.3
 > **작성일**: 2026-02-20
 > **대상**: Windows 10/11 환경에서 FabCopilot 시스템 개발/운영
 
@@ -17,11 +17,12 @@
 5. [.NET 서비스 빌드 및 실행](#5-net-서비스-빌드-및-실행)
 6. [서비스 상태 확인](#6-서비스-상태-확인)
 7. [트러블슈팅](#7-트러블슈팅)
-8. [부록](#부록-a-주요-설정-파일-경로)
-   - A. [주요 설정 파일 경로](#부록-a-주요-설정-파일-경로)
-   - B. [네이티브 설치 바이너리 경로](#부록-b-네이티브-설치-바이너리-경로-방법-b)
-   - C. [운영 스크립트 경로](#부록-c-운영-스크립트-경로)
-   - D. [Ollama 모델 목록](#부록-d-ollama-모델-목록)
+8. [부록](#부록-a-git-저장소-정보)
+   - A. [Git 저장소 정보](#부록-a-git-저장소-정보)
+   - B. [주요 설정 파일 경로](#부록-b-주요-설정-파일-경로)
+   - C. [네이티브 설치 바이너리 경로](#부록-c-네이티브-설치-바이너리-경로-방법-b)
+   - D. [운영 스크립트 경로](#부록-d-운영-스크립트-경로)
+   - E. [Ollama 모델 목록](#부록-e-ollama-모델-목록)
 
 ---
 
@@ -604,7 +605,75 @@ netstat -ano | findstr ":5010"   # WebClient
 
 ---
 
-## 부록 A: 주요 설정 파일 경로
+## 부록 A: Git 저장소 정보
+
+### 저장소 경로
+
+```
+D:\__WORK2__\LLM-Chat-Service-master
+```
+
+### 디렉토리 구조
+
+```
+LLM-Chat-Service-master/
+├── FabCopilot.sln                    # .NET 솔루션 파일
+├── global.json                       # .NET SDK 버전 지정
+├── Directory.Build.props             # 공통 빌드 설정
+├── Directory.Packages.props          # NuGet 패키지 버전 중앙 관리
+├── .gitignore                        # Git 제외 규칙
+├── Plan/                             # 설계 문서 및 SOP
+│   ├── SOP-Windows-Infrastructure-Setup.md
+│   ├── Fab_Copilot_User_Manual.md
+│   └── Fab_OnPrem_LLM_Copilot_Design_MCP_Extended.md
+├── infra/                            # 인프라 설정
+│   ├── docker-compose.yml
+│   └── nats/
+│       ├── nats-server.conf          # Docker/Linux용
+│       └── nats-server-windows.conf  # Windows 네이티브용
+├── scripts/                          # 운영 스크립트
+│   ├── start-all.ps1
+│   ├── stop-all.ps1
+│   ├── start-infra.ps1
+│   ├── stop-infra.ps1
+│   ├── health-check.ps1
+│   ├── test-chat2.ps1
+│   └── test-chat-kr.ps1
+├── src/
+│   ├── Client/
+│   │   └── FabCopilot.WebClient/     # Blazor Web UI (:5010)
+│   ├── Services/
+│   │   ├── FabCopilot.ChatGateway/   # WebSocket Gateway (:5000)
+│   │   ├── FabCopilot.LlmService/    # LLM Worker (:5001)
+│   │   ├── FabCopilot.KnowledgeService/ # Knowledge API (:5002)
+│   │   ├── FabCopilot.RagService/    # RAG Worker (:5003)
+│   │   ├── FabCopilot.AlarmCopilot/  # Alarm Worker (:5004)
+│   │   ├── FabCopilot.McpLogServer/  # MCP Log Worker (:5005)
+│   │   └── FabCopilot.RcaAgent/      # RCA Worker (:5006)
+│   └── Shared/
+│       ├── FabCopilot.Contracts/     # 공유 메시지/모델/상수
+│       ├── FabCopilot.Messaging/     # NATS 메시지 버스
+│       ├── FabCopilot.Redis/         # Redis 대화 저장소
+│       ├── FabCopilot.Llm/           # Ollama LLM 클라이언트
+│       ├── FabCopilot.VectorStore/   # Qdrant 벡터 저장소
+│       └── FabCopilot.Observability/ # 로깅/텔레메트리
+└── tests/
+    └── FabCopilot.RagPipeline.Tests/ # RAG 파이프라인 테스트
+```
+
+### .gitignore 주요 제외 항목
+
+| 카테고리 | 제외 패턴 | 설명 |
+|----------|-----------|------|
+| .NET 빌드 | `bin/`, `obj/`, `[Dd]ebug/`, `[Rr]elease/` | 빌드 출력물 |
+| NuGet | `**/packages/`, `*.nupkg` | 패키지 캐시 |
+| IDE | `.vs/`, `.idea/` | IDE 설정 |
+| 런타임 데이터 | `storage/`, `appendonlydir/`, `.qdrant-initialized`, `dump.rdb` | Qdrant/Redis 런타임 데이터 |
+| 보안 | `*.pfx`, `*.key`, `*.pem`, `infra/certs/` | 인증서/키 |
+| 로그 | `logs/`, `*.log` | 로그 파일 |
+| Claude Code | `.claude/` | AI 도구 설정 |
+
+## 부록 B: 주요 설정 파일 경로
 
 | 파일 | 위치 | 용도 |
 |------|------|------|
@@ -613,10 +682,11 @@ netstat -ano | findstr ":5010"   # WebClient
 | nats-server-windows.conf | `infra/nats/nats-server-windows.conf` | NATS 브로커 설정 (Windows 네이티브용) |
 | global.json | `global.json` | .NET SDK 버전 지정 |
 | Directory.Packages.props | `Directory.Packages.props` | NuGet 패키지 버전 중앙 관리 |
-| appsettings.json | 각 서비스의 프로젝트 폴더 | 서비스별 설정 (NATS, Redis, Qdrant, Ollama URL 등) |
+| .gitignore | `.gitignore` | Git 제외 규칙 |
+| appsettings.json | 각 서비스의 프로젝트 폴더 | 서비스별 설정 (NATS, Redis, Qdrant, Ollama URL, 포트 등) |
 | launchSettings.json | 각 서비스의 `Properties/` 폴더 | 개발 환경 실행 프로필 |
 
-## 부록 B: 네이티브 설치 바이너리 경로 (방법 B)
+## 부록 C: 네이티브 설치 바이너리 경로 (방법 B)
 
 | 구성요소 | 바이너리 경로 | 버전 | 다운로드 출처 |
 |----------|---------------|------|---------------|
@@ -626,7 +696,7 @@ netstat -ano | findstr ":5010"   # WebClient
 | Qdrant | `D:\Qdrant\qdrant.exe` | v1.12.0 | [GitHub](https://github.com/qdrant/qdrant/releases) |
 | Ollama | 시스템 PATH (`winget install`) | v0.15.4+ | [ollama.com](https://ollama.com) |
 
-## 부록 C: 운영 스크립트 경로
+## 부록 D: 운영 스크립트 경로
 
 | 스크립트 | 위치 | 용도 |
 |----------|------|------|
@@ -638,7 +708,7 @@ netstat -ano | findstr ":5010"   # WebClient
 | test-chat2.ps1 | `scripts/test-chat2.ps1` | WebSocket 영어 채팅 테스트 |
 | test-chat-kr.ps1 | `scripts/test-chat-kr.ps1` | WebSocket 한국어 채팅 테스트 |
 
-## 부록 D: Ollama 모델 목록
+## 부록 E: Ollama 모델 목록
 
 | 모델 | 용도 | 크기 | 사용 서비스 |
 |------|------|------|-------------|
