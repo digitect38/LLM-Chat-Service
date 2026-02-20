@@ -17,18 +17,25 @@ public sealed class LlmWorker : BackgroundService
     private readonly IMessageBus _messageBus;
     private readonly IConversationStore _conversationStore;
     private readonly ILlmClient _llmClient;
+    private readonly RagPipelineMode _ragPipelineMode;
     private readonly ILogger<LlmWorker> _logger;
 
     public LlmWorker(
         IMessageBus messageBus,
         IConversationStore conversationStore,
         ILlmClient llmClient,
+        IConfiguration configuration,
         ILogger<LlmWorker> logger)
     {
         _messageBus = messageBus;
         _conversationStore = conversationStore;
         _llmClient = llmClient;
         _logger = logger;
+
+        var modeStr = configuration.GetValue<string>("Rag:PipelineMode");
+        _ragPipelineMode = Enum.TryParse<RagPipelineMode>(modeStr, ignoreCase: true, out var mode)
+            ? mode
+            : RagPipelineMode.Advanced;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -310,7 +317,8 @@ public sealed class LlmWorker : BackgroundService
                 Query = userMessage,
                 EquipmentId = equipmentId,
                 TopK = 3,
-                ConversationId = conversationId
+                ConversationId = conversationId,
+                PipelineMode = _ragPipelineMode
             };
 
             await _messageBus.PublishAsync(

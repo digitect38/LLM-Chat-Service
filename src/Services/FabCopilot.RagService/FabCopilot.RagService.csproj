@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\Shared\FabCopilot.Llm\FabCopilot.Llm.csproj" />
     <ProjectReference Include="..\..\Shared\FabCopilot.VectorStore\FabCopilot.VectorStore.csproj" />
     <ProjectReference Include="..\..\Shared\FabCopilot.Observability\FabCopilot.Observability.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Redis\FabCopilot.Redis.csproj" />
   </ItemGroup>
 
 </Project>

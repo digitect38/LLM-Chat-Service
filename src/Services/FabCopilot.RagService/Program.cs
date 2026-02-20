@@ -2,8 +2,10 @@ using FabCopilot.Messaging.Extensions;
 using FabCopilot.Llm.Extensions;
 using FabCopilot.VectorStore.Extensions;
 using FabCopilot.Observability.Extensions;
+using FabCopilot.Redis.Extensions;
 using FabCopilot.RagService;
 using FabCopilot.RagService.Configuration;
+using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services;
 
 Host.CreateDefaultBuilder(args)
@@ -19,11 +21,23 @@ Host.CreateDefaultBuilder(args)
         services.AddFabMessaging(ctx.Configuration);
         services.AddFabLlm(ctx.Configuration);
         services.AddFabVectorStore(ctx.Configuration);
+        services.AddFabRedis(ctx.Configuration);
         services.AddFabTelemetry(ctx.Configuration);
         services.Configure<RagOptions>(ctx.Configuration.GetSection(RagOptions.SectionName));
+
+        // RAG pipeline services
+        services.AddSingleton<IQueryRewriter, LlmQueryRewriter>();
+        services.AddSingleton<ILlmReranker, LlmReranker>();
+        services.AddSingleton<IKnowledgeGraphStore, RedisKnowledgeGraphStore>();
+        services.AddSingleton<IEntityExtractor, LlmEntityExtractor>();
+        services.AddSingleton<IAgenticRagOrchestrator, AgenticRagOrchestrator>();
+
+        // Document ingestion
         services.AddSingleton<DocumentIngestor>();
         services.AddSingleton<FileTextExtractor>();
         services.AddHostedService<FileWatcherIngestorService>();
+
+        // RAG worker
         services.AddHostedService<RagWorker>();
     })
     .Build()

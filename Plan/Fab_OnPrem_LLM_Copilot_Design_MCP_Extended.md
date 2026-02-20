@@ -8,10 +8,11 @@
 ---
 
 ## 0. 문서 버전
-- Version: 1.4
-- Date: 2026-02-20
+- Version: 1.5
+- Date: 2026-02-21
 - Scope: Architecture Design + Implementation Spec (SDS-lite)
 - Changes:
+  - v1.5: 4세대 RAG 파이프라인 아키텍처 추가 (Naive → Advanced → GraphRAG → Agentic RAG)
   - v1.4: RAG 출처 인용 기능 추가 (LLM 응답에 참고 문서명 자동 표시), NATS JsonElement 메타데이터 역직렬화 버그 수정
   - v1.3: FileSystemWatcher 기반 자동 RAG 문서 수집 기능 추가 (폴더 감시 → 텍스트 추출 → 벡터 스토어 자동 수집/삭제)
   - v1.2: 다중 LLM 모델 선택 기능 추가 (WebClient 드롭다운 → ChatRequest.ModelId → LlmWorker per-request 오버라이드)
@@ -696,7 +697,118 @@ Pad 유지보수 절차...
 
 ---
 
-# 10. Next Steps Checklist
+# 10. 4-Stage RAG Pipeline Architecture
+
+> RagService는 요청별 `PipelineMode` 선택으로 4세대 RAG를 모두 지원한다.
+
+## 10.1 Pipeline Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    RagRequest.PipelineMode                       │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
+│  │  Naive   │ │ Advanced │ │  Graph   │ │ Agentic  │          │
+│  │  (1세대) │ │  (2세대) │ │  (3세대) │ │  (4세대) │          │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘          │
+│       │             │             │             │                │
+│       ▼             ▼             ▼             ▼                │
+│  ┌─────────┐  ┌──────────┐ ┌──────────┐ ┌──────────────┐      │
+│  │ Embed → │  │ Rewrite  │ │ Rewrite  │ │ Plan (LLM)   │      │
+│  │ Search  │  │ → Embed  │ │ → Embed  │ │ → Sub-queries│      │
+│  │ → Kw    │  │ → Search │ │ → Search │ └──────┬───────┘      │
+│  │ Boost   │  │ → LLM    │ │ → Graph  │        │              │
+│  │ → TopK  │  │ Rerank   │ │ Lookup   │   ┌────▼────┐         │
+│  └─────────┘  │ → TopK   │ │ → LLM    │   │ Act:    │         │
+│               └──────────┘ │ Rerank   │   │ Graph   │         │
+│                            │ → TopK   │   │ Pipeline│         │
+│                            └──────────┘   │ per sub-Q│        │
+│                                           └────┬────┘         │
+│                                                │              │
+│                                           ┌────▼────┐         │
+│                                           │ Verify  │         │
+│                                           │ (LLM)   │──Loop   │
+│                                           └─────────┘         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 10.2 1세대 Naive RAG
+
+**흐름**: Query → Embed → Vector Search → Keyword Boost Rerank → TopK
+
+- 기존 구현과 동일
+- `RagPipelineMode.Naive` (default)
+- 가장 빠름, LLM 호출 없음 (embedding만 사용)
+
+## 10.3 2세대 Advanced RAG
+
+**흐름**: Query → **LLM Query Rewrite** → Embed → Over-fetch → Score Filter → **LLM Rerank** → TopK
+
+- **Pre-retrieval**: `IQueryRewriter` — LLM이 도메인 약어 확장, 동의어 추가, 검색 최적화 쿼리 생성
+- **Post-retrieval**: `ILlmReranker` — LLM이 후보 문서를 0~10점으로 관련성 평가 후 재정렬
+- `RagPipelineMode.Advanced`
+
+핵심 설정:
+```json
+{
+  "EnableQueryRewriting": true,
+  "EnableLlmReranking": true,
+  "LlmRerankCandidateCount": 20
+}
+```
+
+## 10.4 3세대 GraphRAG
+
+**흐름**: Query → Rewrite → Embed + **Graph Lookup** → Vector + Graph Context → LLM Rerank → TopK
+
+- **Knowledge Graph**: Redis 기반 엔티티-관계 저장소
+  - Entity types: Equipment, Component, Process, Symptom, Cause
+  - Relation types: HasComponent, CausedBy, RelatesTo, UsedIn, Produces
+- **Entity Extraction**: 문서 수집(ingest) 시 `IEntityExtractor`가 LLM으로 엔티티/관계 추출 → 그래프 저장
+- **Graph Lookup**: 쿼리 키워드로 관련 엔티티 BFS 탐색 → 그래프 컨텍스트 생성
+- `RagPipelineMode.Graph`
+
+핵심 설정:
+```json
+{
+  "EnableGraphLookup": true,
+  "GraphMaxDepth": 2,
+  "ExtractEntitiesOnIngest": true
+}
+```
+
+## 10.5 4세대 Agentic RAG
+
+**흐름**: Plan → Act → Verify → (Loop)
+
+1. **Plan**: LLM이 복합 질문을 독립 검색 가능한 하위 질문으로 분해
+2. **Act**: 각 하위 질문에 대해 Graph Pipeline 실행 (전체 3세대 파이프라인 재사용)
+3. **Verify**: LLM이 수집된 컨텍스트가 원래 질문에 답변하기에 충분한지 평가
+4. **Iterate**: 부족 시 추가 하위 질문 생성 (최대 `MaxAgenticIterations`회)
+- `RagPipelineMode.Agentic`
+
+핵심 설정:
+```json
+{
+  "DefaultMaxAgenticIterations": 3
+}
+```
+
+## 10.6 새 Contracts/Interfaces
+
+| 파일 | 역할 |
+|------|------|
+| `RagPipelineMode` enum | Naive / Advanced / Graph / Agentic |
+| `GraphEntity` | 지식 그래프 엔티티 (Name, Type, Properties) |
+| `GraphRelation` | 지식 그래프 관계 (Source, Target, RelationType) |
+| `IQueryRewriter` | Pre-retrieval 쿼리 재작성 |
+| `ILlmReranker` | Post-retrieval LLM 재순위 |
+| `IKnowledgeGraphStore` | Redis 기반 그래프 저장/조회 |
+| `IEntityExtractor` | LLM 기반 엔티티/관계 추출 |
+| `IAgenticRagOrchestrator` | Plan-Act-Verify 오케스트레이터 |
+
+---
+
+# 11. Next Steps Checklist
 
 - [x] Chat Gateway + LLM Service 기본 채팅 흐름 구현
 - [x] RAG Service 벡터 검색 구현
@@ -706,6 +818,7 @@ Pad 유지보수 절차...
 - [x] **다중 LLM 모델 선택 (EXAONE / Qwen / Llama UI 드롭다운)**
 - [x] **FileWatcher 자동 문서 수집 (knowledge-docs/ 폴더 감시 → MD/TXT/PDF 자동 수집)**
 - [x] **RAG 출처 인용 (응답에 참고 문서명 자동 표시 + JsonElement 메타데이터 수정)**
+- [x] **4세대 RAG 파이프라인 (Naive → Advanced → GraphRAG → Agentic RAG)**
 - [ ] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP)
 - [ ] MCP Tool schema 확정 및 테스트 데이터로 검증
 - [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)

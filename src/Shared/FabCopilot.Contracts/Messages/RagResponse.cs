@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using FabCopilot.Contracts.Enums;
 
 namespace FabCopilot.Contracts.Messages;
 
@@ -9,6 +10,15 @@ public sealed class RagResponse
 
     [JsonPropertyName("results")]
     public List<RetrievalResult> Results { get; set; } = [];
+
+    [JsonPropertyName("pipelineMode")]
+    public RagPipelineMode PipelineMode { get; set; }
+
+    [JsonPropertyName("iterationCount")]
+    public int IterationCount { get; set; }
+
+    [JsonPropertyName("rewrittenQuery")]
+    public string? RewrittenQuery { get; set; }
 }
 
 public sealed class RetrievalResult
@@ -24,4 +34,7 @@ public sealed class RetrievalResult
 
     [JsonPropertyName("metadata")]
     public Dictionary<string, object> Metadata { get; set; } = new();
+
+    [JsonPropertyName("graphContext")]
+    public string? GraphContext { get; set; }
 }

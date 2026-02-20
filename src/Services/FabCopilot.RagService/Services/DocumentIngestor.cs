@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using FabCopilot.Llm.Interfaces;
+using FabCopilot.RagService.Configuration;
+using FabCopilot.RagService.Interfaces;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -14,17 +16,26 @@ public sealed class DocumentIngestor
     private readonly ILlmClient _llmClient;
     private readonly IVectorStore _vectorStore;
     private readonly QdrantOptions _qdrantOptions;
+    private readonly RagOptions _ragOptions;
+    private readonly IEntityExtractor? _entityExtractor;
+    private readonly IKnowledgeGraphStore? _graphStore;
     private readonly ILogger<DocumentIngestor> _logger;
 
     public DocumentIngestor(
         ILlmClient llmClient,
         IVectorStore vectorStore,
         IOptions<QdrantOptions> qdrantOptions,
-        ILogger<DocumentIngestor> logger)
+        IOptions<RagOptions> ragOptions,
+        ILogger<DocumentIngestor> logger,
+        IEntityExtractor? entityExtractor = null,
+        IKnowledgeGraphStore? graphStore = null)
     {
         _llmClient = llmClient;
         _vectorStore = vectorStore;
         _qdrantOptions = qdrantOptions.Value;
+        _ragOptions = ragOptions.Value;
+        _entityExtractor = entityExtractor;
+        _graphStore = graphStore;
         _logger = logger;
     }
 
@@ -90,6 +101,35 @@ public sealed class DocumentIngestor
             _logger.LogDebug(
                 "Upserted chunk {ChunkIndex}/{ChunkCount} for document {DocumentId}",
                 i + 1, chunks.Count, documentId);
+
+            // Extract entities and relations for knowledge graph (if enabled)
+            if (_entityExtractor is not null && _graphStore is not null && _ragOptions.ExtractEntitiesOnIngest)
+            {
+                try
+                {
+                    var entities = await _entityExtractor.ExtractEntitiesAsync(chunk, ct);
+                    foreach (var entity in entities)
+                    {
+                        await _graphStore.UpsertEntityAsync(entity, ct);
+                    }
+
+                    var relations = await _entityExtractor.ExtractRelationsAsync(chunk, entities, ct);
+                    foreach (var relation in relations)
+                    {
+                        await _graphStore.UpsertRelationAsync(relation, ct);
+                    }
+
+                    _logger.LogDebug(
+                        "Extracted {EntityCount} entities and {RelationCount} relations from chunk {ChunkIndex} of {DocumentId}",
+                        entities.Count, relations.Count, i + 1, documentId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Entity extraction failed for chunk {ChunkIndex} of {DocumentId}, continuing",
+                        i + 1, documentId);
+                }
+            }
         }
 
         _logger.LogInformation(
