@@ -4,9 +4,9 @@ public sealed class RagOptions
 {
     public const string SectionName = "Rag";
 
-    public float MinScore { get; set; } = 0.3f;
+    public float MinScore { get; set; } = 0.45f;
 
-    public int DefaultTopK { get; set; } = 5;
+    public int DefaultTopK { get; set; } = 3;
 
     public string? WatchFolder { get; set; }
 

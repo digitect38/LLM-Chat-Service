@@ -11,7 +11,7 @@ public sealed class RagRequest
     public string EquipmentId { get; set; } = string.Empty;
 
     [JsonPropertyName("topK")]
-    public int TopK { get; set; } = 5;
+    public int TopK { get; set; } = 3;
 
     [JsonPropertyName("conversationId")]
     public string? ConversationId { get; set; }

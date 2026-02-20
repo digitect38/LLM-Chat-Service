@@ -309,7 +309,7 @@ public sealed class LlmWorker : BackgroundService
             {
                 Query = userMessage,
                 EquipmentId = equipmentId,
-                TopK = 5,
+                TopK = 3,
                 ConversationId = conversationId
             };
 

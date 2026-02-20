@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FabCopilot.Contracts.Constants;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Llm.Interfaces;
@@ -76,22 +77,32 @@ public sealed class RagWorker : BackgroundService
             _logger.LogDebug("Generating embedding for query. ConversationId={ConversationId}", conversationId);
             var queryVector = await _llmClient.GetEmbeddingAsync(request.Query, ct);
 
-            // 2. Search the vector store (no equipment filter — shared + equipment-specific docs are both included,
-            //    cosine similarity + MinScore filtering handles relevance)
+            // 2. Over-fetch candidates from vector store for hybrid re-ranking
             var collection = _qdrantOptions.DefaultCollection;
+            var overFetchK = Math.Max(request.TopK * 10, 100);
             var searchResults = await _vectorStore.SearchAsync(
-                collection, queryVector, request.TopK, filter: null, ct);
+                collection, queryVector, overFetchK, filter: null, ct);
 
             _logger.LogInformation(
-                "Vector search completed. ConversationId={ConversationId}, ResultCount={ResultCount}",
-                conversationId, searchResults.Count);
+                "Vector search completed. ConversationId={ConversationId}, OverFetchK={OverFetchK}, ResultCount={ResultCount}",
+                conversationId, overFetchK, searchResults.Count);
 
-            // 3.5 Filter results by minimum score
-            var filtered = FilterByScore(searchResults, _ragOptions.MinScore);
+            // 2.5. Pre-filter by MinScore on the large candidate pool
+            var candidates = FilterByScore(searchResults, _ragOptions.MinScore);
 
             _logger.LogInformation(
-                "Score filtering applied. ConversationId={ConversationId}, Before={Before}, After={After}, MinScore={MinScore}",
-                conversationId, searchResults.Count, filtered.Count, _ragOptions.MinScore);
+                "Pre-filter applied. ConversationId={ConversationId}, Before={Before}, After={After}, MinScore={MinScore}",
+                conversationId, searchResults.Count, candidates.Count, _ragOptions.MinScore);
+
+            // 3. Re-rank with expanded keyword boost and take desired TopK
+            var keywords = ExtractKeywords(request.Query);
+            var expanded = ExpandKeywords(keywords);
+            var reranked = RerankWithKeywordBoost(candidates, expanded);
+            var filtered = reranked.Take(request.TopK).ToList();
+
+            _logger.LogInformation(
+                "Keyword re-ranking applied. ConversationId={ConversationId}, Keywords=[{Keywords}], Expanded=[{Expanded}], TopK={TopK}, ResultCount={ResultCount}",
+                conversationId, string.Join(", ", keywords), string.Join(", ", expanded), request.TopK, filtered.Count);
 
             // 4. Map results to response
             var retrievalResults = filtered.Select(r => new RetrievalResult
@@ -153,4 +164,69 @@ public sealed class RagWorker : BackgroundService
     internal static List<VectorSearchResult> FilterByScore(
         IReadOnlyList<VectorSearchResult> results, float minScore)
         => results.Where(r => r.Score >= minScore).ToList();
+
+    /// <summary>
+    /// Extracts content keywords from a query by removing Korean particles and short words.
+    /// </summary>
+    internal static List<string> ExtractKeywords(string query)
+    {
+        // Remove common Korean particles, endings, and punctuation
+        var cleaned = Regex.Replace(query,
+            @"[은는이가을를의에서로부터까지와과도만요인가요습니까세요죠나요?!.,\s]+", " ");
+        return cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => w.Length >= 2)
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>
+    /// Expands keywords with domain-specific related terms to improve recall.
+    /// Timing/criteria intent words are expanded to match section headers and content
+    /// that contain criteria, thresholds, and specifications.
+    /// </summary>
+    internal static readonly Dictionary<string, string[]> QueryExpansionMap = new()
+    {
+        ["시기"] = ["기준", "시간", "수명", "주기"],
+        ["언제"] = ["기준", "시간", "시점"],
+        ["원인"] = ["이유", "문제", "발생"],
+        ["방법"] = ["절차", "순서", "단계"],
+        ["주기"] = ["기준", "시간", "수명"],
+    };
+
+    internal static List<string> ExpandKeywords(List<string> keywords)
+    {
+        var expanded = new HashSet<string>(keywords);
+        foreach (var kw in keywords)
+        {
+            if (QueryExpansionMap.TryGetValue(kw, out var related))
+            {
+                foreach (var r in related)
+                    expanded.Add(r);
+            }
+        }
+        return expanded.ToList();
+    }
+
+    /// <summary>
+    /// Re-ranks vector search results by boosting scores for chunks that contain query keywords.
+    /// Each keyword match adds a boost to the original vector similarity score.
+    /// </summary>
+    internal static List<VectorSearchResult> RerankWithKeywordBoost(
+        IReadOnlyList<VectorSearchResult> results, List<string> keywords, float boostPerKeyword = 0.10f)
+    {
+        if (keywords.Count == 0)
+            return results.OrderByDescending(r => r.Score).ToList();
+
+        return results
+            .Select(r =>
+            {
+                var text = r.Payload.TryGetValue("text", out var t) ? t.ToString() ?? "" : "";
+                var matchCount = keywords.Count(kw => text.Contains(kw, StringComparison.OrdinalIgnoreCase));
+                var boostedScore = r.Score + (matchCount * boostPerKeyword);
+                return (Result: r, BoostedScore: boostedScore);
+            })
+            .OrderByDescending(x => x.BoostedScore)
+            .Select(x => x.Result)
+            .ToList();
+    }
 }
