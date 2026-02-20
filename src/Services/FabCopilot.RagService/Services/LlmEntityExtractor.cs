@@ -102,16 +102,24 @@ public sealed class LlmEntityExtractor : IEntityExtractor
         }
     }
 
+    private static string StripCodeFences(string text)
+    {
+        if (text.Contains("```"))
+            return System.Text.RegularExpressions.Regex.Replace(text, @"```(?:json)?\s*", "");
+        return text;
+    }
+
     private List<GraphEntity> ParseEntities(string response)
     {
         try
         {
-            var jsonStart = response.IndexOf('{');
-            var jsonEnd = response.LastIndexOf('}');
+            var cleaned = StripCodeFences(response);
+            var jsonStart = cleaned.IndexOf('{');
+            var jsonEnd = cleaned.LastIndexOf('}');
             if (jsonStart < 0 || jsonEnd < 0)
                 return [];
 
-            var json = response[jsonStart..(jsonEnd + 1)];
+            var json = cleaned[jsonStart..(jsonEnd + 1)];
             var doc = JsonDocument.Parse(json);
 
             if (!doc.RootElement.TryGetProperty("entities", out var entitiesArray))
@@ -147,12 +155,13 @@ public sealed class LlmEntityExtractor : IEntityExtractor
     {
         try
         {
-            var jsonStart = response.IndexOf('{');
-            var jsonEnd = response.LastIndexOf('}');
+            var cleaned = StripCodeFences(response);
+            var jsonStart = cleaned.IndexOf('{');
+            var jsonEnd = cleaned.LastIndexOf('}');
             if (jsonStart < 0 || jsonEnd < 0)
                 return [];
 
-            var json = response[jsonStart..(jsonEnd + 1)];
+            var json = cleaned[jsonStart..(jsonEnd + 1)];
             var doc = JsonDocument.Parse(json);
 
             if (!doc.RootElement.TryGetProperty("relations", out var relationsArray))

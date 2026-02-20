@@ -90,21 +90,42 @@ public sealed class LlmReranker : ILlmReranker
         return string.Join("", parts);
     }
 
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private List<VectorSearchResult> ParseRerankResponse(
         string response, IReadOnlyList<VectorSearchResult> candidates)
     {
         try
         {
-            // Extract JSON array from response (may contain surrounding text)
-            var jsonStart = response.IndexOf('[');
-            var jsonEnd = response.LastIndexOf(']');
-            if (jsonStart < 0 || jsonEnd < 0 || jsonEnd <= jsonStart)
-                return [];
+            // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+            var cleaned = response;
+            if (cleaned.Contains("```"))
+            {
+                cleaned = System.Text.RegularExpressions.Regex.Replace(
+                    cleaned, @"```(?:json)?\s*", "");
+            }
 
-            var json = response[jsonStart..(jsonEnd + 1)];
-            var scores = JsonSerializer.Deserialize<List<RerankScore>>(json);
-            if (scores is null)
+            // Extract JSON array from response (may contain surrounding text)
+            var jsonStart = cleaned.IndexOf('[');
+            var jsonEnd = cleaned.LastIndexOf(']');
+            if (jsonStart < 0 || jsonEnd < 0 || jsonEnd <= jsonStart)
+            {
+                _logger.LogWarning("No JSON array found in LLM rerank response: {Response}", response);
                 return [];
+            }
+
+            var json = cleaned[jsonStart..(jsonEnd + 1)];
+            var scores = JsonSerializer.Deserialize<List<RerankScore>>(json, JsonOptions);
+            if (scores is null || scores.Count == 0)
+            {
+                _logger.LogWarning("Deserialized empty scores from LLM rerank response: {Json}", json);
+                return [];
+            }
+
+            _logger.LogDebug("Parsed {Count} rerank scores from LLM response", scores.Count);
 
             return scores
                 .Where(s => s.Index >= 0 && s.Index < candidates.Count)
