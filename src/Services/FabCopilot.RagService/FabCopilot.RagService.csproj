@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FabCopilot.RagPipeline.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="PdfPig" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\FabCopilot.Contracts\FabCopilot.Contracts.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Messaging\FabCopilot.Messaging.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Llm\FabCopilot.Llm.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.VectorStore\FabCopilot.VectorStore.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Observability\FabCopilot.Observability.csproj" />
+  </ItemGroup>
+
+</Project>

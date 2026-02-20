@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\FabCopilot.Contracts\FabCopilot.Contracts.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Messaging\FabCopilot.Messaging.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Redis\FabCopilot.Redis.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Observability\FabCopilot.Observability.csproj" />
+  </ItemGroup>
+
+</Project>

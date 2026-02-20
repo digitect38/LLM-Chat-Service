@@ -1,0 +1,104 @@
+@using Microsoft.AspNetCore.Components.Web
+@namespace FabCopilot.WebClient.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="~/" />
+    <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
+    <link href="css/app.css" rel="stylesheet" />
+    <link href="FabCopilot.WebClient.styles.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+    <title>Fab Copilot</title>
+    <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+</head>
+<body>
+    @RenderBody()
+
+    <div id="blazor-error-ui">
+        <environment include="Staging,Production">
+            An error has occurred. This application may no longer respond until reloaded.
+        </environment>
+        <environment include="Development">
+            An unhandled exception has occurred. See browser dev tools for details.
+        </environment>
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">X</a>
+    </div>
+
+    <script src="_framework/blazor.server.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script>
+        window.chatScroll = {
+            scrollToBottom: function (elementId) {
+                var element = document.getElementById(elementId);
+                if (element) {
+                    element.scrollTop = element.scrollHeight;
+                }
+            }
+        };
+
+        window.chatRenderer = {
+            renderMarkdown: function (text) {
+                if (!text) return '';
+
+                var blockMath = [];
+                var inlineMath = [];
+
+                // 1. Extract block math: $$...$$ and \[...\]
+                text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (match, formula) {
+                    var idx = blockMath.length;
+                    blockMath.push(formula.trim());
+                    return '\n%%BLOCKMATH' + idx + '%%\n';
+                });
+                text = text.replace(/\\\[([\s\S]*?)\\\]/g, function (match, formula) {
+                    var idx = blockMath.length;
+                    blockMath.push(formula.trim());
+                    return '\n%%BLOCKMATH' + idx + '%%\n';
+                });
+
+                // 2. Extract inline math: $...$ and \(...\)
+                text = text.replace(/\$([^\$\n]+?)\$/g, function (match, formula) {
+                    var idx = inlineMath.length;
+                    inlineMath.push(formula.trim());
+                    return '%%INLINEMATH' + idx + '%%';
+                });
+                text = text.replace(/\\\((.*?)\\\)/g, function (match, formula) {
+                    var idx = inlineMath.length;
+                    inlineMath.push(formula.trim());
+                    return '%%INLINEMATH' + idx + '%%';
+                });
+
+                // 3. Render markdown
+                var html = marked.parse(text);
+
+                // 4. Restore block math with KaTeX rendering
+                html = html.replace(/%%BLOCKMATH(\d+)%%/g, function (match, idx) {
+                    try {
+                        return '<div class="katex-block">' +
+                            katex.renderToString(blockMath[parseInt(idx)], { displayMode: true, throwOnError: false }) +
+                            '</div>';
+                    } catch (e) {
+                        return '<div class="katex-block katex-error">' + blockMath[parseInt(idx)] + '</div>';
+                    }
+                });
+
+                // 5. Restore inline math with KaTeX rendering
+                html = html.replace(/%%INLINEMATH(\d+)%%/g, function (match, idx) {
+                    try {
+                        return katex.renderToString(inlineMath[parseInt(idx)], { displayMode: false, throwOnError: false });
+                    } catch (e) {
+                        return '<span class="katex-error">' + inlineMath[parseInt(idx)] + '</span>';
+                    }
+                });
+
+                return html;
+            }
+        };
+    </script>
+</body>
+</html>

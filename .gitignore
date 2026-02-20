@@ -1,0 +1,52 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+## NuGet
+**/packages/
+*.nupkg
+
+## Build
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## IDE
+.idea/
+*.swp
+*.swo
+*~
+
+## OS
+Thumbs.db
+.DS_Store
+
+## Claude Code
+.claude/
+
+## Secrets
+*.pfx
+*.key
+*.pem
+infra/certs/
+
+## Logs
+logs/
+*.log
+
+## Runtime data (infrastructure)
+storage/
+appendonlydir/
+.qdrant-initialized
+dump.rdb

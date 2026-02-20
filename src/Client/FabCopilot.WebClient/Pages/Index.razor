@@ -1,0 +1,303 @@
+@page "/"
+@using Microsoft.Extensions.Options
+@using FabCopilot.WebClient.Configuration
+@inject ChatService ChatService
+@inject IJSRuntime JS
+@inject IOptions<ModelOptions> ModelOptionsAccessor
+@implements IAsyncDisposable
+
+<div class="chat-container">
+    <!-- Equipment Context Panel -->
+    <div class="equipment-panel">
+        <div class="equipment-panel-row">
+            <label class="equipment-label" for="equipmentId">Equipment ID</label>
+            <input id="equipmentId"
+                   class="equipment-input"
+                   @bind="EquipmentId"
+                   @bind:event="oninput"
+                   placeholder="e.g. CMP01"
+                   disabled="@ChatService.IsConnected" />
+
+            @if (ChatService.IsConnected)
+            {
+                <button class="btn-disconnect" @onclick="DisconnectAsync">Disconnect</button>
+            }
+            else
+            {
+                <button class="btn-connect" @onclick="ConnectAsync" disabled="@_isConnecting">
+                    @(_isConnecting ? "Connecting..." : "Connect")
+                </button>
+            }
+
+            <div class="connection-status">
+                <span class="status-dot @(ChatService.IsConnected ? "status-connected" : "status-disconnected")"></span>
+                <span class="status-text">@(ChatService.IsConnected ? "Connected" : "Disconnected")</span>
+            </div>
+
+            <div class="model-separator"></div>
+
+            <label class="equipment-label" for="modelSelect">Model</label>
+            <select id="modelSelect"
+                    class="model-select"
+                    @bind="_selectedModelId"
+                    disabled="@_isSending">
+                @foreach (var model in _availableModels)
+                {
+                    <option value="@model.Id">@model.DisplayName</option>
+                }
+            </select>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_connectionError))
+        {
+            <div class="connection-error">@_connectionError</div>
+        }
+    </div>
+
+    <!-- Chat Messages -->
+    <div class="chat-messages" id="chatMessages">
+        @if (_messages.Count == 0)
+        {
+            <div class="chat-empty">
+                <div class="chat-empty-icon">&#128172;</div>
+                <div class="chat-empty-text">No messages yet</div>
+                <div class="chat-empty-hint">Connect to an equipment and start a conversation</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var msg in _messages)
+            {
+                <div class="message-row @(msg.IsUser ? "message-row-user" : "message-row-assistant")">
+                    <div class="message-bubble @(msg.IsUser ? "bubble-user" : "bubble-assistant")">
+                        <div class="message-sender">@(msg.IsUser ? "You" : "Fab Copilot")</div>
+                        @if (msg.IsUser)
+                        {
+                            <div class="message-text">@msg.Text</div>
+                        }
+                        else
+                        {
+                            <div class="message-text rendered-markdown">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
+                        }
+                        @if (msg.IsStreaming)
+                        {
+                            <span class="streaming-cursor">|</span>
+                        }
+                        @if (!string.IsNullOrEmpty(msg.Error))
+                        {
+                            <div class="message-error">Error: @msg.Error</div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- Message Input -->
+    <div class="chat-input-area">
+        <div class="chat-input-row">
+            <textarea class="chat-input"
+                      @bind="UserMessage"
+                      @bind:event="oninput"
+                      @onkeydown="HandleKeyDown"
+                      placeholder="@(ChatService.IsConnected ? "Type your message..." : "Connect to an equipment first...")"
+                      disabled="@(!ChatService.IsConnected || _isSending)"
+                      rows="1"></textarea>
+            <button class="btn-send"
+                    @onclick="SendMessageAsync"
+                    disabled="@(!ChatService.IsConnected || _isSending || string.IsNullOrWhiteSpace(UserMessage))">
+                Send
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string EquipmentId { get; set; } = "CMP01";
+    private string UserMessage { get; set; } = string.Empty;
+
+    private string _conversationId = Guid.NewGuid().ToString("N");
+    private string? _connectionError;
+    private bool _isConnecting;
+    private bool _isSending;
+    private int _renderCounter;
+    private string _selectedModelId = string.Empty;
+    private List<ModelEntry> _availableModels = new();
+
+    private readonly List<ChatMessageViewModel> _messages = new();
+
+    protected override void OnInitialized()
+    {
+        ChatService.OnMessageReceived += HandleChunkReceived;
+        ChatService.OnStateChanged += HandleStateChanged;
+
+        var modelOptions = ModelOptionsAccessor.Value;
+        _availableModels = modelOptions.Available;
+        _selectedModelId = !string.IsNullOrEmpty(modelOptions.Default)
+            ? modelOptions.Default
+            : _availableModels.FirstOrDefault()?.Id ?? string.Empty;
+    }
+
+    private async Task ConnectAsync()
+    {
+        if (string.IsNullOrWhiteSpace(EquipmentId))
+            return;
+
+        _isConnecting = true;
+        _connectionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await ChatService.ConnectAsync(EquipmentId.Trim());
+            _conversationId = Guid.NewGuid().ToString("N");
+            _messages.Clear();
+        }
+        catch (Exception ex)
+        {
+            _connectionError = $"Failed to connect: {ex.Message}";
+        }
+        finally
+        {
+            _isConnecting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DisconnectAsync()
+    {
+        await ChatService.DisconnectAsync();
+        StateHasChanged();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessageAsync();
+        }
+    }
+
+    private async Task SendMessageAsync()
+    {
+        if (string.IsNullOrWhiteSpace(UserMessage) || !ChatService.IsConnected || _isSending)
+            return;
+
+        var text = UserMessage.Trim();
+        UserMessage = string.Empty;
+        _isSending = true;
+
+        // Add user message
+        _messages.Add(new ChatMessageViewModel { Text = text, IsUser = true });
+
+        // Add placeholder for assistant response
+        _messages.Add(new ChatMessageViewModel { Text = string.Empty, IsUser = false, IsStreaming = true });
+        StateHasChanged();
+        await ScrollToBottom();
+
+        try
+        {
+            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId);
+        }
+        catch (Exception ex)
+        {
+            var last = _messages.LastOrDefault(m => !m.IsUser);
+            if (last is not null)
+            {
+                last.Error = ex.Message;
+                last.IsStreaming = false;
+            }
+            _isSending = false;
+            StateHasChanged();
+        }
+    }
+
+    private void HandleChunkReceived(FabCopilot.Contracts.Messages.ChatStreamChunk chunk)
+    {
+        InvokeAsync(async () =>
+        {
+            var assistantMsg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
+            if (assistantMsg is null)
+            {
+                assistantMsg = new ChatMessageViewModel { Text = string.Empty, IsUser = false, IsStreaming = true };
+                _messages.Add(assistantMsg);
+            }
+
+            if (!string.IsNullOrEmpty(chunk.Error))
+            {
+                assistantMsg.Error = chunk.Error;
+                assistantMsg.IsStreaming = false;
+                _isSending = false;
+            }
+            else if (chunk.IsComplete)
+            {
+                assistantMsg.IsStreaming = false;
+                _isSending = false;
+                // Final render with full text
+                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+            }
+            else
+            {
+                assistantMsg.Text += chunk.Token;
+                // Render periodically during streaming (every 5 chunks)
+                _renderCounter++;
+                if (_renderCounter % 5 == 0)
+                {
+                    assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+                }
+            }
+
+            StateHasChanged();
+            await ScrollToBottom();
+        });
+    }
+
+    private void HandleStateChanged(System.Net.WebSockets.WebSocketState state)
+    {
+        InvokeAsync(() =>
+        {
+            StateHasChanged();
+            return Task.CompletedTask;
+        });
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("chatScroll.scrollToBottom", "chatMessages");
+        }
+        catch
+        {
+            // JS interop may fail during prerendering
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        ChatService.OnMessageReceived -= HandleChunkReceived;
+        ChatService.OnStateChanged -= HandleStateChanged;
+        await ChatService.DisposeAsync();
+    }
+
+    private async Task<string> RenderMarkdownAsync(string text)
+    {
+        try
+        {
+            return await JS.InvokeAsync<string>("chatRenderer.renderMarkdown", text);
+        }
+        catch
+        {
+            return text;
+        }
+    }
+
+    private sealed class ChatMessageViewModel
+    {
+        public string Text { get; set; } = string.Empty;
+        public string? RenderedHtml { get; set; }
+        public bool IsUser { get; set; }
+        public bool IsStreaming { get; set; }
+        public string? Error { get; set; }
+    }
+}
