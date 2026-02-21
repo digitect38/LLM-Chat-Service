@@ -62,10 +62,6 @@
                         {
                             <div class="citation-chapter">@citation.Chapter</div>
                         }
-                        @if (citation.Page.HasValue)
-                        {
-                            <div class="citation-page">페이지 @citation.Page</div>
-                        }
                         @if (citation.LineRange is not null)
                         {
                             <div class="citation-lines">Lines @citation.LineRange.From-@citation.LineRange.To</div>
@@ -78,7 +74,7 @@
                         {
                             <div class="citation-section">@citation.Section</div>
                         }
-                        <div class="citation-text">@citation.ChunkText</div>
+                        <div class="citation-text rendered-markdown">@((MarkupString)(_renderedChunkHtml ?? citation.ChunkText))</div>
 
                         @if (!string.IsNullOrEmpty(citation.PdfUrl))
                         {
@@ -104,7 +100,6 @@
                     <span class="pdf-doc-title" title="@_viewingCitation.FileName">
                         @(!string.IsNullOrEmpty(_viewingCitation.DisplayRef) ? _viewingCitation.DisplayRef : System.IO.Path.GetFileNameWithoutExtension(_viewingCitation.FileName))
                     </span>
-                    <span class="pdf-doc-page">Page @_currentPage / @_totalPages</span>
                     <span class="pdf-doc-score">@((_viewingCitation.Score * 100).ToString("F0"))%</span>
                     @if (!string.IsNullOrEmpty(_viewingCitation.ParentContext))
                     {
@@ -171,6 +166,11 @@
     private bool _resizeInitialized;
     private int _lastAutoOpenSeq;
 
+    // Markdown rendering
+    private string? _renderedChunkHtml;
+    private int _lastRenderedTabIndex = -1;
+    private List<CitationInfo>? _prevCitations;
+
     // PDF viewer state
     private string? _viewingPdfUrl;
     private string? _viewingFileName;
@@ -184,12 +184,15 @@
     {
         _viewMode = ViewMode.List;
         _activeTabIndex = 0;
+        _lastRenderedTabIndex = -1;
+        _renderedChunkHtml = null;
         await OnClose.InvokeAsync();
     }
 
     private void SelectTab(int index)
     {
         _activeTabIndex = index;
+        _lastRenderedTabIndex = -1; // force re-render
     }
 
     private async Task OpenPdfViewer(CitationInfo citation)
@@ -302,6 +305,14 @@
 
     protected override async Task OnParametersSetAsync()
     {
+        // Reset markdown cache when citations change
+        if (!ReferenceEquals(Citations, _prevCitations))
+        {
+            _prevCitations = Citations;
+            _lastRenderedTabIndex = -1;
+            _renderedChunkHtml = null;
+        }
+
         // Auto-open PDF viewer when AutoOpenPage changes
         if (AutoOpenPage.HasValue && AutoOpenSeq != _lastAutoOpenSeq && IsOpen && Citations is { Count: > 0 })
         {
@@ -361,5 +372,44 @@
         {
             _resizeInitialized = false;
         }
+
+        // Render markdown for current citation tab
+        if (IsOpen && _viewMode == ViewMode.List && Citations is { Count: > 0 } && _activeTabIndex != _lastRenderedTabIndex)
+        {
+            var citation = Citations[_activeTabIndex];
+            _lastRenderedTabIndex = _activeTabIndex;
+            if (!string.IsNullOrEmpty(citation.ChunkText))
+            {
+                try
+                {
+                    var md = PreprocessChunkMarkdown(citation.ChunkText);
+                    _renderedChunkHtml = await JS.InvokeAsync<string>("chatRenderer.renderMarkdown", md);
+                }
+                catch
+                {
+                    _renderedChunkHtml = citation.ChunkText;
+                }
+                StateHasChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Convert [# Title > ## Section > ### Sub] header-path prefix into proper markdown.
+    /// </summary>
+    private static string PreprocessChunkMarkdown(string text)
+    {
+        if (text.StartsWith("[#"))
+        {
+            var closeBracket = text.IndexOf(']');
+            if (closeBracket > 0)
+            {
+                var headerPath = text[1..closeBracket]; // strip [ and ]
+                var rest = text[(closeBracket + 1)..].TrimStart();
+                var headers = headerPath.Split(" > ");
+                return string.Join("\n\n", headers) + "\n\n" + rest;
+            }
+        }
+        return text;
     }
 }
