@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
@@ -101,7 +102,10 @@ public sealed class RedisRagCache : IRagCache
 
     internal static string BuildKey(string query, string equipmentId, string pipelineMode, int topK)
     {
-        var raw = $"{query}|{equipmentId}|{pipelineMode}|{topK}";
+        // v3.2: Cache key based on (equipment, intent, normalizedQuery) for better hit rates
+        var normalized = Regex.Replace(query.Trim().ToLowerInvariant(), @"\s+", " ");
+        var intent = QueryRouter.Classify(query).ToString();
+        var raw = $"{equipmentId}|{intent}|{normalized}";
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..16];
         return CachePrefix + hash;
     }

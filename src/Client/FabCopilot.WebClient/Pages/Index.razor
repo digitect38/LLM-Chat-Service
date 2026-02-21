@@ -207,6 +207,26 @@
             }
         </div>
 
+        <!-- Timeout Progress -->
+        @if (_isSending)
+        {
+            <div class="timeout-progress">
+                <div class="timeout-bar timeout-@_timeoutSeverity"
+                     style="width: @(Math.Min(100, _elapsedSeconds * 100 / _timeoutBudgetSeconds))%"></div>
+            </div>
+            <div class="timeout-label">@_currentStage (@(_elapsedSeconds)초)</div>
+        }
+
+        @if (_showTimeoutWarning)
+        {
+            <div class="timeout-warning-popup">
+                <p>응답 시간이 예상보다 길어지고 있습니다 (@(_elapsedSeconds)초)</p>
+                <button @onclick="ExtendTimeout">시간 연장 (2x)</button>
+                <button @onclick="CancelTimeout">취소</button>
+                <button @onclick="SimplifyQuery">간단한 답변 요청</button>
+            </div>
+        }
+
         <!-- Input Area -->
         <div class="chat-input-wrapper">
             <div class="chat-input-box">
@@ -297,6 +317,17 @@
 
     // Latency tracking
     private System.Diagnostics.Stopwatch? _latencyStopwatch;
+
+    // Timeout progress (v3.2 §5.3)
+    private Timer? _timeoutTimer;
+    private int _elapsedSeconds;
+    private string _currentStage = "";
+    private bool _showTimeoutWarning;
+    private string _timeoutSeverity = "normal";
+    private int _timeoutBudgetSeconds = 180;
+
+    // Citation interop
+    private DotNetObjectReference<Index>? _dotNetRef;
 
     protected override void OnInitialized()
     {
@@ -447,6 +478,7 @@
         _messages.Add(new ChatMessageViewModel { Text = text, IsUser = true });
         _messages.Add(new ChatMessageViewModel { IsUser = false, IsStreaming = true });
         _latencyStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        StartTimeoutTimer();
         StateHasChanged();
         await ScrollToBottom();
 
@@ -617,6 +649,45 @@
         }
     }
 
+    // ─── Citation Interop ─────────────────────────────────────────────
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("citationInterop.init", _dotNetRef);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnCitationPageClick(int page)
+    {
+        _citationPaneOpen = true;
+
+        // Find first citation matching this page
+        if (_activeCitations is { Count: > 0 })
+        {
+            var match = _activeCitations.FirstOrDefault(c => c.Page == page);
+            if (match is not null)
+            {
+                // Already have citations, just open the pane
+            }
+        }
+        else
+        {
+            // Try to find citations from the last assistant message
+            var lastAssistant = _messages.LastOrDefault(m => !m.IsUser && m.Citations is { Count: > 0 });
+            if (lastAssistant?.Citations is not null)
+            {
+                _activeCitations = lastAssistant.Citations;
+            }
+        }
+
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
     // ─── Citation Pane ─────────────────────────────────────────────────
 
     private void ShowCitations(int index)
@@ -722,6 +793,7 @@
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
                 StopRenderTimer();
+                StopTimeoutTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
                 StateHasChanged();
                 await ScrollToBottom();
@@ -731,6 +803,7 @@
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
                 StopRenderTimer();
+                StopTimeoutTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
 
                 // Record latency
@@ -789,6 +862,94 @@
         _renderTimer?.Change(Timeout.Infinite, Timeout.Infinite);
     }
 
+    // ─── Timeout Handling (v3.2 §5.3) ──────────────────────────────────
+
+    private void StartTimeoutTimer()
+    {
+        _elapsedSeconds = 0;
+        _showTimeoutWarning = false;
+        _timeoutSeverity = "normal";
+        _timeoutBudgetSeconds = 180;
+        _currentStage = "검색 중...";
+
+        _timeoutTimer?.Dispose();
+        _timeoutTimer = new Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                if (!_isSending) return;
+
+                _elapsedSeconds++;
+
+                // Infer stage from elapsed time
+                _currentStage = _elapsedSeconds switch
+                {
+                    <= 5 => "검색 중...",
+                    <= 10 => "문서 분석 중...",
+                    <= 30 => "답변 생성 중...",
+                    _ => "응답 대기 중..."
+                };
+
+                // Severity logic
+                if (_elapsedSeconds >= _timeoutBudgetSeconds * 0.9)
+                {
+                    _timeoutSeverity = "exceeded";
+                    _showTimeoutWarning = true;
+                }
+                else if (_elapsedSeconds >= _timeoutBudgetSeconds * 0.6)
+                    _timeoutSeverity = "critical";
+                else if (_elapsedSeconds >= 30)
+                    _timeoutSeverity = "warning";
+                else
+                    _timeoutSeverity = "normal";
+
+                StateHasChanged();
+            });
+        }, null, 1000, 1000);
+    }
+
+    private void StopTimeoutTimer()
+    {
+        _timeoutTimer?.Dispose();
+        _timeoutTimer = null;
+        _showTimeoutWarning = false;
+        _elapsedSeconds = 0;
+    }
+
+    private void ExtendTimeout()
+    {
+        _timeoutBudgetSeconds = Math.Min(_timeoutBudgetSeconds * 2, 600);
+        _showTimeoutWarning = false;
+        _timeoutSeverity = "warning";
+        StateHasChanged();
+    }
+
+    private async Task CancelTimeout()
+    {
+        _showTimeoutWarning = false;
+        StopTimeoutTimer();
+        await StopResponseAsync();
+    }
+
+    private async Task SimplifyQuery()
+    {
+        _showTimeoutWarning = false;
+        StopTimeoutTimer();
+
+        // Find the last user message
+        var lastUserMsg = _messages.LastOrDefault(m => m.IsUser);
+        var originalText = lastUserMsg?.Text ?? "";
+
+        await StopResponseAsync();
+
+        if (!string.IsNullOrWhiteSpace(originalText))
+        {
+            UserMessage = $"간단히 답변해주세요: {originalText}";
+            StateHasChanged();
+            await SendMessageAsync();
+        }
+    }
+
     // ─── State / Lifecycle ──────────────────────────────────────────────
 
     private void HandleStateChanged(System.Net.WebSockets.WebSocketState state)
@@ -812,6 +973,9 @@
         ChatService.OnMessageReceived -= HandleChunkReceived;
         ChatService.OnStateChanged -= HandleStateChanged;
         if (_renderTimer is not null) await _renderTimer.DisposeAsync();
+        _timeoutTimer?.Dispose();
+        try { await JS.InvokeVoidAsync("citationInterop.dispose"); } catch { }
+        _dotNetRef?.Dispose();
         await ChatService.DisposeAsync();
     }
 

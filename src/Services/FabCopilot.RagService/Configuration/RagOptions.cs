@@ -19,7 +19,7 @@ public sealed class RagOptions
     // Advanced RAG
     public bool EnableQueryRewriting { get; set; } = true;
     public bool EnableLlmReranking { get; set; } = true;
-    public int LlmRerankCandidateCount { get; set; } = 20;
+    public int LlmRerankCandidateCount { get; set; } = 50;
 
     // GraphRAG
     public bool EnableGraphLookup { get; set; }
@@ -46,6 +46,13 @@ public sealed class RagOptions
     // RAG Cache
     public bool EnableRagCache { get; set; } = true;
     public int RagCacheTtlHours { get; set; } = 24;
+
+    // Per-stage timeout budgets (ms)
+    public int VectorSearchTimeoutMs { get; set; } = 5000;
+    public int Bm25SearchTimeoutMs { get; set; } = 2000;
+    public int LlmRerankTimeoutMs { get; set; } = 30000;
+    public int QueryRewriteTimeoutMs { get; set; } = 10000;
+    public int TotalPipelineTimeoutMs { get; set; } = 55000;
 
     // Default pipeline
     public RagPipelineMode DefaultPipelineMode { get; set; } = RagPipelineMode.Naive;

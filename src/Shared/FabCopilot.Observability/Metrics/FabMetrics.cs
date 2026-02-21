@@ -33,6 +33,15 @@ public static class FabMetrics
     public static readonly Counter<long> RagCacheMisses =
         Meter.CreateCounter<long>("rag.cache.miss", "misses", "RAG cache miss count");
 
+    public static readonly Histogram<double> RagQueryRewriteDuration =
+        Meter.CreateHistogram<double>("rag.query_rewrite.ms", "ms", "Time spent on query rewriting");
+
+    public static readonly Histogram<double> RagGraphLookupDuration =
+        Meter.CreateHistogram<double>("rag.graph_lookup.ms", "ms", "Time spent on graph lookup");
+
+    public static readonly Counter<long> RagStageTimeoutCount =
+        Meter.CreateCounter<long>("rag.stage.timeout", "timeouts", "RAG stage timeout count");
+
     // ─── LLM Metrics ───────────────────────────────────────────────
 
     public static readonly Histogram<double> LlmFirstTokenDuration =

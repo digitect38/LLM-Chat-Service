@@ -1,39 +1,139 @@
 @using FabCopilot.Contracts.Messages
+@inject IJSRuntime JS
 
 <aside class="citation-pane @(IsOpen ? "" : "citation-pane-closed")">
     @if (IsOpen)
     {
+        <div class="citation-resize-handle"></div>
+
         <div class="citation-header">
-            <h3>참조 문서</h3>
+            @if (_viewMode == ViewMode.Viewer)
+            {
+                <button class="icon-btn" @onclick="BackToList" title="목록으로">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <h3>@_viewingFileName</h3>
+            }
+            else
+            {
+                <h3>참조 문서</h3>
+            }
             <button class="icon-btn" @onclick="Close" title="닫기">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
         </div>
 
-        <div class="citation-list">
-            @if (Citations is not null && Citations.Count > 0)
+        @if (_viewMode == ViewMode.List)
+        {
+            <!-- Citation Tabs -->
+            @if (Citations is not null && Citations.Count > 1)
             {
-                @foreach (var citation in Citations)
+                <div class="citation-tabs">
+                    @for (var i = 0; i < Citations.Count; i++)
+                    {
+                        var idx = i;
+                        <button class="citation-tab @(idx == _activeTabIndex ? "tab-active" : "")"
+                                @onclick="() => SelectTab(idx)">
+                            @(idx + 1)
+                        </button>
+                    }
+                </div>
+            }
+
+            <!-- Citation List -->
+            <div class="citation-list">
+                @if (Citations is not null && Citations.Count > 0)
                 {
+                    var citation = Citations[_activeTabIndex];
                     <div class="citation-item">
                         <div class="citation-file">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                             <span>@citation.FileName</span>
                             <span class="citation-score">@citation.Score.ToString("F3")</span>
                         </div>
-                        @if (!string.IsNullOrEmpty(citation.Section))
+                        @if (citation.Page.HasValue)
+                        {
+                            <div class="citation-page">페이지 @citation.Page</div>
+                        }
+                        @if (!string.IsNullOrEmpty(citation.ParentContext))
+                        {
+                            <div class="citation-section">@citation.ParentContext</div>
+                        }
+                        else if (!string.IsNullOrEmpty(citation.Section))
                         {
                             <div class="citation-section">@citation.Section</div>
                         }
                         <div class="citation-text">@citation.ChunkText</div>
+
+                        @if (!string.IsNullOrEmpty(citation.PdfUrl))
+                        {
+                            <button class="btn-view-pdf" @onclick="() => OpenPdfViewer(citation)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                PDF 보기
+                            </button>
+                        }
                     </div>
                 }
-            }
-            else
+                else
+                {
+                    <div class="citation-empty">참조 문서가 없습니다.</div>
+                }
+            </div>
+        }
+        else if (_viewMode == ViewMode.Viewer)
+        {
+            <!-- Document Info Header -->
+            @if (_viewingCitation is not null)
             {
-                <div class="citation-empty">참조 문서가 없습니다.</div>
+                <div class="pdf-doc-info-bar">
+                    <span class="pdf-doc-title">@(System.IO.Path.GetFileNameWithoutExtension(_viewingCitation.FileName))</span>
+                    <span class="pdf-doc-page">Page @_currentPage / @_totalPages</span>
+                    <span class="pdf-doc-score">@((_viewingCitation.Score * 100).ToString("F0"))%</span>
+                    @if (!string.IsNullOrEmpty(_viewingCitation.ParentContext))
+                    {
+                        <span class="pdf-doc-section" title="@_viewingCitation.ParentContext">@_viewingCitation.ParentContext</span>
+                    }
+                </div>
             }
-        </div>
+
+            <!-- PDF Viewer Controls -->
+            <div class="pdf-viewer-controls">
+                <button class="icon-btn" @onclick="PrevPage" disabled="@(_currentPage <= 1)" title="이전 페이지">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <span class="page-indicator">
+                    <input type="number" min="1" max="@_totalPages" value="@_currentPage"
+                           @onchange="OnPageInput" class="page-input" />
+                    / @_totalPages
+                </span>
+                <button class="icon-btn" @onclick="NextPage" disabled="@(_currentPage >= _totalPages)" title="다음 페이지">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+                <select class="zoom-select" value="@_scale" @onchange="OnZoomChange">
+                    <option value="0.25">25%</option>
+                    <option value="0.5">50%</option>
+                    <option value="0.75">75%</option>
+                    <option value="1.0">100%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5">150%</option>
+                    <option value="2.0">200%</option>
+                    <option value="3.0">300%</option>
+                    <option value="4.0">400%</option>
+                </select>
+            </div>
+
+            <!-- PDF Canvas -->
+            <div class="pdf-canvas-container">
+                @if (_isLoading)
+                {
+                    <div class="pdf-loading">PDF 로딩 중...</div>
+                }
+                <div style="position: relative; display: inline-block;">
+                    <canvas id="pdfCanvas" data-page-num="@_currentPage"></canvas>
+                    <div id="pdfOverlay" style="position: absolute; top: 0; left: 0; pointer-events: none;"></div>
+                </div>
+            </div>
+        }
     }
 </aside>
 
@@ -42,5 +142,151 @@
     [Parameter] public List<CitationInfo>? Citations { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
 
-    private async Task Close() => await OnClose.InvokeAsync();
+    private enum ViewMode { List, Viewer }
+    private ViewMode _viewMode = ViewMode.List;
+    private int _activeTabIndex;
+    private bool _resizeInitialized;
+
+    // PDF viewer state
+    private string? _viewingPdfUrl;
+    private string? _viewingFileName;
+    private int _currentPage = 1;
+    private int _totalPages;
+    private double _scale = 1.0;
+    private bool _isLoading;
+    private CitationInfo? _viewingCitation;
+
+    private async Task Close()
+    {
+        _viewMode = ViewMode.List;
+        _activeTabIndex = 0;
+        await OnClose.InvokeAsync();
+    }
+
+    private void SelectTab(int index)
+    {
+        _activeTabIndex = index;
+    }
+
+    private async Task OpenPdfViewer(CitationInfo citation)
+    {
+        _viewingCitation = citation;
+        _viewingPdfUrl = citation.PdfUrl;
+        _viewingFileName = citation.FileName;
+        _currentPage = citation.Page ?? 1;
+        _viewMode = ViewMode.Viewer;
+        _isLoading = true;
+        StateHasChanged();
+
+        // Small delay so the canvas element renders before JS interop
+        await Task.Delay(50);
+
+        _totalPages = await JS.InvokeAsync<int>("pdfViewer.load", _viewingPdfUrl);
+        if (_totalPages > 0)
+        {
+            await RenderCurrentPage();
+        }
+        _isLoading = false;
+    }
+
+    private void BackToList()
+    {
+        _viewMode = ViewMode.List;
+    }
+
+    private async Task PrevPage()
+    {
+        if (_currentPage > 1)
+        {
+            _currentPage--;
+            await RenderCurrentPage();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (_currentPage < _totalPages)
+        {
+            _currentPage++;
+            await RenderCurrentPage();
+        }
+    }
+
+    private async Task OnPageInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var page) && page >= 1 && page <= _totalPages)
+        {
+            _currentPage = page;
+            await RenderCurrentPage();
+        }
+    }
+
+    private async Task OnZoomChange(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var scale))
+        {
+            _scale = scale;
+            await RenderCurrentPage();
+        }
+    }
+
+    private async Task RenderCurrentPage()
+    {
+        await JS.InvokeAsync<bool>("pdfViewer.renderPage", "pdfCanvas", _currentPage, _scale);
+
+        // Apply highlight if this page matches the citation
+        if (_viewingCitation is not null && _viewingCitation.Page == _currentPage)
+        {
+            var hasOffsets = _viewingCitation.CharOffsetStart.HasValue &&
+                             _viewingCitation.CharOffsetEnd.HasValue &&
+                             _viewingCitation.CharOffsetStart.Value > 0;
+
+            if (hasOffsets)
+            {
+                var highlighted = await JS.InvokeAsync<bool>("pdfViewer.highlightText",
+                    "pdfCanvas", "pdfOverlay",
+                    _viewingCitation.CharOffsetStart!.Value,
+                    _viewingCitation.CharOffsetEnd!.Value,
+                    _scale);
+
+                if (!highlighted)
+                {
+                    await ShowFallbackHighlight();
+                }
+            }
+            else
+            {
+                await ShowFallbackHighlight();
+            }
+        }
+    }
+
+    private async Task ShowFallbackHighlight()
+    {
+        try
+        {
+            var dims = await JS.InvokeAsync<int[]>("eval",
+                "[document.getElementById('pdfCanvas')?.width || 0, document.getElementById('pdfCanvas')?.height || 0]");
+            if (dims is { Length: 2 } && dims[0] > 0)
+            {
+                await JS.InvokeVoidAsync("pdfViewer.showFallbackHighlight", "pdfOverlay", dims[0], dims[1]);
+            }
+        }
+        catch { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (IsOpen && !_resizeInitialized)
+        {
+            _resizeInitialized = true;
+            await JS.InvokeVoidAsync("citationResize.init",
+                ".citation-pane", ".citation-resize-handle", 300);
+        }
+        if (!IsOpen)
+        {
+            _resizeInitialized = false;
+        }
+    }
 }

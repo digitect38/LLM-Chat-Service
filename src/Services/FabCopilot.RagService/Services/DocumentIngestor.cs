@@ -69,24 +69,27 @@ public sealed class DocumentIngestor
         {
             if (string.IsNullOrWhiteSpace(pageText)) continue;
 
-            var chunks = ChunkText(pageText, ChunkSize, ChunkOverlap);
+            var chunks = ChunkTextWithOffsets(pageText, ChunkSize, ChunkOverlap);
 
             for (var i = 0; i < chunks.Count; i++)
             {
-                var chunk = chunks[i];
+                var (chunkText, charStart, charEnd) = chunks[i];
                 var chunkId = $"{documentId}:page:{pageNumber}:chunk:{i}";
 
-                var vector = await _llmClient.GetEmbeddingAsync(chunk, ct);
+                var vector = await _llmClient.GetEmbeddingAsync(chunkText, ct);
 
                 var payload = new Dictionary<string, object>
                 {
-                    ["text"] = chunk,
+                    ["text"] = chunkText,
                     ["document_id"] = documentId,
                     ["equipment_id"] = equipmentId,
                     ["chunk_index"] = totalChunks,
                     ["page_number"] = pageNumber,
+                    ["char_offset_start"] = charStart,
+                    ["char_offset_end"] = charEnd,
                     ["doc_type"] = InferDocType(documentId),
-                    ["language"] = DetectLanguage(chunk)
+                    ["language"] = DetectLanguage(chunkText),
+                    ["highlight_type"] = InferHighlightType(chunkText)
                 };
 
                 foreach (var kvp in metadata)
@@ -95,7 +98,7 @@ public sealed class DocumentIngestor
                 await _vectorStore.UpsertAsync(collection, chunkId, vector, payload, ct);
 
                 if (_bm25Index is not null && _ragOptions.EnableBm25)
-                    _bm25Index.AddDocument(chunkId, chunk);
+                    _bm25Index.AddDocument(chunkId, chunkText);
 
                 totalChunks++;
             }
@@ -155,13 +158,18 @@ public sealed class DocumentIngestor
                 ["chunk_index"] = i,
                 ["chunk_count"] = chunks.Count,
                 ["doc_type"] = InferDocType(documentId),
-                ["language"] = DetectLanguage(chunk)
+                ["language"] = DetectLanguage(chunk),
+                ["highlight_type"] = InferHighlightType(chunk)
             };
 
             // Extract section info from chunk header prefix (e.g. "[## Header > ### Sub]")
             var (chapter, section) = ExtractSectionFromChunk(chunk);
             if (!string.IsNullOrEmpty(chapter)) payload["chapter"] = chapter;
             if (!string.IsNullOrEmpty(section)) payload["section"] = section;
+
+            // v3.2: Store full header hierarchy as parent_context
+            var parentContext = ExtractParentContext(chunk);
+            if (!string.IsNullOrEmpty(parentContext)) payload["parent_context"] = parentContext;
 
             // Merge user-supplied metadata
             foreach (var kvp in metadata)
@@ -259,6 +267,46 @@ public sealed class DocumentIngestor
         }
 
         return chunks;
+    }
+
+    /// <summary>
+    /// Chunks text and tracks character offsets (start, end) relative to the original text.
+    /// Used for PDF ingestion to enable highlight overlay in the citation pane.
+    /// </summary>
+    internal static List<(string Text, int Start, int End)> ChunkTextWithOffsets(string text, int chunkSize, int overlap)
+    {
+        var result = new List<(string Text, int Start, int End)>();
+
+        if (string.IsNullOrEmpty(text))
+            return result;
+
+        if (text.Length <= chunkSize)
+        {
+            result.Add((text, 0, text.Length));
+            return result;
+        }
+
+        var offset = 0;
+        while (offset < text.Length)
+        {
+            var remaining = text.Length - offset;
+            if (remaining <= chunkSize)
+            {
+                result.Add((text.Substring(offset), offset, text.Length));
+                break;
+            }
+
+            var candidate = text.Substring(offset, chunkSize);
+            var splitAt = FindLastSentenceBoundary(candidate);
+            var chunk = text.Substring(offset, splitAt);
+            result.Add((chunk, offset, offset + splitAt));
+
+            var advance = splitAt - overlap;
+            if (advance <= 0) advance = 1;
+            offset += advance;
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -406,6 +454,33 @@ public sealed class DocumentIngestor
     // ─── Metadata Inference ─────────────────────────────────────────────
 
     /// <summary>
+    /// Infers the highlight type for a chunk based on its content.
+    /// Returns "table" for table-like content, "image" for image markers, or "text" for plain text.
+    /// </summary>
+    internal static string InferHighlightType(string chunkText)
+    {
+        if (string.IsNullOrWhiteSpace(chunkText))
+            return "text";
+
+        // Check for table: 3+ lines each containing 3+ pipe characters
+        var lines = chunkText.Split('\n');
+        var pipeLineCount = 0;
+        foreach (var line in lines)
+        {
+            if (line.Count(c => c == '|') >= 3)
+                pipeLineCount++;
+        }
+        if (pipeLineCount >= 3)
+            return "table";
+
+        // Check for image markers
+        if (Regex.IsMatch(chunkText, @"\[image\]|<<image>>|\[그림\]|\[Figure\]|\[사진\]", RegexOptions.IgnoreCase))
+            return "image";
+
+        return "text";
+    }
+
+    /// <summary>
     /// Infers the document type from the file name using keyword patterns.
     /// </summary>
     internal static string InferDocType(string fileName)
@@ -489,5 +564,29 @@ public sealed class DocumentIngestor
     {
         // Remove leading # characters and whitespace
         return Regex.Replace(header, @"^#{1,6}\s*", "").Trim();
+    }
+
+    /// <summary>
+    /// Extracts the full header hierarchy path from a chunk's "[## H > ### S]" prefix.
+    /// Returns a cleaned string like "CMP Overview > Process Steps" for use as parent_context.
+    /// </summary>
+    internal static string? ExtractParentContext(string chunk)
+    {
+        if (!chunk.StartsWith('['))
+            return null;
+
+        var closeBracket = chunk.IndexOf("]\n", StringComparison.Ordinal);
+        if (closeBracket < 0)
+            closeBracket = chunk.IndexOf(']');
+        if (closeBracket < 0)
+            return null;
+
+        var headerPath = chunk[1..closeBracket];
+        var parts = headerPath.Split(" > ", StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return null;
+
+        var cleaned = string.Join(" > ", parts.Select(CleanHeaderText));
+        return string.IsNullOrWhiteSpace(cleaned) ? null : cleaned;
     }
 }

@@ -249,7 +249,7 @@ public sealed class FileWatcherIngestorService : BackgroundService
         // PDF files: page-by-page ingestion with page numbers
         if (FileTextExtractor.IsPdf(fullPath))
         {
-            var pages = _extractor.ExtractPdfPages(fullPath);
+            var pages = _extractor.ExtractPdfPagesWithTables(fullPath);
             await _ingestor.IngestPdfPagesAsync(documentId, pages, EquipmentId, metadata, ct);
         }
         else

@@ -826,6 +826,24 @@ html, body {
     }
 
     .citation-pane {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 100vw !important;
+        min-width: 100vw !important;
+        height: 100vh;
+        z-index: 150;
+        transform: translateX(0);
+        transition: transform 0.25s ease;
+    }
+
+    .citation-pane-closed {
+        transform: translateX(100%);
+        width: 0 !important;
+        min-width: 0 !important;
+    }
+
+    .citation-resize-handle {
         display: none;
     }
 }
@@ -834,8 +852,9 @@ html, body {
    CITATION PANE
    ================================================================ */
 .citation-pane {
+    position: relative;
     width: 350px;
-    min-width: 350px;
+    min-width: 300px;
     border-left: 1px solid #e5e5e5;
     background: #fafafa;
     display: flex;
@@ -930,6 +949,233 @@ html, body {
     font-size: 13px;
 }
 
+.citation-page {
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+/* ===== Citation Tabs ===== */
+.citation-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #e5e5e5;
+    background: #fff;
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+
+.citation-tab {
+    min-width: 32px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: 600;
+    color: #666;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.citation-tab:hover { background: #f5f5f5; }
+.citation-tab.tab-active {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+}
+
+/* ===== PDF View Button ===== */
+.btn-view-pdf {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 12px;
+    border: 1px solid #2563eb;
+    background: #eff6ff;
+    color: #2563eb;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-view-pdf:hover {
+    background: #dbeafe;
+}
+
+/* ===== PDF Viewer Controls ===== */
+.pdf-viewer-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #e5e5e5;
+    background: #fff;
+    flex-shrink: 0;
+}
+
+.page-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #555;
+}
+
+.page-input {
+    width: 48px;
+    padding: 2px 6px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+    text-align: center;
+    outline: none;
+}
+
+.page-input:focus {
+    border-color: #2563eb;
+}
+
+.zoom-select {
+    margin-left: auto;
+    padding: 4px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    background: #fff;
+    cursor: pointer;
+    outline: none;
+}
+
+/* ===== PDF Canvas Container ===== */
+.pdf-canvas-container {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    overflow: auto;
+    background: #e5e5e5;
+    padding: 16px;
+}
+
+.pdf-canvas-container canvas {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    background: #fff;
+}
+
+.pdf-loading {
+    padding: 40px;
+    color: #888;
+    font-size: 14px;
+}
+
+/* ===== Highlight Overlay ===== */
+.highlight-rect {
+    position: absolute;
+    background: #FFF3CD;
+    opacity: 0.4;
+    pointer-events: none;
+    border-radius: 1px;
+}
+
+/* ===== Highlight Fallback ===== */
+.highlight-fallback-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: rgba(255, 243, 205, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.highlight-fallback-text {
+    font-size: 14px;
+    color: #888;
+    font-style: italic;
+    background: rgba(255, 255, 255, 0.85);
+    padding: 6px 14px;
+    border-radius: 6px;
+}
+
+/* ===== Document Info Header ===== */
+.pdf-doc-info-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #e5e5e5;
+    background: #fff;
+    font-size: 13px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.pdf-doc-title {
+    font-weight: 600;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+}
+
+.pdf-doc-page {
+    color: #666;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.pdf-doc-score {
+    background: #e8f4fd;
+    color: #1976d2;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.pdf-doc-section {
+    font-size: 11px;
+    color: #888;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+}
+
+/* ===== Citation Resize Handle ===== */
+.citation-resize-handle {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+    transition: background 0.15s;
+}
+
+.citation-resize-handle:hover {
+    background: #2563eb;
+}
+
 /* ================================================================
    FEEDBACK & LATENCY
    ================================================================ */
@@ -1020,4 +1266,103 @@ html, body {
 @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+}
+
+/* ================================================================
+   INLINE CITATION LINKS
+   ================================================================ */
+.citation-page-link {
+    color: #2563eb;
+    cursor: pointer;
+    font-weight: 500;
+    text-decoration: none;
+    background: #eff6ff;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    transition: background 0.15s;
+}
+
+.citation-page-link:hover {
+    background: #dbeafe;
+    text-decoration: underline;
+}
+
+/* ================================================================
+   TIMEOUT PROGRESS
+   ================================================================ */
+.timeout-progress {
+    position: relative;
+    height: 4px;
+    background: #e9ecef;
+    border-radius: 2px;
+    margin: 4px 16px;
+    overflow: hidden;
+}
+
+.timeout-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1s linear;
+}
+
+.timeout-normal { background: #28a745; }
+.timeout-warning { background: #ffc107; }
+.timeout-critical { background: #fd7e14; }
+.timeout-exceeded { background: #dc3545; }
+
+.timeout-label {
+    display: block;
+    font-size: 12px;
+    color: #6c757d;
+    text-align: center;
+    margin-top: 2px;
+}
+
+.timeout-warning-popup {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    z-index: 1000;
+    padding: 20px 24px;
+    text-align: center;
+    max-width: 360px;
+    width: 90%;
+}
+
+.timeout-warning-popup p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    color: #333;
+    line-height: 1.5;
+}
+
+.timeout-warning-popup button {
+    padding: 8px 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    margin: 0 4px;
+    transition: background 0.15s;
+}
+
+.timeout-warning-popup button:first-of-type {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+}
+
+.timeout-warning-popup button:hover {
+    background: #f5f5f5;
+}
+
+.timeout-warning-popup button:first-of-type:hover {
+    background: #333;
 }

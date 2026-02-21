@@ -34,18 +34,51 @@ public class RagCacheTests
     }
 
     [Fact]
-    public void BuildKey_DifferentPipeline_ProducesDifferentKey()
+    public void BuildKey_DifferentPipeline_SameKey_V32()
     {
+        // v3.2: Cache key is based on (equipment, intent, normalizedQuery) — pipeline mode is ignored
         var key1 = RedisRagCache.BuildKey("패드 교체 방법", "CMP-001", "Naive", 5);
         var key2 = RedisRagCache.BuildKey("패드 교체 방법", "CMP-001", "Advanced", 5);
 
-        key1.Should().NotBe(key2);
+        key1.Should().Be(key2);
     }
 
     [Fact]
-    public void BuildKey_DifferentTopK_ProducesDifferentKey()
+    public void BuildKey_DifferentTopK_SameKey_V32()
     {
+        // v3.2: Cache key is based on (equipment, intent, normalizedQuery) — topK is ignored
         var key1 = RedisRagCache.BuildKey("패드 교체 방법", "CMP-001", "Naive", 3);
+        var key2 = RedisRagCache.BuildKey("패드 교체 방법", "CMP-001", "Naive", 5);
+
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void BuildKey_NormalizedWhitespace_SameKey()
+    {
+        // v3.2: Whitespace is collapsed + trimmed
+        var key1 = RedisRagCache.BuildKey("패드 교체 방법", "CMP-001", "Naive", 5);
+        var key2 = RedisRagCache.BuildKey("  패드   교체   방법  ", "CMP-001", "Naive", 5);
+
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void BuildKey_CaseInsensitive_SameKey()
+    {
+        // v3.2: Query is lowercased
+        var key1 = RedisRagCache.BuildKey("CMP Pad Replacement", "CMP-001", "Naive", 5);
+        var key2 = RedisRagCache.BuildKey("cmp pad replacement", "CMP-001", "Naive", 5);
+
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void BuildKey_DifferentIntent_DifferentKey()
+    {
+        // Different intents should produce different keys
+        // "A-100 에러 원인" → Error intent, "패드 교체 방법" → Procedure intent
+        var key1 = RedisRagCache.BuildKey("A-100 에러 원인", "CMP-001", "Naive", 5);
         var key2 = RedisRagCache.BuildKey("패드 교체 방법", "CMP-001", "Naive", 5);
 
         key1.Should().NotBe(key2);

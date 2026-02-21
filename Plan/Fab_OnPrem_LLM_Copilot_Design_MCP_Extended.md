@@ -8,10 +8,12 @@
 ---
 
 ## 0. 문서 버전
-- Version: 1.5
+- Version: 1.7
 - Date: 2026-02-21
 - Scope: Architecture Design + Implementation Spec (SDS-lite)
 - Changes:
+  - v1.7: Spec v3.2 구현 — CitationInfo 12필드 확장, pdf.js PDF 뷰어 + 하이라이트 오버레이, char offset 추적, PDF 테이블 추출(Markdown), 드래그 리사이즈, per-stage timeout 강제, 모바일 전체화면 Citation Pane
+  - v1.6: Spec v3.2 Backend Quick Wins — LlmRerankCandidateCount 20→50, 캐시키 (equipment,intent,normalizedQuery), parent_context 메타데이터, RAG timeout 10s→60s, DefaultPipelineMode Naive→Advanced
   - v1.5: 4세대 RAG 파이프라인 아키텍처 추가 (Naive → Advanced → GraphRAG → Agentic RAG)
   - v1.4: RAG 출처 인용 기능 추가 (LLM 응답에 참고 문서명 자동 표시), NATS JsonElement 메타데이터 역직렬화 버그 수정
   - v1.3: FileSystemWatcher 기반 자동 RAG 문서 수집 기능 추가 (폴더 감시 → 텍스트 추출 → 벡터 스토어 자동 수집/삭제)
@@ -752,7 +754,7 @@ Pad 유지보수 절차...
 {
   "EnableQueryRewriting": true,
   "EnableLlmReranking": true,
-  "LlmRerankCandidateCount": 20
+  "LlmRerankCandidateCount": 50
 }
 ```
 
@@ -819,7 +821,20 @@ Pad 유지보수 절차...
 - [x] **FileWatcher 자동 문서 수집 (knowledge-docs/ 폴더 감시 → MD/TXT/PDF 자동 수집)**
 - [x] **RAG 출처 인용 (응답에 참고 문서명 자동 표시 + JsonElement 메타데이터 수정)**
 - [x] **4세대 RAG 파이프라인 (Naive → Advanced → GraphRAG → Agentic RAG)**
-- [ ] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP)
+- [x] **v3.2: LLM Reranking Top-50 (20→50)**
+- [x] **v3.2: RAG 캐시키 intent 기반 정규화 (equipment, intent, normalizedQuery)**
+- [x] **v3.2: parent_context 청크 메타데이터 (헤더 계층 경로)**
+- [x] **v3.2: CitationInfo 12필드 확장 (citationId, docId, page, charOffset, pdfUrl, parentContext 등)**
+- [x] **v3.2: PDF char_offset_start/end 추적 (하이라이트용)**
+- [x] **v3.2: pdf.js Citation Pane PDF 뷰어 + 페이지 네비게이션 + 줌**
+- [x] **v3.2: 하이라이트 오버레이 (#FFF3CD, opacity 0.4)**
+- [x] **v3.2: Citation Pane 드래그 리사이즈 (280px-800px)**
+- [x] **v3.2: PDF 테이블 추출 → Markdown 변환 (PdfPig word clustering)**
+- [x] **v3.2: per-stage timeout 강제 (vector 5s, BM25 2s, rerank 30s, rewrite 10s, pipeline 55s)**
+- [x] **v3.2: 모바일 전체화면 Citation Pane 오버레이**
+- [x] **v3.2: PDF serving endpoint (GET /api/documents/{fileName})**
+- [x] **v3.2: 새 텔레메트리 메트릭 (query_rewrite.ms, graph_lookup.ms, stage.timeout)**
+- [x] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP 12문서, ~140KB)
 - [ ] MCP Tool schema 확정 및 테스트 데이터로 검증
 - [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)
 - [ ] CMP 신호 매핑 테이블 정의(장비 tag → canonical signal)

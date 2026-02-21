@@ -33,79 +33,87 @@ public sealed class ChatStreamRelayService : BackgroundService
     {
         _logger.LogInformation("ChatStreamRelayService starting, subscribing to {Subject}", ChatStreamWildcard);
 
-        try
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await foreach (var envelope in _messageBus.SubscribeAsync<ChatStreamChunk>(
-                ChatStreamWildcard, queueGroup: "gateway-relay", ct: stoppingToken))
+            try
             {
-                if (envelope.Payload is null)
+                await foreach (var envelope in _messageBus.SubscribeAsync<ChatStreamChunk>(
+                    ChatStreamWildcard, queueGroup: "gateway-relay", ct: stoppingToken))
                 {
-                    _logger.LogWarning("Received envelope with null payload on {Subject}", ChatStreamWildcard);
-                    continue;
-                }
+                    if (envelope.Payload is null)
+                    {
+                        _logger.LogWarning("Received envelope with null payload on {Subject}", ChatStreamWildcard);
+                        continue;
+                    }
 
-                var chunk = envelope.Payload;
-                var conversationId = chunk.ConversationId;
-                var equipmentId = envelope.EquipmentId;
+                    var chunk = envelope.Payload;
+                    var conversationId = chunk.ConversationId;
+                    var equipmentId = envelope.EquipmentId;
 
-                if (string.IsNullOrEmpty(equipmentId))
-                {
-                    _logger.LogWarning(
-                        "Received chunk for conversation {ConversationId} with no equipmentId, cannot route",
-                        conversationId);
-                    continue;
-                }
+                    if (string.IsNullOrEmpty(equipmentId))
+                    {
+                        _logger.LogWarning(
+                            "Received chunk for conversation {ConversationId} with no equipmentId, cannot route",
+                            conversationId);
+                        continue;
+                    }
 
-                _logger.LogDebug(
-                    "Relaying chunk for conversation {ConversationId} to equipment {EquipmentId} (complete={IsComplete})",
-                    conversationId, equipmentId, chunk.IsComplete);
+                    _logger.LogDebug(
+                        "Relaying chunk for conversation {ConversationId} to equipment {EquipmentId} (complete={IsComplete})",
+                        conversationId, equipmentId, chunk.IsComplete);
 
-                try
-                {
-                    await _connectionManager.SendToEquipmentAsync(equipmentId, conversationId, chunk);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex,
-                        "Failed to relay chunk for conversation {ConversationId} to equipment {EquipmentId}",
-                        conversationId, equipmentId);
-                }
-
-                // When the stream is complete, persist the assembled assistant response
-                if (chunk.IsComplete && !string.IsNullOrEmpty(chunk.Token))
-                {
                     try
                     {
-                        var assistantMessage = new FabCopilot.Contracts.Models.ChatMessage
-                        {
-                            Role = FabCopilot.Contracts.Enums.MessageRole.Assistant,
-                            Text = chunk.Token,
-                            Timestamp = DateTimeOffset.UtcNow
-                        };
-
-                        await _conversationStore.AppendMessageAsync(conversationId, assistantMessage, stoppingToken);
-
-                        _logger.LogInformation(
-                            "Persisted assistant response for conversation {ConversationId}",
-                            conversationId);
+                        await _connectionManager.SendToEquipmentAsync(equipmentId, conversationId, chunk);
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex,
-                            "Failed to persist assistant response for conversation {ConversationId}",
-                            conversationId);
+                            "Failed to relay chunk for conversation {ConversationId} to equipment {EquipmentId}",
+                            conversationId, equipmentId);
+                    }
+
+                    // When the stream is complete, persist the assembled assistant response
+                    if (chunk.IsComplete && !string.IsNullOrEmpty(chunk.Token))
+                    {
+                        try
+                        {
+                            var assistantMessage = new FabCopilot.Contracts.Models.ChatMessage
+                            {
+                                Role = FabCopilot.Contracts.Enums.MessageRole.Assistant,
+                                Text = chunk.Token,
+                                Timestamp = DateTimeOffset.UtcNow
+                            };
+
+                            await _conversationStore.AppendMessageAsync(conversationId, assistantMessage, stoppingToken);
+
+                            _logger.LogInformation(
+                                "Persisted assistant response for conversation {ConversationId}",
+                                conversationId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex,
+                                "Failed to persist assistant response for conversation {ConversationId}",
+                                conversationId);
+                        }
                     }
                 }
+
+                // Subscription completed (NATS idle timeout) — re-subscribe
+                _logger.LogWarning("NATS subscription completed, re-subscribing to {Subject}", ChatStreamWildcard);
+                await Task.Delay(1000, stoppingToken);
             }
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            _logger.LogInformation("ChatStreamRelayService stopping gracefully");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "ChatStreamRelayService encountered an unhandled error");
-            throw;
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogInformation("ChatStreamRelayService stopping gracefully");
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ChatStreamRelayService encountered an error, re-subscribing in 2s");
+                await Task.Delay(2000, stoppingToken);
+            }
         }
     }
 }

@@ -74,23 +74,37 @@ public sealed class RagWorker : BackgroundService
             "RagWorker started. Subscribing to {Subject} with queue group {QueueGroup}. DefaultPipeline={DefaultPipeline}",
             NatsSubjects.RagRequest, QueueGroup, _ragOptions.DefaultPipelineMode);
 
-        await foreach (var envelope in _messageBus.SubscribeAsync<RagRequest>(
-                           NatsSubjects.RagRequest, QueueGroup, stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
-            var request = envelope.Payload;
-            if (request is null)
+            try
             {
-                _logger.LogWarning(
-                    "Received envelope with null payload, skipping. TraceId={TraceId}",
-                    envelope.TraceId);
-                continue;
+                await foreach (var envelope in _messageBus.SubscribeAsync<RagRequest>(
+                                   NatsSubjects.RagRequest, QueueGroup, stoppingToken))
+                {
+                    var request = envelope.Payload;
+                    if (request is null)
+                    {
+                        _logger.LogWarning(
+                            "Received envelope with null payload, skipping. TraceId={TraceId}",
+                            envelope.TraceId);
+                        continue;
+                    }
+
+                    _logger.LogInformation(
+                        "Processing RAG request. Query={Query}, EquipmentId={EquipmentId}, TopK={TopK}, Pipeline={Pipeline}, TraceId={TraceId}",
+                        request.Query, request.EquipmentId, request.TopK, request.PipelineMode, envelope.TraceId);
+
+                    _ = ProcessRagRequestAsync(request, stoppingToken);
+                }
+
+                // Subscription completed (NATS idle timeout) — re-subscribe
+                _logger.LogWarning("NATS subscription completed, re-subscribing to {Subject}", NatsSubjects.RagRequest);
+                await Task.Delay(1000, stoppingToken);
             }
-
-            _logger.LogInformation(
-                "Processing RAG request. Query={Query}, EquipmentId={EquipmentId}, TopK={TopK}, Pipeline={Pipeline}, TraceId={TraceId}",
-                request.Query, request.EquipmentId, request.TopK, request.PipelineMode, envelope.TraceId);
-
-            _ = ProcessRagRequestAsync(request, stoppingToken);
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
         _logger.LogInformation("RagWorker stopped");
@@ -267,43 +281,78 @@ public sealed class RagWorker : BackgroundService
     {
         _logger.LogDebug("Running Advanced pipeline. ConversationId={ConversationId}", conversationId);
 
-        // 1. Pre-retrieval: Rewrite query
+        // 1. Pre-retrieval: Rewrite query (with timeout + graceful degradation)
         var rewrittenQuery = request.Query;
         if (_queryRewriter is not null && _ragOptions.EnableQueryRewriting)
         {
-            rewrittenQuery = await _queryRewriter.RewriteAsync(request.Query, ct);
-            _logger.LogInformation(
-                "Query rewritten. ConversationId={ConversationId}, Original={Original}, Rewritten={Rewritten}",
-                conversationId, request.Query, rewrittenQuery);
+            try
+            {
+                using var rewriteCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                rewriteCts.CancelAfter(_ragOptions.QueryRewriteTimeoutMs);
+                var rewriteSw = FabMetrics.StartTimer();
+                rewrittenQuery = await _queryRewriter.RewriteAsync(request.Query, rewriteCts.Token);
+                FabMetrics.RecordElapsed(rewriteSw, FabMetrics.RagQueryRewriteDuration);
+                _logger.LogInformation(
+                    "Query rewritten. ConversationId={ConversationId}, Original={Original}, Rewritten={Rewritten}",
+                    conversationId, request.Query, rewrittenQuery);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "Query rewrite timed out ({TimeoutMs}ms), using original query. ConversationId={ConversationId}",
+                    _ragOptions.QueryRewriteTimeoutMs, conversationId);
+                FabMetrics.RagStageTimeoutCount.Add(1, new KeyValuePair<string, object?>("stage", "query_rewrite"));
+                rewrittenQuery = request.Query;
+            }
         }
 
         // 2. Embed the rewritten query
         var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, ct);
 
-        // 3. Over-fetch candidates
-        var advVectorSw = FabMetrics.StartTimer();
-        var collection = _qdrantOptions.DefaultCollection;
-        var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
-        var searchResults = await _vectorStore.SearchAsync(
-            collection, queryVector, overFetchK, filter: null, ct);
-        FabMetrics.RecordElapsed(advVectorSw, FabMetrics.RagVectorSearchDuration);
+        // 3. Over-fetch candidates (with timeout)
+        IReadOnlyList<VectorSearchResult> searchResults;
+        {
+            using var vectorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            vectorCts.CancelAfter(_ragOptions.VectorSearchTimeoutMs);
+            var advVectorSw = FabMetrics.StartTimer();
+            var collection = _qdrantOptions.DefaultCollection;
+            var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
+            searchResults = await _vectorStore.SearchAsync(
+                collection, queryVector, overFetchK, filter: null, vectorCts.Token);
+            FabMetrics.RecordElapsed(advVectorSw, FabMetrics.RagVectorSearchDuration);
+        }
 
         // 4. Pre-filter by MinScore
         var candidates = FilterByScore(searchResults, _ragOptions.MinScore);
 
         _logger.LogInformation(
             "Advanced vector search. ConversationId={ConversationId}, OverFetchK={OverFetchK}, PreFilter={PreFilter}, PostFilter={PostFilter}",
-            conversationId, overFetchK, searchResults.Count, candidates.Count);
+            conversationId, Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10), searchResults.Count, candidates.Count);
 
         // 4.5. Hybrid merge with BM25 via RRF
         candidates = HybridMerge(candidates, rewrittenQuery, request.TopK);
 
-        // 5. Post-retrieval: LLM reranking
+        // 5. Post-retrieval: LLM reranking (with timeout + graceful fallback)
         var advRerankSw = FabMetrics.StartTimer();
         List<VectorSearchResult> reranked;
         if (_llmReranker is not null && _ragOptions.EnableLlmReranking)
         {
-            reranked = await _llmReranker.RerankAsync(request.Query, candidates, request.TopK * 2, ct);
+            try
+            {
+                using var rerankCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                rerankCts.CancelAfter(_ragOptions.LlmRerankTimeoutMs);
+                reranked = await _llmReranker.RerankAsync(request.Query, candidates, request.TopK * 2, rerankCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "LLM rerank timed out ({TimeoutMs}ms), falling back to keyword boost. ConversationId={ConversationId}",
+                    _ragOptions.LlmRerankTimeoutMs, conversationId);
+                FabMetrics.RagStageTimeoutCount.Add(1, new KeyValuePair<string, object?>("stage", "llm_rerank"));
+                var keywords = ExtractKeywords(request.Query);
+                var expanded = ExpandKeywordsWithSynonyms(keywords);
+                reranked = RerankWithKeywordBoost(candidates, expanded);
+            }
         }
         else
         {

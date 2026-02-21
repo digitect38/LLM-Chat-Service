@@ -31,6 +31,8 @@
     <script src="_framework/blazor.server.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
     <script>
         // ─── Scroll ───────────────────────────────────────────────
         window.chatScroll = {
@@ -126,7 +128,161 @@
                     }
                 });
 
+                // Post-process: convert [Page XX] references into clickable links
+                html = html.replace(/\[Page\s+(\d+(?:\s*,\s*\d+)*)\]/g, function (match, pages) {
+                    var pageNums = pages.split(/\s*,\s*/);
+                    var links = pageNums.map(function (p) {
+                        return '<a class="citation-page-link" data-page="' + p.trim() + '" onclick="citationInterop.onPageLinkClick(' + p.trim() + '); return false;" href="#">Page ' + p.trim() + '</a>';
+                    });
+                    return '[' + links.join(', ') + ']';
+                });
+
                 return html;
+            }
+        };
+
+        // ─── Citation interop (Blazor ↔ JS) ───────────────────────────
+        window.citationInterop = {
+            _dotNetRef: null,
+            init: function (dotNetRef) {
+                this._dotNetRef = dotNetRef;
+            },
+            onPageLinkClick: function (page) {
+                if (this._dotNetRef) {
+                    this._dotNetRef.invokeMethodAsync('OnCitationPageClick', page);
+                }
+            },
+            dispose: function () {
+                this._dotNetRef = null;
+            }
+        };
+
+        // ─── pdf.js viewer interop ──────────────────────────────────
+        window.pdfViewer = {
+            _doc: null,
+            _pageCount: 0,
+
+            load: async function (url) {
+                if (typeof pdfjsLib === 'undefined') {
+                    console.error('pdf.js not loaded');
+                    return 0;
+                }
+                pdfjsLib.GlobalWorkerOptions.workerSrc =
+                    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                try {
+                    this._doc = await pdfjsLib.getDocument(url).promise;
+                    this._pageCount = this._doc.numPages;
+                    return this._pageCount;
+                } catch (e) {
+                    console.error('PDF load failed:', e);
+                    return 0;
+                }
+            },
+
+            renderPage: async function (canvasId, pageNum, scale) {
+                if (!this._doc) return false;
+                try {
+                    var page = await this._doc.getPage(pageNum);
+                    var viewport = page.getViewport({ scale: scale || 1.0 });
+                    var canvas = document.getElementById(canvasId);
+                    if (!canvas) return false;
+                    var ctx = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                    return true;
+                } catch (e) {
+                    console.error('PDF render failed:', e);
+                    return false;
+                }
+            },
+
+            getPageCount: function () {
+                return this._pageCount;
+            },
+
+            highlightText: async function (canvasId, overlayId, charStart, charEnd, scale) {
+                if (!this._doc) return false;
+                var overlay = document.getElementById(overlayId);
+                var canvas = document.getElementById(canvasId);
+                if (!overlay || !canvas) return false;
+                overlay.innerHTML = '';
+
+                var pageNum = parseInt(canvas.dataset.pageNum || '1');
+                var highlighted = false;
+                try {
+                    var page = await this._doc.getPage(pageNum);
+                    var viewport = page.getViewport({ scale: scale || 1.0 });
+                    var textContent = await page.getTextContent();
+
+                    var currentOffset = 0;
+                    for (var i = 0; i < textContent.items.length; i++) {
+                        var item = textContent.items[i];
+                        if (!item.str) continue;
+                        var itemStart = currentOffset;
+                        var itemEnd = currentOffset + item.str.length;
+
+                        if (itemEnd > charStart && itemStart < charEnd) {
+                            var tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+                            var rect = document.createElement('div');
+                            rect.className = 'highlight-rect';
+                            rect.style.left = tx[4] + 'px';
+                            rect.style.top = (canvas.height - tx[5] - item.height * (scale || 1.0)) + 'px';
+                            rect.style.width = item.width * (scale || 1.0) + 'px';
+                            rect.style.height = item.height * (scale || 1.0) + 'px';
+                            overlay.appendChild(rect);
+                            highlighted = true;
+                        }
+                        currentOffset = itemEnd;
+                    }
+                } catch (e) {
+                    console.error('Highlight failed:', e);
+                }
+                return highlighted;
+            },
+
+            showFallbackHighlight: function (overlayId, canvasWidth, canvasHeight) {
+                var overlay = document.getElementById(overlayId);
+                if (!overlay) return;
+                overlay.innerHTML = '';
+                var fallback = document.createElement('div');
+                fallback.className = 'highlight-fallback-overlay';
+                fallback.style.width = canvasWidth + 'px';
+                fallback.style.height = canvasHeight + 'px';
+                var text = document.createElement('span');
+                text.className = 'highlight-fallback-text';
+                text.textContent = '정확한 위치를 표시할 수 없습니다';
+                fallback.appendChild(text);
+                overlay.appendChild(fallback);
+            }
+        };
+
+        // ─── Citation pane drag-resize ──────────────────────────────
+        window.citationResize = {
+            init: function (paneSelector, handleSelector, minWidth) {
+                var handle = document.querySelector(handleSelector);
+                var pane = document.querySelector(paneSelector);
+                if (!handle || !pane) return;
+
+                var startX, startWidth;
+                handle.addEventListener('mousedown', function (e) {
+                    startX = e.clientX;
+                    startWidth = pane.offsetWidth;
+                    e.preventDefault();
+
+                    function onMove(ev) {
+                        var delta = startX - ev.clientX;
+                        var maxWidth = window.innerWidth * 0.6;
+                        var newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + delta));
+                        pane.style.width = newWidth + 'px';
+                    }
+                    function onUp() {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    }
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                });
             }
         };
     </script>

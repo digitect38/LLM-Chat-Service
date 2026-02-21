@@ -93,4 +93,34 @@ app.MapPost("/api/feedback", async (FeedbackMessage feedback, IAuditTrail auditT
     return Results.Ok(new { status = "recorded" });
 });
 
+// PDF serving endpoint — serves documents from knowledge-docs for the citation pane viewer
+app.MapGet("/api/documents/{fileName}", (string fileName, IConfiguration config) =>
+{
+    // Prevent directory traversal attacks
+    if (fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
+        return Results.BadRequest(new { error = "Invalid file name" });
+
+    var docsFolder = config.GetValue<string>("Rag:WatchFolder") ?? "knowledge-docs";
+    var fullPath = Path.GetFullPath(Path.Combine(docsFolder, fileName));
+    var fullDocsFolder = Path.GetFullPath(docsFolder);
+
+    // Verify the resolved path is still within the docs folder
+    if (!fullPath.StartsWith(fullDocsFolder, StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Invalid file path" });
+
+    if (!File.Exists(fullPath))
+        return Results.NotFound(new { error = $"Document '{fileName}' not found" });
+
+    var ext = Path.GetExtension(fileName).ToLowerInvariant();
+    var contentType = ext switch
+    {
+        ".pdf" => "application/pdf",
+        ".md" => "text/markdown",
+        ".txt" => "text/plain",
+        _ => "application/octet-stream"
+    };
+
+    return Results.File(fullPath, contentType, fileName);
+});
+
 app.Run();

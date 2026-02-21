@@ -55,21 +55,35 @@ public sealed class LlmWorker : BackgroundService
         _logger.LogInformation("LlmWorker started. Subscribing to {Subject} with queue group {QueueGroup}",
             NatsSubjects.ChatRequest, QueueGroup);
 
-        await foreach (var envelope in _messageBus.SubscribeAsync<ChatRequest>(
-                           NatsSubjects.ChatRequest, QueueGroup, stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
-            var request = envelope.Payload;
-            if (request is null)
+            try
             {
-                _logger.LogWarning("Received envelope with null payload, skipping. TraceId={TraceId}", envelope.TraceId);
-                continue;
+                await foreach (var envelope in _messageBus.SubscribeAsync<ChatRequest>(
+                                   NatsSubjects.ChatRequest, QueueGroup, stoppingToken))
+                {
+                    var request = envelope.Payload;
+                    if (request is null)
+                    {
+                        _logger.LogWarning("Received envelope with null payload, skipping. TraceId={TraceId}", envelope.TraceId);
+                        continue;
+                    }
+
+                    _logger.LogInformation(
+                        "Processing chat request. ConversationId={ConversationId}, EquipmentId={EquipmentId}, TraceId={TraceId}",
+                        request.ConversationId, request.EquipmentId, envelope.TraceId);
+
+                    _ = ProcessChatRequestAsync(request, stoppingToken);
+                }
+
+                // Subscription completed (NATS idle timeout) — re-subscribe
+                _logger.LogWarning("NATS subscription completed, re-subscribing to {Subject}", NatsSubjects.ChatRequest);
+                await Task.Delay(1000, stoppingToken);
             }
-
-            _logger.LogInformation(
-                "Processing chat request. ConversationId={ConversationId}, EquipmentId={EquipmentId}, TraceId={TraceId}",
-                request.ConversationId, request.EquipmentId, envelope.TraceId);
-
-            _ = ProcessChatRequestAsync(request, stoppingToken);
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
         _logger.LogInformation("LlmWorker stopped");
@@ -233,12 +247,27 @@ public sealed class LlmWorker : BackgroundService
             // 6. Publish final chunk with IsComplete = true and citations
             var citations = ragResults
                 .Where(r => r.Score > 0)
-                .Select(r => new CitationInfo
+                .Select((r, idx) =>
                 {
-                    FileName = ExtractSourceName(r),
-                    ChunkText = r.ChunkText,
-                    Section = r.Metadata.TryGetValue("section", out var sec) ? sec?.ToString() : null,
-                    Score = r.Score
+                    var sourceName = ExtractSourceName(r);
+                    var isPdf = sourceName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+                    return new CitationInfo
+                    {
+                        CitationId = $"cite-{idx + 1}",
+                        DocId = TryGetMetadataString(r.Metadata, "document_id", out var docId) ? docId : r.DocumentId,
+                        FileName = sourceName,
+                        ChunkId = r.DocumentId,
+                        ChunkText = r.ChunkText,
+                        Section = TryGetMetadataString(r.Metadata, "section", out var sec) ? sec : null,
+                        Page = TryGetMetadataInt(r.Metadata, "page_number"),
+                        CharOffsetStart = TryGetMetadataInt(r.Metadata, "char_offset_start"),
+                        CharOffsetEnd = TryGetMetadataInt(r.Metadata, "char_offset_end"),
+                        PdfUrl = isPdf ? $"/api/documents/{sourceName}" : null,
+                        ParentContext = TryGetMetadataString(r.Metadata, "parent_context", out var pc) ? pc : null,
+                        Score = r.Score,
+                        HighlightType = TryGetMetadataString(r.Metadata, "highlight_type", out var ht) ? ht : "text",
+                        Revision = TryGetMetadataString(r.Metadata, "revision", out var rev) ? rev : null
+                    };
                 })
                 .ToList();
 
@@ -373,6 +402,12 @@ public sealed class LlmWorker : BackgroundService
             → 참고 문서 기반 확신 수준 (높음/중간/낮음)
 
             Note: 간단한 질문에는 '요약'과 '참조'만 사용해도 됩니다.
+
+            [CITATION FORMAT - MANDATORY]
+            - 참조 문서의 페이지를 반드시 [Page XX] 형식으로 인용하세요.
+            - 예: "패드 교체 주기는 300시간입니다 [Page 12]"
+            - 여러 페이지 참조: [Page 12, 15]
+            - 모든 답변에서 근거가 되는 페이지를 반드시 명시하세요.
             """;
 
         if (context is not null)
@@ -466,7 +501,7 @@ public sealed class LlmWorker : BackgroundService
         var responseSubject = NatsSubjects.RagResponse(conversationId);
 
         using var ragCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        ragCts.CancelAfter(TimeSpan.FromSeconds(10));
+        ragCts.CancelAfter(TimeSpan.FromSeconds(60));
 
         try
         {
@@ -519,7 +554,7 @@ public sealed class LlmWorker : BackgroundService
         catch (OperationCanceledException)
         {
             _logger.LogWarning(
-                "RAG request timed out or cancelled. Proceeding without RAG. ConversationId={ConversationId}",
+                "RAG request timed out (60s) or cancelled. Proceeding WITHOUT RAG context — answers will lack document references. ConversationId={ConversationId}",
                 conversationId);
             return null;
         }
@@ -586,6 +621,15 @@ public sealed class LlmWorker : BackgroundService
 
         value = str;
         return true;
+    }
+
+    private static int? TryGetMetadataInt(Dictionary<string, object> metadata, string key)
+    {
+        if (!metadata.TryGetValue(key, out var raw) || raw is null)
+            return null;
+
+        var str = raw.ToString()?.Trim('"') ?? string.Empty;
+        return int.TryParse(str, out var val) ? val : null;
     }
 
     /// <summary>

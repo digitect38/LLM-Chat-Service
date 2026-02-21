@@ -25,8 +25,17 @@ public sealed class ChatStreamChunk
 
 public sealed class CitationInfo
 {
+    [JsonPropertyName("citationId")]
+    public string CitationId { get; set; } = string.Empty;
+
+    [JsonPropertyName("docId")]
+    public string DocId { get; set; } = string.Empty;
+
     [JsonPropertyName("fileName")]
     public string FileName { get; set; } = string.Empty;
+
+    [JsonPropertyName("chunkId")]
+    public string? ChunkId { get; set; }
 
     [JsonPropertyName("chunkText")]
     public string ChunkText { get; set; } = string.Empty;
@@ -34,6 +43,27 @@ public sealed class CitationInfo
     [JsonPropertyName("section")]
     public string? Section { get; set; }
 
+    [JsonPropertyName("page")]
+    public int? Page { get; set; }
+
+    [JsonPropertyName("charOffsetStart")]
+    public int? CharOffsetStart { get; set; }
+
+    [JsonPropertyName("charOffsetEnd")]
+    public int? CharOffsetEnd { get; set; }
+
+    [JsonPropertyName("pdfUrl")]
+    public string? PdfUrl { get; set; }
+
+    [JsonPropertyName("parentContext")]
+    public string? ParentContext { get; set; }
+
     [JsonPropertyName("score")]
     public float Score { get; set; }
+
+    [JsonPropertyName("highlightType")]
+    public string? HighlightType { get; set; }
+
+    [JsonPropertyName("revision")]
+    public string? Revision { get; set; }
 }
