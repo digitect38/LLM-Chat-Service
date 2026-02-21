@@ -273,6 +273,8 @@
     <!-- ===== Citation Pane ===== -->
     <CitationPane IsOpen="_citationPaneOpen"
                   Citations="_activeCitations"
+                  AutoOpenPage="_autoOpenPage"
+                  AutoOpenSeq="_autoOpenSeq"
                   OnClose="CloseCitationPane" />
 </div>
 
@@ -328,6 +330,8 @@
 
     // Citation interop
     private DotNetObjectReference<Index>? _dotNetRef;
+    private int? _autoOpenPage;
+    private int _autoOpenSeq;
 
     protected override void OnInitialized()
     {
@@ -661,22 +665,11 @@
     }
 
     [JSInvokable]
-    public async Task OnCitationPageClick(int page)
+    public Task OnCitationPageClick(int page)
     {
-        _citationPaneOpen = true;
-
-        // Find first citation matching this page
-        if (_activeCitations is { Count: > 0 })
+        // Ensure we have citations from the last assistant message
+        if (_activeCitations is not { Count: > 0 })
         {
-            var match = _activeCitations.FirstOrDefault(c => c.Page == page);
-            if (match is not null)
-            {
-                // Already have citations, just open the pane
-            }
-        }
-        else
-        {
-            // Try to find citations from the last assistant message
             var lastAssistant = _messages.LastOrDefault(m => !m.IsUser && m.Citations is { Count: > 0 });
             if (lastAssistant?.Citations is not null)
             {
@@ -684,8 +677,11 @@
             }
         }
 
+        _autoOpenPage = page;
+        _autoOpenSeq++;  // increment so CitationPane detects repeated clicks on same page
+        _citationPaneOpen = true;
         StateHasChanged();
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     // ─── Citation Pane ─────────────────────────────────────────────────
@@ -705,6 +701,7 @@
     private void CloseCitationPane()
     {
         _citationPaneOpen = false;
+        _autoOpenPage = null;
         StateHasChanged();
     }
 

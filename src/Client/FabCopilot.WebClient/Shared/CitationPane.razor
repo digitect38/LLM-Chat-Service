@@ -141,11 +141,14 @@
     [Parameter] public bool IsOpen { get; set; }
     [Parameter] public List<CitationInfo>? Citations { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public int? AutoOpenPage { get; set; }
+    [Parameter] public int AutoOpenSeq { get; set; }
 
     private enum ViewMode { List, Viewer }
     private ViewMode _viewMode = ViewMode.List;
     private int _activeTabIndex;
     private bool _resizeInitialized;
+    private int _lastAutoOpenSeq;
 
     // PDF viewer state
     private string? _viewingPdfUrl;
@@ -274,6 +277,55 @@
             }
         }
         catch { }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Auto-open PDF viewer when AutoOpenPage changes
+        if (AutoOpenPage.HasValue && AutoOpenSeq != _lastAutoOpenSeq && IsOpen && Citations is { Count: > 0 })
+        {
+            _lastAutoOpenSeq = AutoOpenSeq;
+            var targetPage = AutoOpenPage.Value;
+
+            // Find a citation with a PDF URL that matches this page (or best match)
+            var match = Citations.FirstOrDefault(c => c.Page == targetPage && !string.IsNullOrEmpty(c.PdfUrl))
+                     ?? Citations.FirstOrDefault(c => !string.IsNullOrEmpty(c.PdfUrl));
+
+            if (match is not null)
+            {
+                // Select the matching tab
+                _activeTabIndex = Citations.IndexOf(match);
+
+                // Auto-open PDF viewer at the target page
+                _viewingCitation = match;
+                _viewingPdfUrl = match.PdfUrl;
+                _viewingFileName = match.FileName;
+                _currentPage = targetPage;
+                _viewMode = ViewMode.Viewer;
+                _isLoading = true;
+                StateHasChanged();
+
+                await Task.Delay(50);
+                _totalPages = await JS.InvokeAsync<int>("pdfViewer.load", _viewingPdfUrl);
+                if (_totalPages > 0)
+                {
+                    if (_currentPage > _totalPages) _currentPage = _totalPages;
+                    await RenderCurrentPage();
+                }
+                _isLoading = false;
+            }
+            else
+            {
+                // No PDF citation — select the tab matching the page
+                var tabMatch = Citations.FindIndex(c => c.Page == targetPage);
+                if (tabMatch >= 0) _activeTabIndex = tabMatch;
+            }
+        }
+
+        if (!IsOpen)
+        {
+            _lastAutoOpenSeq = 0;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
