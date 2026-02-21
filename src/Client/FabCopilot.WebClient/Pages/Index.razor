@@ -22,7 +22,11 @@
         </div>
 
         <nav class="sidebar-conversations">
-            @if (_conversationHistory.Count == 0)
+            @if (_isLoadingHistory)
+            {
+                <div class="sidebar-empty">기록 로딩 중...</div>
+            }
+            else if (_conversationHistory.Count == 0)
             {
                 <div class="sidebar-empty">대화 기록 없음</div>
             }
@@ -288,7 +292,17 @@
 }
 
 @code {
-    private string EquipmentId { get; set; } = "CMP01";
+    private string _equipmentId = "CMP01";
+    private string EquipmentId
+    {
+        get => _equipmentId;
+        set
+        {
+            if (_equipmentId == value) return;
+            _equipmentId = value;
+            _ = OnEquipmentChangedAsync();
+        }
+    }
     private string UserMessage { get; set; } = string.Empty;
 
     // Connection state
@@ -334,7 +348,9 @@
     private int? _autoOpenPage;
     private int _autoOpenSeq;
 
-    protected override void OnInitialized()
+    private bool _isLoadingHistory;
+
+    protected override async Task OnInitializedAsync()
     {
         ChatService.OnMessageReceived += HandleChunkReceived;
         ChatService.OnStateChanged += HandleStateChanged;
@@ -346,7 +362,9 @@
         var eqOpts = EquipmentOptionsAccessor.Value;
         _availableEquipment = eqOpts.Available;
         if (_availableEquipment.Count > 0)
-            EquipmentId = !string.IsNullOrEmpty(eqOpts.Default) ? eqOpts.Default : _availableEquipment[0].Id;
+            _equipmentId = !string.IsNullOrEmpty(eqOpts.Default) ? eqOpts.Default : _availableEquipment[0].Id;
+
+        await LoadConversationHistoryAsync();
     }
 
     // ─── Sidebar ────────────────────────────────────────────────────────
@@ -373,7 +391,7 @@
         StateHasChanged();
     }
 
-    private void SwitchConversation(string convId)
+    private async Task SwitchConversation(string convId)
     {
         var target = _conversationHistory.FirstOrDefault(c => c.Id == convId);
         if (target is null || target.Id == _conversationId) return;
@@ -382,14 +400,46 @@
 
         _conversationId = target.Id;
         _messages.Clear();
-        _messages.AddRange(target.Messages.Select(m => new ChatMessageViewModel
+
+        // If the sidebar item already has cached messages, use them
+        if (target.Messages.Count > 0)
         {
-            Text = m.Text,
-            RenderedHtml = m.RenderedHtml,
-            IsUser = m.IsUser,
-            Error = m.Error
-        }));
+            _messages.AddRange(target.Messages.Select(m => new ChatMessageViewModel
+            {
+                Text = m.Text,
+                RenderedHtml = m.RenderedHtml,
+                IsUser = m.IsUser,
+                Error = m.Error
+            }));
+        }
+        else
+        {
+            // Lazy-load full messages from Redis
+            var detail = await ChatService.GetConversationAsync(EquipmentId, convId);
+            if (detail?.Messages is { Count: > 0 })
+            {
+                foreach (var m in detail.Messages)
+                {
+                    var isUser = m.Role == 0; // 0=User
+                    var text = m.Text;
+                    var html = isUser ? null : await RenderMarkdownAsync(text);
+                    _messages.Add(new ChatMessageViewModel
+                    {
+                        Text = text,
+                        RenderedHtml = html,
+                        IsUser = isUser
+                    });
+                }
+                // Cache into the sidebar item
+                target.Messages = _messages.Select(m => new ChatMessageViewModel
+                {
+                    Text = m.Text, RenderedHtml = m.RenderedHtml, IsUser = m.IsUser, Error = m.Error
+                }).ToList();
+            }
+        }
+
         StateHasChanged();
+        await ScrollToBottom();
     }
 
     private void SaveCurrentToHistory()
@@ -418,6 +468,42 @@
                 }).ToList()
             });
         }
+    }
+
+    private async Task LoadConversationHistoryAsync()
+    {
+        _isLoadingHistory = true;
+        StateHasChanged();
+        try
+        {
+            var summaries = await ChatService.GetConversationListAsync(EquipmentId);
+            _conversationHistory.Clear();
+            foreach (var s in summaries)
+            {
+                _conversationHistory.Add(new ConversationItem
+                {
+                    Id = s.ConversationId,
+                    Title = s.Title,
+                    Messages = [] // lazy-loaded on click
+                });
+            }
+        }
+        catch { /* already logged in ChatService */ }
+        finally
+        {
+            _isLoadingHistory = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnEquipmentChangedAsync()
+    {
+        SaveCurrentToHistory();
+        _messages.Clear();
+        _conversationId = Guid.NewGuid().ToString("N");
+        if (ChatService.IsConnected)
+            await ChatService.DisconnectAsync();
+        await LoadConversationHistoryAsync();
     }
 
     // ─── Connection ─────────────────────────────────────────────────────

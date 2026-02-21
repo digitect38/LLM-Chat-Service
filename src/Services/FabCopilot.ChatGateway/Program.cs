@@ -1,3 +1,4 @@
+using FabCopilot.Contracts.Enums;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Messaging.Extensions;
 using FabCopilot.Redis.Extensions;
@@ -121,6 +122,34 @@ app.MapGet("/api/documents/{fileName}", (string fileName, IConfiguration config)
     };
 
     return Results.File(fullPath, contentType, fileName);
+});
+
+// Conversation history endpoints — returns stored conversations from Redis
+app.MapGet("/api/conversations/{equipmentId}", async (string equipmentId, IConversationStore store) =>
+{
+    var conversations = await store.GetByEquipmentAsync(equipmentId, limit: 30);
+    var summaries = conversations.Select(c =>
+    {
+        var firstUserMsg = c.Messages.FirstOrDefault(m => m.Role == MessageRole.User)?.Text ?? "새 대화";
+        var title = firstUserMsg.Length > 30 ? firstUserMsg[..30] + "..." : firstUserMsg;
+        return new
+        {
+            conversationId = c.ConversationId,
+            title,
+            lastUpdated = c.LastUpdatedAt,
+            messageCount = c.Messages.Count
+        };
+    });
+    return Results.Ok(summaries);
+});
+
+app.MapGet("/api/conversations/{equipmentId}/{conversationId}", async (string equipmentId, string conversationId, IConversationStore store) =>
+{
+    var conversation = await store.GetAsync(conversationId);
+    if (conversation is null || !conversation.EquipmentId.Equals(equipmentId, StringComparison.OrdinalIgnoreCase))
+        return Results.NotFound(new { error = "Conversation not found" });
+
+    return Results.Ok(conversation);
 });
 
 app.Run();

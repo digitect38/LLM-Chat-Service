@@ -210,9 +210,82 @@ public sealed class ChatService : IAsyncDisposable
         }
     }
 
+    public async Task<List<ConversationSummary>> GetConversationListAsync(string equipmentId)
+    {
+        try
+        {
+            var url = $"{_gatewayHttpUrl.TrimEnd('/')}/api/conversations/{Uri.EscapeDataString(equipmentId)}";
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<List<ConversationSummary>>(json) ?? [];
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load conversation list for equipment {EquipmentId}", equipmentId);
+            return [];
+        }
+    }
+
+    public async Task<ConversationDetail?> GetConversationAsync(string equipmentId, string conversationId)
+    {
+        try
+        {
+            var url = $"{_gatewayHttpUrl.TrimEnd('/')}/api/conversations/{Uri.EscapeDataString(equipmentId)}/{Uri.EscapeDataString(conversationId)}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<ConversationDetail>(json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load conversation {ConversationId}", conversationId);
+            return null;
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _httpClient.Dispose();
         await DisconnectAsync();
     }
+}
+
+public sealed class ConversationSummary
+{
+    [System.Text.Json.Serialization.JsonPropertyName("conversationId")]
+    public string ConversationId { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("lastUpdated")]
+    public DateTimeOffset LastUpdated { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("messageCount")]
+    public int MessageCount { get; set; }
+}
+
+public sealed class ConversationDetail
+{
+    [System.Text.Json.Serialization.JsonPropertyName("conversationId")]
+    public string ConversationId { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("equipmentId")]
+    public string EquipmentId { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("messages")]
+    public List<ConversationDetailMessage> Messages { get; set; } = [];
+}
+
+public sealed class ConversationDetailMessage
+{
+    [System.Text.Json.Serialization.JsonPropertyName("role")]
+    public int Role { get; set; } // 0=User, 1=Assistant
+
+    [System.Text.Json.Serialization.JsonPropertyName("text")]
+    public string Text { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("timestamp")]
+    public DateTimeOffset Timestamp { get; set; }
 }
