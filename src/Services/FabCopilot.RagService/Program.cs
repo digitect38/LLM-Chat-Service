@@ -7,6 +7,8 @@ using FabCopilot.RagService;
 using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services;
+using FabCopilot.RagService.Services.Bm25;
+using Microsoft.Extensions.Options;
 
 Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((_, config) =>
@@ -24,6 +26,23 @@ Host.CreateDefaultBuilder(args)
         services.AddFabRedis(ctx.Configuration);
         services.AddFabTelemetry(ctx.Configuration);
         services.Configure<RagOptions>(ctx.Configuration.GetSection(RagOptions.SectionName));
+
+        // BM25 index
+        services.AddSingleton<IBm25Index>(sp =>
+        {
+            var ragOpts = sp.GetRequiredService<IOptions<RagOptions>>().Value;
+            return new Bm25Index(ragOpts.Bm25K1, ragOpts.Bm25B);
+        });
+
+        // Synonym dictionary
+        services.AddSingleton<ISynonymDictionary>(_ =>
+        {
+            var dictPath = Path.Combine(AppContext.BaseDirectory, "synonym-dictionary.json");
+            return SynonymDictionary.LoadFromFile(dictPath);
+        });
+
+        // RAG cache
+        services.AddSingleton<IRagCache, RedisRagCache>();
 
         // RAG pipeline services
         services.AddSingleton<IQueryRewriter, LlmQueryRewriter>();

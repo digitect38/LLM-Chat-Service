@@ -1,76 +1,50 @@
-$uri = [Uri]"ws://localhost:5000/ws/chat/CMP01"
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+[Console]::InputEncoding = [Text.Encoding]::UTF8
+$OutputEncoding = [Text.Encoding]::UTF8
+
 $ws = New-Object System.Net.WebSockets.ClientWebSocket
-$cts = New-Object System.Threading.CancellationTokenSource
-$cts.CancelAfter(60000)
+$uri = [Uri]'ws://localhost:5000/ws/chat/CMP-001'
+$ct = [Threading.CancellationToken]::None
+$ws.ConnectAsync($uri, $ct).Wait()
+Write-Host "Connected"
 
-try {
-    Write-Host "Connecting to $uri..."
-    $ws.ConnectAsync($uri, $cts.Token).GetAwaiter().GetResult()
-    Write-Host "Connected! State: $($ws.State)"
+$msg = '{"userMessage":"패드 교체 기준이 뭐야?"}'
+$bytes = [Text.Encoding]::UTF8.GetBytes($msg)
+$segment = [ArraySegment[byte]]::new($bytes)
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$ws.SendAsync($segment, [Net.WebSockets.WebSocketMessageType]::Text, $true, $ct).Wait()
+Write-Host "Sent - waiting..."
 
-    # Send chat message
-    $msg = '{"userMessage":"What is 2+2? Reply in one short sentence.","conversationId":"test-001"}'
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
-    $segment = New-Object System.ArraySegment[byte](,$bytes)
-    $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $cts.Token).GetAwaiter().GetResult()
-    Write-Host "Sent: $msg"
-    Write-Host ""
-    Write-Host "--- Receiving response ---"
-
-    # Receive response chunks
-    $buf = New-Object byte[] 8192
-    $fullResponse = ""
-    $chunkCount = 0
-    $timeout = [DateTime]::UtcNow.AddSeconds(45)
-
-    while ($ws.State -eq 'Open' -and [DateTime]::UtcNow -lt $timeout) {
-        $seg = New-Object System.ArraySegment[byte](,$buf)
-        $recvCts = New-Object System.Threading.CancellationTokenSource
-        $recvCts.CancelAfter(30000)
-
-        try {
-            $result = $ws.ReceiveAsync($seg, $recvCts.Token).GetAwaiter().GetResult()
-        } catch [System.OperationCanceledException] {
-            Write-Host "`n[Timeout waiting for more data]"
+$buf = [byte[]]::new(8192)
+$fullResponse = ""
+$firstToken = $true
+$deadline = [DateTime]::Now.AddSeconds(120)
+while ([DateTime]::Now -lt $deadline -and $ws.State -eq "Open") {
+    try {
+        $seg = [ArraySegment[byte]]::new($buf)
+        $task = $ws.ReceiveAsync($seg, $ct)
+        $timeout = if ($firstToken) { 60000 } else { 30000 }
+        if ($task.Wait($timeout)) {
+            if ($firstToken) { Write-Host "[First token: $($sw.ElapsedMilliseconds)ms]"; $firstToken = $false }
+            if ($task.Result.MessageType -eq "Close") { break }
+            $text = [Text.Encoding]::UTF8.GetString($buf, 0, $task.Result.Count)
+            try {
+                $chunk = $text | ConvertFrom-Json
+                if ($chunk.token) {
+                    Write-Host -NoNewline $chunk.token
+                    $fullResponse += $chunk.token
+                }
+                if ($chunk.error) { Write-Host "ERROR: $($chunk.error)"; break }
+                if ($chunk.isComplete -eq $true) { break }
+            } catch {
+                Write-Host -NoNewline $text
+            }
+        } else {
+            Write-Host "[timeout]"
             break
         }
-
-        if ($result.MessageType -eq 'Close') {
-            Write-Host "`n[Server closed connection]"
-            break
-        }
-
-        $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $result.Count)
-        $chunkCount++
-
-        # Parse the JSON chunk
-        try {
-            $json = $text | ConvertFrom-Json
-            if ($json.token) {
-                Write-Host -NoNewline $json.token
-                $fullResponse += $json.token
-            }
-            if ($json.isComplete -eq $true) {
-                Write-Host "`n`n[Stream complete after $chunkCount chunks]"
-                break
-            }
-        } catch {
-            Write-Host "Raw chunk: $text"
-        }
-    }
-
-    Write-Host "`n--- Full response ---"
-    Write-Host $fullResponse
-    Write-Host "Total chunks: $chunkCount"
-
-    # Close gracefully
-    $ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, "Done", [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
-    Write-Host "WebSocket closed gracefully"
-} catch {
-    Write-Host "ERROR: $($_.Exception.Message)"
-    if ($_.Exception.InnerException) {
-        Write-Host "Inner: $($_.Exception.InnerException.Message)"
-    }
-} finally {
-    $ws.Dispose()
+    } catch { break }
 }
+$sw.Stop()
+Write-Host "`n--- DONE: $($fullResponse.Length) chars in $($sw.ElapsedMilliseconds)ms ---"
+$ws.Dispose()

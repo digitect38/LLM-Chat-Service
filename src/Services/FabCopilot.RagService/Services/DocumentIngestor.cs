@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using FabCopilot.Llm.Interfaces;
 using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
+using FabCopilot.RagService.Services.Bm25;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,7 @@ public sealed class DocumentIngestor
     private readonly IVectorStore _vectorStore;
     private readonly QdrantOptions _qdrantOptions;
     private readonly RagOptions _ragOptions;
+    private readonly IBm25Index? _bm25Index;
     private readonly IEntityExtractor? _entityExtractor;
     private readonly IKnowledgeGraphStore? _graphStore;
     private readonly ILogger<DocumentIngestor> _logger;
@@ -27,6 +29,7 @@ public sealed class DocumentIngestor
         IOptions<QdrantOptions> qdrantOptions,
         IOptions<RagOptions> ragOptions,
         ILogger<DocumentIngestor> logger,
+        IBm25Index? bm25Index = null,
         IEntityExtractor? entityExtractor = null,
         IKnowledgeGraphStore? graphStore = null)
     {
@@ -34,9 +37,73 @@ public sealed class DocumentIngestor
         _vectorStore = vectorStore;
         _qdrantOptions = qdrantOptions.Value;
         _ragOptions = ragOptions.Value;
+        _bm25Index = bm25Index;
         _entityExtractor = entityExtractor;
         _graphStore = graphStore;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Ingests a PDF document page-by-page, preserving page numbers in chunk metadata.
+    /// </summary>
+    public async Task IngestPdfPagesAsync(
+        string documentId,
+        List<(int PageNumber, string Text)> pages,
+        string equipmentId,
+        Dictionary<string, string> metadata,
+        CancellationToken ct = default)
+    {
+        if (pages.Count == 0)
+        {
+            _logger.LogWarning("No pages provided for PDF {DocumentId}, skipping ingestion", documentId);
+            return;
+        }
+
+        var collection = _qdrantOptions.DefaultCollection;
+        var vectorSize = _qdrantOptions.VectorSize;
+        await _vectorStore.EnsureCollectionAsync(collection, vectorSize, ct);
+
+        var totalChunks = 0;
+
+        foreach (var (pageNumber, pageText) in pages)
+        {
+            if (string.IsNullOrWhiteSpace(pageText)) continue;
+
+            var chunks = ChunkText(pageText, ChunkSize, ChunkOverlap);
+
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                var chunk = chunks[i];
+                var chunkId = $"{documentId}:page:{pageNumber}:chunk:{i}";
+
+                var vector = await _llmClient.GetEmbeddingAsync(chunk, ct);
+
+                var payload = new Dictionary<string, object>
+                {
+                    ["text"] = chunk,
+                    ["document_id"] = documentId,
+                    ["equipment_id"] = equipmentId,
+                    ["chunk_index"] = totalChunks,
+                    ["page_number"] = pageNumber,
+                    ["doc_type"] = InferDocType(documentId),
+                    ["language"] = DetectLanguage(chunk)
+                };
+
+                foreach (var kvp in metadata)
+                    payload[kvp.Key] = kvp.Value;
+
+                await _vectorStore.UpsertAsync(collection, chunkId, vector, payload, ct);
+
+                if (_bm25Index is not null && _ragOptions.EnableBm25)
+                    _bm25Index.AddDocument(chunkId, chunk);
+
+                totalChunks++;
+            }
+        }
+
+        _logger.LogInformation(
+            "Completed PDF ingestion of {DocumentId}. Pages={PageCount}, TotalChunks={ChunkCount}",
+            documentId, pages.Count, totalChunks);
     }
 
     /// <summary>
@@ -86,8 +153,15 @@ public sealed class DocumentIngestor
                 ["document_id"] = documentId,
                 ["equipment_id"] = equipmentId,
                 ["chunk_index"] = i,
-                ["chunk_count"] = chunks.Count
+                ["chunk_count"] = chunks.Count,
+                ["doc_type"] = InferDocType(documentId),
+                ["language"] = DetectLanguage(chunk)
             };
+
+            // Extract section info from chunk header prefix (e.g. "[## Header > ### Sub]")
+            var (chapter, section) = ExtractSectionFromChunk(chunk);
+            if (!string.IsNullOrEmpty(chapter)) payload["chapter"] = chapter;
+            if (!string.IsNullOrEmpty(section)) payload["section"] = section;
 
             // Merge user-supplied metadata
             foreach (var kvp in metadata)
@@ -97,6 +171,12 @@ public sealed class DocumentIngestor
 
             // Upsert into the vector store
             await _vectorStore.UpsertAsync(collection, chunkId, vector, payload, ct);
+
+            // Index in BM25 for hybrid search
+            if (_bm25Index is not null && _ragOptions.EnableBm25)
+            {
+                _bm25Index.AddDocument(chunkId, chunk);
+            }
 
             _logger.LogDebug(
                 "Upserted chunk {ChunkIndex}/{ChunkCount} for document {DocumentId}",
@@ -321,5 +401,93 @@ public sealed class DocumentIngestor
         }
 
         return sections;
+    }
+
+    // ─── Metadata Inference ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Infers the document type from the file name using keyword patterns.
+    /// </summary>
+    internal static string InferDocType(string fileName)
+    {
+        var lower = fileName.ToLowerInvariant();
+
+        if (lower.Contains("alarm") || lower.Contains("error") || lower.Contains("fault"))
+            return "alarm";
+        if (lower.Contains("troubleshoot") || lower.Contains("진단") || lower.Contains("조치"))
+            return "troubleshooting";
+        if (lower.Contains("maintenance") || lower.Contains("유지보수") || lower.Contains("점검"))
+            return "maintenance";
+        if (lower.Contains("procedure") || lower.Contains("절차") || lower.Contains("교체"))
+            return "procedure";
+        if (lower.Contains("spec") || lower.Contains("사양") || lower.Contains("parameter") || lower.Contains("파라미터"))
+            return "specification";
+        if (lower.Contains("overview") || lower.Contains("개요") || lower.Contains("소개"))
+            return "overview";
+        if (lower.Contains("glossary") || lower.Contains("용어"))
+            return "glossary";
+        if (lower.Contains("part") || lower.Contains("부품") || lower.Contains("consumable") || lower.Contains("소모품"))
+            return "parts";
+
+        return "general";
+    }
+
+    /// <summary>
+    /// Detects the primary language of a text by counting Hangul vs Latin characters.
+    /// </summary>
+    internal static string DetectLanguage(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "unknown";
+
+        var hangulCount = 0;
+        var latinCount = 0;
+
+        foreach (var ch in text)
+        {
+            if (ch is >= '\uAC00' and <= '\uD7AF' or >= '\u1100' and <= '\u11FF' or >= '\u3130' and <= '\u318F')
+                hangulCount++;
+            else if (ch is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z'))
+                latinCount++;
+        }
+
+        if (hangulCount == 0 && latinCount == 0)
+            return "unknown";
+
+        var total = hangulCount + latinCount;
+        var koreanRatio = (double)hangulCount / total;
+
+        return koreanRatio > 0.5 ? "ko" : "en";
+    }
+
+    /// <summary>
+    /// Extracts chapter and section from a markdown chunk's header prefix.
+    /// Looks for the "[## Header > ### Sub]" format added by ChunkMarkdown.
+    /// </summary>
+    internal static (string? Chapter, string? Section) ExtractSectionFromChunk(string chunk)
+    {
+        if (!chunk.StartsWith('['))
+            return (null, null);
+
+        var closeBracket = chunk.IndexOf("]\n", StringComparison.Ordinal);
+        if (closeBracket < 0)
+            closeBracket = chunk.IndexOf(']');
+        if (closeBracket < 0)
+            return (null, null);
+
+        var headerPath = chunk[1..closeBracket];
+        var parts = headerPath.Split(" > ", StringSplitOptions.RemoveEmptyEntries);
+
+        // First part is the top-level chapter, last part is the section
+        var chapter = parts.Length > 0 ? CleanHeaderText(parts[0]) : null;
+        var section = parts.Length > 1 ? CleanHeaderText(parts[^1]) : null;
+
+        return (chapter, section);
+    }
+
+    private static string CleanHeaderText(string header)
+    {
+        // Remove leading # characters and whitespace
+        return Regex.Replace(header, @"^#{1,6}\s*", "").Trim();
     }
 }

@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using FabCopilot.RagService.Configuration;
+using FabCopilot.RagService.Interfaces;
+using FabCopilot.RagService.Services.Bm25;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -14,6 +16,8 @@ public sealed class FileWatcherIngestorService : BackgroundService
     private readonly DocumentIngestor _ingestor;
     private readonly FileTextExtractor _extractor;
     private readonly IVectorStore _vectorStore;
+    private readonly IBm25Index? _bm25Index;
+    private readonly IRagCache? _ragCache;
     private readonly QdrantOptions _qdrantOptions;
     private readonly RagOptions _ragOptions;
     private readonly ILogger<FileWatcherIngestorService> _logger;
@@ -29,11 +33,15 @@ public sealed class FileWatcherIngestorService : BackgroundService
         IVectorStore vectorStore,
         IOptions<QdrantOptions> qdrantOptions,
         IOptions<RagOptions> ragOptions,
-        ILogger<FileWatcherIngestorService> logger)
+        ILogger<FileWatcherIngestorService> logger,
+        IBm25Index? bm25Index = null,
+        IRagCache? ragCache = null)
     {
         _ingestor = ingestor;
         _extractor = extractor;
         _vectorStore = vectorStore;
+        _bm25Index = bm25Index;
+        _ragCache = ragCache;
         _qdrantOptions = qdrantOptions.Value;
         _ragOptions = ragOptions.Value;
         _logger = logger;
@@ -62,10 +70,13 @@ public sealed class FileWatcherIngestorService : BackgroundService
         await _vectorStore.EnsureCollectionAsync(
             _qdrantOptions.DefaultCollection, _qdrantOptions.VectorSize, stoppingToken);
 
-        // Scan existing files on startup
+        // Scan existing files on startup (BM25 index is rebuilt during ingestion)
         if (_ragOptions.ScanOnStartup)
         {
+            _bm25Index?.Clear();
             await ScanExistingFilesAsync(stoppingToken);
+            _logger.LogInformation("BM25 index rebuilt with {DocCount} chunks",
+                _bm25Index?.DocumentCount ?? 0);
         }
 
         // Start watching
@@ -222,9 +233,6 @@ public sealed class FileWatcherIngestorService : BackgroundService
 
         _logger.LogInformation("Ingesting file {FilePath} as document {DocumentId}", fullPath, documentId);
 
-        // Extract text
-        var text = _extractor.ExtractText(fullPath);
-
         // Delete existing chunks for this document (handles re-ingestion with different chunk count)
         await _vectorStore.DeleteByDocumentIdAsync(collection, documentId, ct);
 
@@ -238,8 +246,21 @@ public sealed class FileWatcherIngestorService : BackgroundService
             ["ingested_at"] = DateTimeOffset.UtcNow.ToString("o")
         };
 
-        // Ingest via DocumentIngestor
-        await _ingestor.IngestTextAsync(documentId, text, EquipmentId, metadata, ct);
+        // PDF files: page-by-page ingestion with page numbers
+        if (FileTextExtractor.IsPdf(fullPath))
+        {
+            var pages = _extractor.ExtractPdfPages(fullPath);
+            await _ingestor.IngestPdfPagesAsync(documentId, pages, EquipmentId, metadata, ct);
+        }
+        else
+        {
+            var text = _extractor.ExtractText(fullPath);
+            await _ingestor.IngestTextAsync(documentId, text, EquipmentId, metadata, ct);
+        }
+
+        // Invalidate RAG cache when documents change
+        if (_ragCache is not null)
+            await _ragCache.InvalidateAllAsync(ct);
 
         _logger.LogInformation("File ingested successfully: {DocumentId}", documentId);
     }
@@ -252,6 +273,13 @@ public sealed class FileWatcherIngestorService : BackgroundService
         _logger.LogInformation("Deleting document {DocumentId} for removed file {FilePath}", documentId, fullPath);
 
         await _vectorStore.DeleteByDocumentIdAsync(collection, documentId, ct);
+
+        // Remove from BM25 index (all chunks for this document)
+        _bm25Index?.RemoveByPrefix(documentId);
+
+        // Invalidate RAG cache when documents change
+        if (_ragCache is not null)
+            await _ragCache.InvalidateAllAsync(ct);
 
         _logger.LogInformation("Document deleted: {DocumentId}", documentId);
     }

@@ -17,6 +17,9 @@ public sealed class ChatRequest
     [JsonPropertyName("modelId")]
     public string? ModelId { get; set; }
 
+    [JsonPropertyName("searchMode")]
+    public string SearchMode { get; set; } = "hybrid";
+
     [JsonPropertyName("context")]
     public EquipmentContext? Context { get; set; }
 }

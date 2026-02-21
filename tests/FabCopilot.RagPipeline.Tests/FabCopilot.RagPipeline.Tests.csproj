@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\src\Services\FabCopilot.RagService\FabCopilot.RagService.csproj" />
     <ProjectReference Include="..\..\src\Services\FabCopilot.LlmService\FabCopilot.LlmService.csproj" />
     <ProjectReference Include="..\..\src\Shared\FabCopilot.VectorStore\FabCopilot.VectorStore.csproj" />
+    <ProjectReference Include="..\..\src\Shared\FabCopilot.Llm\FabCopilot.Llm.csproj" />
   </ItemGroup>
 
 </Project>

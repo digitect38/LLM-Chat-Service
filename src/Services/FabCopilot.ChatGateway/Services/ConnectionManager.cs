@@ -16,6 +16,7 @@ public sealed class ConnectionManager : IConnectionManager
     private readonly ConcurrentDictionary<string, WebSocket> _connections = new();
     private readonly IMessageBus _messageBus;
     private readonly IConversationStore _conversationStore;
+    private readonly IAuditTrail _auditTrail;
     private readonly ILogger<ConnectionManager> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -27,10 +28,12 @@ public sealed class ConnectionManager : IConnectionManager
     public ConnectionManager(
         IMessageBus messageBus,
         IConversationStore conversationStore,
+        IAuditTrail auditTrail,
         ILogger<ConnectionManager> logger)
     {
         _messageBus = messageBus;
         _conversationStore = conversationStore;
+        _auditTrail = auditTrail;
         _logger = logger;
     }
 
@@ -208,6 +211,9 @@ public sealed class ConnectionManager : IConnectionManager
             equipmentId: equipmentId);
 
         await _messageBus.PublishAsync(NatsSubjects.ChatRequest, envelope, ct);
+
+        // Log query to audit trail (fire-and-forget)
+        _ = _auditTrail.LogQueryAsync(equipmentId, chatRequest.ConversationId, chatRequest.UserMessage, ct);
 
         _logger.LogInformation(
             "Published chat request for conversation {ConversationId} to {Subject}",

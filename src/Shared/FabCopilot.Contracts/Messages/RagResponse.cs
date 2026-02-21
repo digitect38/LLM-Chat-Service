@@ -19,6 +19,15 @@ public sealed class RagResponse
 
     [JsonPropertyName("rewrittenQuery")]
     public string? RewrittenQuery { get; set; }
+
+    [JsonPropertyName("queryIntent")]
+    public QueryIntent QueryIntent { get; set; }
+
+    [JsonPropertyName("maxScore")]
+    public float MaxScore { get; set; }
+
+    [JsonPropertyName("isConfident")]
+    public bool IsConfident { get; set; } = true;
 }
 
 public sealed class RetrievalResult

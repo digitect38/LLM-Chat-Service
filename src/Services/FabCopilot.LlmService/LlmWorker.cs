@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using FabCopilot.Contracts.Constants;
 using FabCopilot.Contracts.Enums;
@@ -6,6 +7,7 @@ using FabCopilot.Contracts.Models;
 using FabCopilot.Llm.Interfaces;
 using FabCopilot.Llm.Models;
 using FabCopilot.Messaging.Interfaces;
+using FabCopilot.Observability.Metrics;
 using FabCopilot.Redis.Interfaces;
 
 namespace FabCopilot.LlmService;
@@ -16,19 +18,25 @@ public sealed class LlmWorker : BackgroundService
 
     private readonly IMessageBus _messageBus;
     private readonly IConversationStore _conversationStore;
+    private readonly IAuditTrail _auditTrail;
     private readonly ILlmClient _llmClient;
     private readonly RagPipelineMode _ragPipelineMode;
+    private readonly int _ragTopK;
+    private readonly float _gateAThreshold;
+    private readonly bool _gateBEnabled;
     private readonly ILogger<LlmWorker> _logger;
 
     public LlmWorker(
         IMessageBus messageBus,
         IConversationStore conversationStore,
+        IAuditTrail auditTrail,
         ILlmClient llmClient,
         IConfiguration configuration,
         ILogger<LlmWorker> logger)
     {
         _messageBus = messageBus;
         _conversationStore = conversationStore;
+        _auditTrail = auditTrail;
         _llmClient = llmClient;
         _logger = logger;
 
@@ -36,6 +44,10 @@ public sealed class LlmWorker : BackgroundService
         _ragPipelineMode = Enum.TryParse<RagPipelineMode>(modeStr, ignoreCase: true, out var mode)
             ? mode
             : RagPipelineMode.Advanced;
+
+        _ragTopK = configuration.GetValue<int?>("Rag:DefaultTopK") ?? 5;
+        _gateAThreshold = configuration.GetValue<float?>("ResponsePolicy:GateAThreshold") ?? 0.55f;
+        _gateBEnabled = configuration.GetValue<bool?>("ResponsePolicy:GateBEnabled") ?? true;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -92,23 +104,62 @@ public sealed class LlmWorker : BackgroundService
             await _conversationStore.AppendMessageAsync(request.ConversationId, userMessage, ct);
 
             // 2.5. Retrieve RAG context from vector store
-            var ragResults = await RetrieveRagContextAsync(
+            var ragSw = FabMetrics.StartTimer();
+            var ragResponse = await RetrieveRagContextAsync(
                 request.ConversationId, request.UserMessage, request.EquipmentId, ct);
+            FabMetrics.RecordElapsed(ragSw, FabMetrics.LlmRagRetrievalDuration);
+            var ragResults = ragResponse?.Results ?? [];
 
-            // 3. Build the LLM prompt messages (with RAG context)
-            var llmMessages = BuildPromptMessages(request, conversation, ragResults);
+            // Gate A: Reject if RAG max score is too low (no confident context)
+            // Strict mode raises the threshold significantly
+            var effectiveThreshold = string.Equals(request.SearchMode, "strict", StringComparison.OrdinalIgnoreCase)
+                ? Math.Max(_gateAThreshold, 0.75f)
+                : _gateAThreshold;
+            var maxScore = ragResults.Count > 0 ? ragResults.Max(r => r.Score) : 0f;
+            var isConfident = ragResults.Count == 0 || maxScore >= effectiveThreshold;
+
+            if (ragResults.Count > 0 && !isConfident)
+            {
+                FabMetrics.LlmGateATriggeredCount.Add(1);
+                _logger.LogInformation(
+                    "Gate A triggered: MaxScore={MaxScore} < Threshold={Threshold}. ConversationId={ConversationId}",
+                    maxScore, _gateAThreshold, request.ConversationId);
+            }
+
+            // 3. Build the LLM prompt messages (with RAG context, Gate A awareness)
+            var llmMessages = BuildPromptMessages(request, conversation, ragResults, isConfident);
 
             // 4. Stream the response from the LLM
+            FabMetrics.LlmRequestCount.Add(1);
+            var llmTotalSw = FabMetrics.StartTimer();
+            var firstTokenSw = FabMetrics.StartTimer();
+            var firstTokenRecorded = false;
             var fullResponse = new StringBuilder();
 
             var llmOptions = !string.IsNullOrEmpty(request.ModelId)
                 ? new LlmOptions { Model = request.ModelId }
                 : null;
 
+            // State for filtering DeepSeek R1 <think>...</think> blocks
+            var insideThinkBlock = false;
+            var tagBuffer = new StringBuilder();
+
             await foreach (var token in _llmClient.StreamChatAsync(llmMessages, llmOptions, ct))
             {
+                // Record first token latency
+                if (!firstTokenRecorded)
+                {
+                    FabMetrics.RecordElapsed(firstTokenSw, FabMetrics.LlmFirstTokenDuration);
+                    firstTokenRecorded = true;
+                }
+
                 // Filter out special tokens that Qwen2.5 sometimes leaks
-                var filtered = SanitizeToken(token);
+                var sanitized = SanitizeToken(token);
+                if (string.IsNullOrEmpty(sanitized))
+                    continue;
+
+                // Filter out DeepSeek R1 <think>...</think> reasoning blocks
+                var filtered = FilterThinkBlocks(sanitized, ref insideThinkBlock, tagBuffer);
                 if (string.IsNullOrEmpty(filtered))
                     continue;
 
@@ -126,6 +177,8 @@ public sealed class LlmWorker : BackgroundService
                     MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", chunk, request.EquipmentId),
                     ct);
             }
+
+            FabMetrics.RecordElapsed(llmTotalSw, FabMetrics.LlmTotalDuration);
 
             // 5. Append source citations if RAG results were used and LLM didn't already include them
             var responseText = fullResponse.ToString();
@@ -148,12 +201,53 @@ public sealed class LlmWorker : BackgroundService
                     ct);
             }
 
-            // 6. Publish final chunk with IsComplete = true
+            // Gate B: Add disclaimer if citations are missing in the response
+            if (_gateBEnabled && ragResults.Count > 0)
+            {
+                var finalText = fullResponse.ToString();
+                var hasCitation = finalText.Contains("📄") || finalText.Contains("참고 문서") || finalText.Contains("참고문서");
+                if (!hasCitation)
+                {
+                    var disclaimer = "\n\n> ⚠️ *이 답변은 문서 기반으로 확인되지 않았습니다. 정확한 정보는 관련 문서를 직접 확인하시기 바랍니다.*";
+                    fullResponse.Append(disclaimer);
+
+                    var disclaimerChunk = new ChatStreamChunk
+                    {
+                        ConversationId = request.ConversationId,
+                        Token = disclaimer,
+                        IsComplete = false
+                    };
+
+                    await _messageBus.PublishAsync(
+                        streamSubject,
+                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", disclaimerChunk, request.EquipmentId),
+                        ct);
+
+                    FabMetrics.LlmGateBTriggeredCount.Add(1);
+                    _logger.LogInformation(
+                        "Gate B triggered: No citations found in response. ConversationId={ConversationId}",
+                        request.ConversationId);
+                }
+            }
+
+            // 6. Publish final chunk with IsComplete = true and citations
+            var citations = ragResults
+                .Where(r => r.Score > 0)
+                .Select(r => new CitationInfo
+                {
+                    FileName = ExtractSourceName(r),
+                    ChunkText = r.ChunkText,
+                    Section = r.Metadata.TryGetValue("section", out var sec) ? sec?.ToString() : null,
+                    Score = r.Score
+                })
+                .ToList();
+
             var completeChunk = new ChatStreamChunk
             {
                 ConversationId = request.ConversationId,
                 Token = string.Empty,
-                IsComplete = true
+                IsComplete = true,
+                Citations = citations.Count > 0 ? citations : null
             };
 
             await _messageBus.PublishAsync(
@@ -169,6 +263,11 @@ public sealed class LlmWorker : BackgroundService
                 Timestamp = DateTimeOffset.UtcNow
             };
             await _conversationStore.AppendMessageAsync(request.ConversationId, assistantMessage, ct);
+
+            // 8. Log response to audit trail (fire-and-forget)
+            _ = _auditTrail.LogResponseAsync(
+                request.EquipmentId, request.ConversationId,
+                fullResponse.Length, llmTotalSw.Elapsed.TotalMilliseconds, ct);
 
             _logger.LogInformation(
                 "Completed chat request. ConversationId={ConversationId}, ResponseLength={ResponseLength}",
@@ -206,12 +305,12 @@ public sealed class LlmWorker : BackgroundService
     }
 
     private static List<LlmChatMessage> BuildPromptMessages(
-        ChatRequest request, Conversation conversation, List<RetrievalResult> ragResults)
+        ChatRequest request, Conversation conversation, List<RetrievalResult> ragResults, bool isConfident = true)
     {
         var messages = new List<LlmChatMessage>();
 
         // System message with equipment context and RAG documents
-        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context, ragResults);
+        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context, ragResults, isConfident);
         messages.Add(LlmChatMessage.System(systemPrompt));
 
         // Conversation history
@@ -238,7 +337,7 @@ public sealed class LlmWorker : BackgroundService
     }
 
     internal static string BuildSystemPrompt(
-        string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults)
+        string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults, bool isConfident = true)
     {
         var prompt = $"""
             You are an equipment copilot assistant for semiconductor fab equipment.
@@ -258,6 +357,22 @@ public sealed class LlmWorker : BackgroundService
             - When expressing mathematical formulas, use LaTeX notation.
             - Inline math: $formula$ (e.g. $v = r \times \omega$)
             - Block math: $$formula$$ (e.g. $$MRR = K_p \times P \times V$$)
+
+            [RESPONSE FORMAT]
+            Structure your responses using these sections when applicable:
+            ## 요약
+            → 1-2줄 핵심 요약
+
+            ## 상세
+            → 단계별 상세 설명, 번호 매기기 사용
+
+            ## 참조
+            → 인용한 문서명과 해당 섹션 (📄 파일명)
+
+            ## 신뢰도
+            → 참고 문서 기반 확신 수준 (높음/중간/낮음)
+
+            Note: 간단한 질문에는 '요약'과 '참조'만 사용해도 됩니다.
             """;
 
         if (context is not null)
@@ -282,7 +397,41 @@ public sealed class LlmWorker : BackgroundService
             }
         }
 
-        if (ragResults is { Count: > 0 })
+        if (ragResults is not { Count: > 0 })
+        {
+            prompt += """
+
+            [NO REFERENCE DOCUMENTS AVAILABLE]
+            참고 문서를 찾지 못했습니다. 답변 시 "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."라고 반드시 명시하세요.
+            추측이나 불확실한 정보는 포함하지 마세요.
+            """;
+        }
+        else if (!isConfident)
+        {
+            prompt += """
+
+            [LOW CONFIDENCE - GATE A WARNING]
+            검색된 참고 문서의 관련성 점수가 매우 낮습니다.
+            이 질문에 대해 신뢰할 수 있는 문서 기반 답변을 제공하기 어렵습니다.
+            답변 시작 부분에 반드시 다음 경고를 포함하세요:
+            "⚠️ 관련 문서의 신뢰도가 낮아 정확하지 않을 수 있습니다. 반드시 원본 문서를 확인하세요."
+
+            참고 문서는 아래와 같지만 관련성이 낮을 수 있습니다:
+
+            """;
+
+            for (var i = 0; i < ragResults.Count; i++)
+            {
+                var result = ragResults[i];
+                var sourceName = ExtractSourceName(result);
+                prompt += $"""
+                --- Document {i + 1}: {sourceName} (score: {result.Score:F3}, LOW CONFIDENCE) ---
+                {result.ChunkText}
+
+                """;
+            }
+        }
+        else
         {
             prompt += """
 
@@ -311,7 +460,7 @@ public sealed class LlmWorker : BackgroundService
         return prompt;
     }
 
-    private async Task<List<RetrievalResult>> RetrieveRagContextAsync(
+    private async Task<RagResponse?> RetrieveRagContextAsync(
         string conversationId, string userMessage, string equipmentId, CancellationToken ct)
     {
         var responseSubject = NatsSubjects.RagResponse(conversationId);
@@ -337,7 +486,7 @@ public sealed class LlmWorker : BackgroundService
             {
                 Query = userMessage,
                 EquipmentId = equipmentId,
-                TopK = 3,
+                TopK = _ragTopK,
                 ConversationId = conversationId,
                 PipelineMode = _ragPipelineMode
             };
@@ -356,30 +505,30 @@ public sealed class LlmWorker : BackgroundService
                 if (envelope.Payload is not null)
                 {
                     _logger.LogInformation(
-                        "Received RAG response. ConversationId={ConversationId}, ResultCount={Count}",
-                        conversationId, envelope.Payload.Results.Count);
+                        "Received RAG response. ConversationId={ConversationId}, ResultCount={Count}, MaxScore={MaxScore}, Intent={Intent}",
+                        conversationId, envelope.Payload.Results.Count, envelope.Payload.MaxScore, envelope.Payload.QueryIntent);
 
                     await enumerator.DisposeAsync();
-                    return envelope.Payload.Results;
+                    return envelope.Payload;
                 }
             }
 
             await enumerator.DisposeAsync();
-            return [];
+            return null;
         }
         catch (OperationCanceledException)
         {
             _logger.LogWarning(
                 "RAG request timed out or cancelled. Proceeding without RAG. ConversationId={ConversationId}",
                 conversationId);
-            return [];
+            return null;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "RAG request failed. Proceeding without RAG. ConversationId={ConversationId}",
                 conversationId);
-            return [];
+            return null;
         }
     }
 
@@ -437,6 +586,57 @@ public sealed class LlmWorker : BackgroundService
 
         value = str;
         return true;
+    }
+
+    /// <summary>
+    /// Filters out DeepSeek R1 &lt;think&gt;...&lt;/think&gt; reasoning blocks from streamed tokens.
+    /// Handles tags that may span across multiple token boundaries.
+    /// </summary>
+    internal static string FilterThinkBlocks(string token, ref bool insideThinkBlock, StringBuilder tagBuffer)
+    {
+        var result = new StringBuilder();
+
+        for (var i = 0; i < token.Length; i++)
+        {
+            var ch = token[i];
+
+            if (tagBuffer.Length > 0)
+            {
+                // We're accumulating a potential tag
+                tagBuffer.Append(ch);
+                var buf = tagBuffer.ToString();
+
+                if (buf.Equals("<think>", StringComparison.OrdinalIgnoreCase))
+                {
+                    insideThinkBlock = true;
+                    tagBuffer.Clear();
+                }
+                else if (buf.Equals("</think>", StringComparison.OrdinalIgnoreCase))
+                {
+                    insideThinkBlock = false;
+                    tagBuffer.Clear();
+                }
+                else if (!"<think>".StartsWith(buf, StringComparison.OrdinalIgnoreCase) &&
+                         !"</think>".StartsWith(buf, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Not a think tag — flush buffer
+                    if (!insideThinkBlock)
+                        result.Append(buf);
+                    tagBuffer.Clear();
+                }
+                // else: still a valid prefix, keep accumulating
+            }
+            else if (ch == '<')
+            {
+                tagBuffer.Append(ch);
+            }
+            else if (!insideThinkBlock)
+            {
+                result.Append(ch);
+            }
+        }
+
+        return result.ToString();
     }
 
     private static string SanitizeToken(string token)

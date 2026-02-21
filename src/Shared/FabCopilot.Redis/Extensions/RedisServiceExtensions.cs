@@ -23,6 +23,7 @@ public static class RedisServiceExtensions
 
         services.AddSingleton<IConversationStore, RedisConversationStore>();
         services.AddSingleton<ISessionStore, RedisSessionStore>();
+        services.AddSingleton<IAuditTrail, RedisAuditTrail>();
 
         return services;
     }

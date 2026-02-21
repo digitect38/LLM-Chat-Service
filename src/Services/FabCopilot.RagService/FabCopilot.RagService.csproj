@@ -10,6 +10,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Update="synonym-dictionary.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\Shared\FabCopilot.Contracts\FabCopilot.Contracts.csproj" />
     <ProjectReference Include="..\..\Shared\FabCopilot.Messaging\FabCopilot.Messaging.csproj" />
     <ProjectReference Include="..\..\Shared\FabCopilot.Llm\FabCopilot.Llm.csproj" />

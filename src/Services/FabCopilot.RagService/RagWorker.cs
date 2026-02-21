@@ -1,15 +1,22 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using FabCopilot.Contracts.Constants;
 using FabCopilot.Contracts.Enums;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Llm.Interfaces;
 using FabCopilot.Messaging.Interfaces;
+using FabCopilot.Observability.Metrics;
 using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
+using FabCopilot.RagService.Services;
+using FabCopilot.RagService.Services.Bm25;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using FabCopilot.VectorStore.Models;
 using Microsoft.Extensions.Options;
+
+// Alias for clarity
+using ISynonymDict = FabCopilot.RagService.Interfaces.ISynonymDictionary;
 
 namespace FabCopilot.RagService;
 
@@ -20,6 +27,9 @@ public sealed class RagWorker : BackgroundService
     private readonly IMessageBus _messageBus;
     private readonly ILlmClient _llmClient;
     private readonly IVectorStore _vectorStore;
+    private readonly IBm25Index? _bm25Index;
+    private readonly ISynonymDict? _synonymDictionary;
+    private readonly IRagCache? _ragCache;
     private readonly QdrantOptions _qdrantOptions;
     private readonly RagOptions _ragOptions;
     private readonly IQueryRewriter? _queryRewriter;
@@ -35,6 +45,9 @@ public sealed class RagWorker : BackgroundService
         IOptions<QdrantOptions> qdrantOptions,
         IOptions<RagOptions> ragOptions,
         ILogger<RagWorker> logger,
+        IBm25Index? bm25Index = null,
+        ISynonymDict? synonymDictionary = null,
+        IRagCache? ragCache = null,
         IQueryRewriter? queryRewriter = null,
         ILlmReranker? llmReranker = null,
         IKnowledgeGraphStore? graphStore = null,
@@ -43,6 +56,9 @@ public sealed class RagWorker : BackgroundService
         _messageBus = messageBus;
         _llmClient = llmClient;
         _vectorStore = vectorStore;
+        _bm25Index = bm25Index;
+        _synonymDictionary = synonymDictionary;
+        _ragCache = ragCache;
         _qdrantOptions = qdrantOptions.Value;
         _ragOptions = ragOptions.Value;
         _logger = logger;
@@ -89,13 +105,58 @@ public sealed class RagWorker : BackgroundService
         {
             var pipelineMode = request.PipelineMode;
 
-            var response = pipelineMode switch
+            // Classify query intent for routing
+            var queryIntent = QueryRouter.Classify(request.Query);
+            _logger.LogInformation(
+                "Query intent classified. ConversationId={ConversationId}, Intent={Intent}",
+                conversationId, queryIntent);
+
+            // Check cache first
+            var pipelineTimer = FabMetrics.StartTimer();
+            RagResponse? response = null;
+            var pipelineModeStr = pipelineMode.ToString();
+            if (_ragCache is not null)
             {
-                RagPipelineMode.Advanced => await RunAdvancedPipelineAsync(request, conversationId, ct),
-                RagPipelineMode.Graph => await RunGraphPipelineAsync(request, conversationId, ct),
-                RagPipelineMode.Agentic => await RunAgenticPipelineAsync(request, conversationId, ct),
-                _ => await RunNaivePipelineAsync(request, conversationId, ct)
-            };
+                response = await _ragCache.GetAsync(request.Query, request.EquipmentId, pipelineModeStr, request.TopK, ct);
+                if (response is not null)
+                {
+                    response.ConversationId = conversationId;
+                    FabMetrics.RagCacheHits.Add(1);
+                    _logger.LogInformation(
+                        "RAG cache hit. ConversationId={ConversationId}, ResultCount={ResultCount}",
+                        conversationId, response.Results.Count);
+                }
+            }
+
+            // Cache miss — run pipeline
+            if (response is null)
+            {
+                if (_ragCache is not null)
+                    FabMetrics.RagCacheMisses.Add(1);
+
+                response = pipelineMode switch
+                {
+                    RagPipelineMode.Advanced => await RunAdvancedPipelineAsync(request, conversationId, ct),
+                    RagPipelineMode.Graph => await RunGraphPipelineAsync(request, conversationId, ct),
+                    RagPipelineMode.Agentic => await RunAgenticPipelineAsync(request, conversationId, ct),
+                    _ => await RunNaivePipelineAsync(request, conversationId, ct)
+                };
+
+                // Store in cache
+                if (_ragCache is not null)
+                {
+                    await _ragCache.SetAsync(request.Query, request.EquipmentId, pipelineModeStr, request.TopK, response, ct);
+                }
+            }
+
+            FabMetrics.RecordElapsed(pipelineTimer, FabMetrics.RagPipelineDuration);
+
+            // Attach intent and confidence info
+            response.QueryIntent = queryIntent;
+            response.MaxScore = response.Results.Count > 0
+                ? response.Results.Max(r => r.Score)
+                : 0f;
+            response.IsConfident = response.MaxScore >= _ragOptions.MinScore;
 
             // Publish response
             await _messageBus.PublishAsync(
@@ -151,14 +212,16 @@ public sealed class RagWorker : BackgroundService
         var queryVector = await _llmClient.GetEmbeddingAsync(request.Query, ct);
 
         // 2. Over-fetch candidates from vector store
+        var vectorSw = FabMetrics.StartTimer();
         var collection = _qdrantOptions.DefaultCollection;
         var overFetchK = Math.Max(request.TopK * 10, 100);
         var searchResults = await _vectorStore.SearchAsync(
             collection, queryVector, overFetchK, filter: null, ct);
+        var vectorMs = FabMetrics.RecordElapsed(vectorSw, FabMetrics.RagVectorSearchDuration);
 
         _logger.LogInformation(
-            "Vector search completed. ConversationId={ConversationId}, OverFetchK={OverFetchK}, ResultCount={ResultCount}",
-            conversationId, overFetchK, searchResults.Count);
+            "Vector search completed. ConversationId={ConversationId}, OverFetchK={OverFetchK}, ResultCount={ResultCount}, ElapsedMs={ElapsedMs:F1}",
+            conversationId, overFetchK, searchResults.Count, vectorMs);
 
         // 2.5. Pre-filter by MinScore
         var candidates = FilterByScore(searchResults, _ragOptions.MinScore);
@@ -167,14 +230,25 @@ public sealed class RagWorker : BackgroundService
             "Pre-filter applied. ConversationId={ConversationId}, Before={Before}, After={After}, MinScore={MinScore}",
             conversationId, searchResults.Count, candidates.Count, _ragOptions.MinScore);
 
-        // 3. Re-rank with keyword boost and take desired TopK
-        var keywords = ExtractKeywords(request.Query);
-        var expanded = ExpandKeywords(keywords);
-        var reranked = RerankWithKeywordBoost(candidates, expanded);
-        var filtered = reranked.Take(request.TopK).ToList();
+        // 2.6. Hybrid merge with BM25 via RRF
+        candidates = HybridMerge(candidates, request.Query, request.TopK);
 
         _logger.LogInformation(
-            "Keyword re-ranking applied. ConversationId={ConversationId}, Keywords=[{Keywords}], TopK={TopK}, ResultCount={ResultCount}",
+            "Hybrid search merge applied. ConversationId={ConversationId}, CandidateCount={CandidateCount}",
+            conversationId, candidates.Count);
+
+        // 3. Re-rank with keyword boost
+        var rerankSw = FabMetrics.StartTimer();
+        var keywords = ExtractKeywords(request.Query);
+        var expanded = ExpandKeywordsWithSynonyms(keywords);
+        var reranked = RerankWithKeywordBoost(candidates, expanded);
+        FabMetrics.RecordElapsed(rerankSw, FabMetrics.RagRerankDuration);
+
+        // 3.5. MMR diversity selection
+        var filtered = ApplyMmr(reranked, request.Query, request.TopK);
+
+        _logger.LogInformation(
+            "Keyword re-ranking + MMR applied. ConversationId={ConversationId}, Keywords=[{Keywords}], TopK={TopK}, ResultCount={ResultCount}",
             conversationId, string.Join(", ", keywords), request.TopK, filtered.Count);
 
         // 4. Map results to response
@@ -207,10 +281,12 @@ public sealed class RagWorker : BackgroundService
         var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, ct);
 
         // 3. Over-fetch candidates
+        var advVectorSw = FabMetrics.StartTimer();
         var collection = _qdrantOptions.DefaultCollection;
         var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
         var searchResults = await _vectorStore.SearchAsync(
             collection, queryVector, overFetchK, filter: null, ct);
+        FabMetrics.RecordElapsed(advVectorSw, FabMetrics.RagVectorSearchDuration);
 
         // 4. Pre-filter by MinScore
         var candidates = FilterByScore(searchResults, _ragOptions.MinScore);
@@ -219,19 +295,27 @@ public sealed class RagWorker : BackgroundService
             "Advanced vector search. ConversationId={ConversationId}, OverFetchK={OverFetchK}, PreFilter={PreFilter}, PostFilter={PostFilter}",
             conversationId, overFetchK, searchResults.Count, candidates.Count);
 
+        // 4.5. Hybrid merge with BM25 via RRF
+        candidates = HybridMerge(candidates, rewrittenQuery, request.TopK);
+
         // 5. Post-retrieval: LLM reranking
-        List<VectorSearchResult> finalResults;
+        var advRerankSw = FabMetrics.StartTimer();
+        List<VectorSearchResult> reranked;
         if (_llmReranker is not null && _ragOptions.EnableLlmReranking)
         {
-            finalResults = await _llmReranker.RerankAsync(request.Query, candidates, request.TopK, ct);
+            reranked = await _llmReranker.RerankAsync(request.Query, candidates, request.TopK * 2, ct);
         }
         else
         {
             // Fallback to keyword reranking
             var keywords = ExtractKeywords(request.Query);
-            var expanded = ExpandKeywords(keywords);
-            finalResults = RerankWithKeywordBoost(candidates, expanded).Take(request.TopK).ToList();
+            var expanded = ExpandKeywordsWithSynonyms(keywords);
+            reranked = RerankWithKeywordBoost(candidates, expanded);
         }
+        FabMetrics.RecordElapsed(advRerankSw, FabMetrics.RagRerankDuration);
+
+        // 5.5. MMR diversity selection
+        var finalResults = ApplyMmr(reranked, request.Query, request.TopK);
 
         return new RagResponse
         {
@@ -257,12 +341,17 @@ public sealed class RagWorker : BackgroundService
         }
 
         // 2. Embed + vector search
+        var graphVectorSw = FabMetrics.StartTimer();
         var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, ct);
         var collection = _qdrantOptions.DefaultCollection;
         var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
         var searchResults = await _vectorStore.SearchAsync(
             collection, queryVector, overFetchK, filter: null, ct);
+        FabMetrics.RecordElapsed(graphVectorSw, FabMetrics.RagVectorSearchDuration);
         var candidates = FilterByScore(searchResults, _ragOptions.MinScore);
+
+        // 2.5. Hybrid merge with BM25 via RRF
+        candidates = HybridMerge(candidates, rewrittenQuery, request.TopK);
 
         // 3. Graph lookup: extract keywords → get related entities → build context
         string? graphContext = null;
@@ -278,17 +367,22 @@ public sealed class RagWorker : BackgroundService
         }
 
         // 4. LLM rerank
-        List<VectorSearchResult> finalResults;
+        var graphRerankSw = FabMetrics.StartTimer();
+        List<VectorSearchResult> reranked;
         if (_llmReranker is not null && _ragOptions.EnableLlmReranking)
         {
-            finalResults = await _llmReranker.RerankAsync(request.Query, candidates, request.TopK, ct);
+            reranked = await _llmReranker.RerankAsync(request.Query, candidates, request.TopK * 2, ct);
         }
         else
         {
             var keywords = ExtractKeywords(request.Query);
-            var expanded = ExpandKeywords(keywords);
-            finalResults = RerankWithKeywordBoost(candidates, expanded).Take(request.TopK).ToList();
+            var expanded = ExpandKeywordsWithSynonyms(keywords);
+            reranked = RerankWithKeywordBoost(candidates, expanded);
         }
+        FabMetrics.RecordElapsed(graphRerankSw, FabMetrics.RagRerankDuration);
+
+        // 4.5. MMR diversity selection
+        var finalResults = ApplyMmr(reranked, request.Query, request.TopK);
 
         // 5. Map results and attach graph context
         var results = MapToRetrievalResults(finalResults);
@@ -371,9 +465,9 @@ public sealed class RagWorker : BackgroundService
     }
 
     /// <summary>
-    /// Expands keywords with domain-specific related terms to improve recall.
+    /// Expands keywords using the synonym dictionary (if available) or a static fallback map.
     /// </summary>
-    internal static readonly Dictionary<string, string[]> QueryExpansionMap = new()
+    internal static readonly Dictionary<string, string[]> FallbackExpansionMap = new()
     {
         ["시기"] = ["기준", "시간", "수명", "주기"],
         ["언제"] = ["기준", "시간", "시점"],
@@ -382,18 +476,32 @@ public sealed class RagWorker : BackgroundService
         ["주기"] = ["기준", "시간", "수명"],
     };
 
+    /// <summary>
+    /// Static fallback expansion using the built-in map (used by components without synonym dictionary).
+    /// </summary>
     internal static List<string> ExpandKeywords(List<string> keywords)
     {
         var expanded = new HashSet<string>(keywords);
         foreach (var kw in keywords)
         {
-            if (QueryExpansionMap.TryGetValue(kw, out var related))
+            if (FallbackExpansionMap.TryGetValue(kw, out var related))
             {
                 foreach (var r in related)
                     expanded.Add(r);
             }
         }
         return expanded.ToList();
+    }
+
+    /// <summary>
+    /// Instance-level expansion using synonym dictionary when available, falling back to static map.
+    /// </summary>
+    private List<string> ExpandKeywordsWithSynonyms(List<string> keywords)
+    {
+        if (_synonymDictionary is not null)
+            return _synonymDictionary.ExpandAll(keywords).ToList();
+
+        return ExpandKeywords(keywords);
     }
 
     /// <summary>
@@ -410,10 +518,108 @@ public sealed class RagWorker : BackgroundService
             {
                 var text = r.Payload.TryGetValue("text", out var t) ? t.ToString() ?? "" : "";
                 var matchCount = keywords.Count(kw => text.Contains(kw, StringComparison.OrdinalIgnoreCase));
-                var boostedScore = r.Score + (matchCount * boostPerKeyword);
+                var boost = Math.Min(matchCount * boostPerKeyword, 0.20f);
+                var boostedScore = r.Score + boost;
                 return (Result: r, BoostedScore: boostedScore);
             })
             .OrderByDescending(x => x.BoostedScore)
+            .Select(x => x.Result)
+            .ToList();
+    }
+
+    // ─── MMR Diversity ────────────────────────────────────────────────
+
+    private List<VectorSearchResult> ApplyMmr(
+        IReadOnlyList<VectorSearchResult> candidates,
+        string query,
+        int topK)
+    {
+        if (!_ragOptions.EnableMmr || candidates.Count <= topK)
+            return candidates.Take(topK).ToList();
+
+        return MmrSelector.Select(candidates, query, topK, _ragOptions.MmrLambda);
+    }
+
+    // ─── Hybrid Search (RRF) ────────────────────────────────────────────
+
+    /// <summary>
+    /// Performs hybrid search by combining vector search results with BM25 keyword search
+    /// using Reciprocal Rank Fusion (RRF).
+    /// </summary>
+    private List<VectorSearchResult> HybridMerge(
+        IReadOnlyList<VectorSearchResult> vectorResults,
+        string query,
+        int topK)
+    {
+        if (_bm25Index is null || !_ragOptions.EnableHybridSearch || !_ragOptions.EnableBm25)
+        {
+            return vectorResults.ToList();
+        }
+
+        // BM25 search — fetch more candidates for better fusion
+        var bm25Sw = FabMetrics.StartTimer();
+        var bm25Limit = Math.Max(topK * 3, 100);
+        var bm25Results = _bm25Index.Search(query, bm25Limit);
+        FabMetrics.RecordElapsed(bm25Sw, FabMetrics.RagBm25SearchDuration);
+
+        if (bm25Results.Count == 0)
+        {
+            _logger.LogDebug("BM25 returned no results, using vector-only results");
+            return vectorResults.ToList();
+        }
+
+        return MergeWithRrf(vectorResults, bm25Results, _ragOptions.VectorWeight, _ragOptions.Bm25Weight);
+    }
+
+    /// <summary>
+    /// Merges vector and BM25 results using Reciprocal Rank Fusion.
+    /// RRF(d) = vectorWeight/(k+rank_vec) + bm25Weight/(k+rank_bm25), where k=60.
+    /// The fused score replaces the original vector score for downstream processing.
+    /// </summary>
+    internal static List<VectorSearchResult> MergeWithRrf(
+        IReadOnlyList<VectorSearchResult> vectorResults,
+        IReadOnlyList<(string DocumentId, double Score)> bm25Results,
+        float vectorWeight = 1.0f,
+        float bm25Weight = 1.0f,
+        int k = 60)
+    {
+        // Build rank maps (1-based ranks)
+        var vectorRanks = new Dictionary<string, int>();
+        for (var i = 0; i < vectorResults.Count; i++)
+            vectorRanks[vectorResults[i].Id] = i + 1;
+
+        var bm25Ranks = new Dictionary<string, int>();
+        for (var i = 0; i < bm25Results.Count; i++)
+            bm25Ranks[bm25Results[i].DocumentId] = i + 1;
+
+        // Collect all unique document IDs
+        var allDocIds = new HashSet<string>(vectorRanks.Keys);
+        allDocIds.UnionWith(bm25Ranks.Keys);
+
+        // Build a lookup for original vector results by ID
+        var vectorResultById = vectorResults.ToDictionary(r => r.Id);
+
+        // Calculate RRF scores
+        var rrfScored = new List<(VectorSearchResult Result, double RrfScore)>();
+
+        foreach (var docId in allDocIds)
+        {
+            var vecScore = vectorRanks.TryGetValue(docId, out var vr)
+                ? vectorWeight / (k + vr) : 0.0;
+            var bm25Score = bm25Ranks.TryGetValue(docId, out var br)
+                ? bm25Weight / (k + br) : 0.0;
+            var rrfScore = vecScore + bm25Score;
+
+            // Use existing vector result if available, otherwise create a synthetic one from BM25
+            if (vectorResultById.TryGetValue(docId, out var result))
+            {
+                rrfScored.Add((result, rrfScore));
+            }
+            // Skip BM25-only results that don't have vector data (no payload/text)
+        }
+
+        return rrfScored
+            .OrderByDescending(x => x.RrfScore)
             .Select(x => x.Result)
             .ToList();
     }

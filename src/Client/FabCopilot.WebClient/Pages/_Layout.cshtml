@@ -3,14 +3,13 @@
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="~/" />
-    <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
-    <link href="css/app.css" rel="stylesheet" />
-    <link href="FabCopilot.WebClient.styles.css" rel="stylesheet" />
+    <link href="css/app.css" rel="stylesheet" asp-append-version="true" />
+    <link href="FabCopilot.WebClient.styles.css" rel="stylesheet" asp-append-version="true" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
     <title>Fab Copilot</title>
     <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
@@ -33,15 +32,50 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <script>
+        // ─── Scroll ───────────────────────────────────────────────
         window.chatScroll = {
             scrollToBottom: function (elementId) {
-                var element = document.getElementById(elementId);
-                if (element) {
-                    element.scrollTop = element.scrollHeight;
+                var el = document.getElementById(elementId);
+                if (el) el.scrollTop = el.scrollHeight;
+            }
+        };
+
+        // ─── Input auto-resize ────────────────────────────────────
+        window.chatInput = {
+            autoResize: function (elementId) {
+                var el = document.getElementById(elementId);
+                if (!el) return;
+                el.style.height = 'auto';
+                el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+            },
+            resetHeight: function (elementId) {
+                var el = document.getElementById(elementId);
+                if (el) el.style.height = 'auto';
+            }
+        };
+
+        // ─── Clipboard ───────────────────────────────────────────
+        window.clipboard = {
+            copyText: async function (text) {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                } catch {
+                    // Fallback for older browsers or insecure contexts
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    return true;
                 }
             }
         };
 
+        // ─── Markdown + KaTeX renderer ────────────────────────────
         window.chatRenderer = {
             renderMarkdown: function (text) {
                 if (!text) return '';
@@ -50,49 +84,45 @@
                 var inlineMath = [];
 
                 // 1. Extract block math: $$...$$ and \[...\]
-                text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (match, formula) {
-                    var idx = blockMath.length;
-                    blockMath.push(formula.trim());
-                    return '\n%%BLOCKMATH' + idx + '%%\n';
+                text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (m, f) {
+                    blockMath.push(f.trim());
+                    return '\n%%BLOCKMATH' + (blockMath.length - 1) + '%%\n';
                 });
-                text = text.replace(/\\\[([\s\S]*?)\\\]/g, function (match, formula) {
-                    var idx = blockMath.length;
-                    blockMath.push(formula.trim());
-                    return '\n%%BLOCKMATH' + idx + '%%\n';
+                text = text.replace(/\\\[([\s\S]*?)\\\]/g, function (m, f) {
+                    blockMath.push(f.trim());
+                    return '\n%%BLOCKMATH' + (blockMath.length - 1) + '%%\n';
                 });
 
                 // 2. Extract inline math: $...$ and \(...\)
-                text = text.replace(/\$([^\$\n]+?)\$/g, function (match, formula) {
-                    var idx = inlineMath.length;
-                    inlineMath.push(formula.trim());
-                    return '%%INLINEMATH' + idx + '%%';
+                text = text.replace(/\$([^\$\n]+?)\$/g, function (m, f) {
+                    inlineMath.push(f.trim());
+                    return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
                 });
-                text = text.replace(/\\\((.*?)\\\)/g, function (match, formula) {
-                    var idx = inlineMath.length;
-                    inlineMath.push(formula.trim());
-                    return '%%INLINEMATH' + idx + '%%';
+                text = text.replace(/\\\((.*?)\\\)/g, function (m, f) {
+                    inlineMath.push(f.trim());
+                    return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
                 });
 
                 // 3. Render markdown
                 var html = marked.parse(text);
 
-                // 4. Restore block math with KaTeX rendering
-                html = html.replace(/%%BLOCKMATH(\d+)%%/g, function (match, idx) {
+                // 4. Restore block math
+                html = html.replace(/%%BLOCKMATH(\d+)%%/g, function (m, i) {
                     try {
                         return '<div class="katex-block">' +
-                            katex.renderToString(blockMath[parseInt(idx)], { displayMode: true, throwOnError: false }) +
+                            katex.renderToString(blockMath[parseInt(i)], { displayMode: true, throwOnError: false }) +
                             '</div>';
                     } catch (e) {
-                        return '<div class="katex-block katex-error">' + blockMath[parseInt(idx)] + '</div>';
+                        return '<div class="katex-block katex-error">' + blockMath[parseInt(i)] + '</div>';
                     }
                 });
 
-                // 5. Restore inline math with KaTeX rendering
-                html = html.replace(/%%INLINEMATH(\d+)%%/g, function (match, idx) {
+                // 5. Restore inline math
+                html = html.replace(/%%INLINEMATH(\d+)%%/g, function (m, i) {
                     try {
-                        return katex.renderToString(inlineMath[parseInt(idx)], { displayMode: false, throwOnError: false });
+                        return katex.renderToString(inlineMath[parseInt(i)], { displayMode: false, throwOnError: false });
                     } catch (e) {
-                        return '<span class="katex-error">' + inlineMath[parseInt(idx)] + '</span>';
+                        return '<span class="katex-error">' + inlineMath[parseInt(i)] + '</span>';
                     }
                 });
 

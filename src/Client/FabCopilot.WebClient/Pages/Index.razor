@@ -1,174 +1,408 @@
 @page "/"
 @using Microsoft.Extensions.Options
+@using FabCopilot.Contracts.Messages
 @using FabCopilot.WebClient.Configuration
 @inject ChatService ChatService
 @inject IJSRuntime JS
 @inject IOptions<ModelOptions> ModelOptionsAccessor
+@inject IOptions<EquipmentOptions> EquipmentOptionsAccessor
 @implements IAsyncDisposable
 
-<div class="chat-container">
-    <!-- Equipment Context Panel -->
-    <div class="equipment-panel">
-        <div class="equipment-panel-row">
-            <label class="equipment-label" for="equipmentId">Equipment ID</label>
-            <input id="equipmentId"
-                   class="equipment-input"
-                   @bind="EquipmentId"
-                   @bind:event="oninput"
-                   placeholder="e.g. CMP01"
-                   disabled="@ChatService.IsConnected" />
+<div class="chat-app">
+    <!-- ===== Sidebar ===== -->
+    <aside class="sidebar @(_sidebarOpen ? "" : "sidebar-closed")">
+        <div class="sidebar-top">
+            <button class="icon-btn" @onclick="ToggleSidebar" title="사이드바 닫기">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            </button>
+            <button class="icon-btn" @onclick="StartNewChat" title="새 대화">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+        </div>
 
-            @if (ChatService.IsConnected)
+        <nav class="sidebar-conversations">
+            @if (_conversationHistory.Count == 0)
             {
-                <button class="btn-disconnect" @onclick="DisconnectAsync">Disconnect</button>
+                <div class="sidebar-empty">대화 기록 없음</div>
             }
             else
             {
-                <button class="btn-connect" @onclick="ConnectAsync" disabled="@_isConnecting">
-                    @(_isConnecting ? "Connecting..." : "Connect")
+                @foreach (var conv in _conversationHistory)
+                {
+                    <button class="conv-item @(conv.Id == _conversationId ? "conv-active" : "")"
+                            @onclick="() => SwitchConversation(conv.Id)"
+                            title="@conv.Title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                        <span class="conv-title">@conv.Title</span>
+                    </button>
+                }
+            }
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-equipment">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                <select class="equipment-select"
+                        @bind="EquipmentId"
+                        disabled="@_isSending">
+                    @foreach (var eq in _availableEquipment)
+                    {
+                        <option value="@eq.Id">@eq.DisplayName</option>
+                    }
+                </select>
+                <span class="status-dot @(ChatService.IsConnected ? "dot-on" : "dot-off")"></span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ===== Main Content ===== -->
+    <main class="chat-main">
+        <!-- Top bar -->
+        <div class="chat-topbar">
+            @if (!_sidebarOpen)
+            {
+                <button class="icon-btn" @onclick="ToggleSidebar" title="사이드바 열기">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+                </button>
+                <button class="icon-btn" @onclick="StartNewChat" title="새 대화">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
             }
-
-            <div class="connection-status">
-                <span class="status-dot @(ChatService.IsConnected ? "status-connected" : "status-disconnected")"></span>
-                <span class="status-text">@(ChatService.IsConnected ? "Connected" : "Disconnected")</span>
+            <div class="topbar-spacer"></div>
+            <div class="search-mode-toggle" title="@(_searchMode == "strict" ? "Strict Grounded: 높은 신뢰도만 응답" : "Hybrid: 유연한 검색")">
+                <button class="toggle-btn @(_searchMode == "hybrid" ? "toggle-active" : "")"
+                        @onclick='() => _searchMode = "hybrid"'
+                        disabled="@_isSending">Hybrid</button>
+                <button class="toggle-btn @(_searchMode == "strict" ? "toggle-active" : "")"
+                        @onclick='() => _searchMode = "strict"'
+                        disabled="@_isSending">Strict</button>
             </div>
-
-            <div class="model-separator"></div>
-
-            <label class="equipment-label" for="modelSelect">Model</label>
-            <select id="modelSelect"
-                    class="model-select"
+            <select class="model-selector"
                     @bind="_selectedModelId"
                     disabled="@_isSending">
-                @foreach (var model in _availableModels)
+                @foreach (var m in _availableModels)
                 {
-                    <option value="@model.Id">@model.DisplayName</option>
+                    <option value="@m.Id">@m.DisplayName</option>
                 }
             </select>
         </div>
 
-        @if (!string.IsNullOrEmpty(_connectionError))
-        {
-            <div class="connection-error">@_connectionError</div>
-        }
-    </div>
-
-    <!-- Chat Messages -->
-    <div class="chat-messages" id="chatMessages">
-        @if (_messages.Count == 0)
-        {
-            <div class="chat-empty">
-                <div class="chat-empty-icon">&#128172;</div>
-                <div class="chat-empty-text">No messages yet</div>
-                <div class="chat-empty-hint">Connect to an equipment and start a conversation</div>
-            </div>
-        }
-        else
-        {
-            @foreach (var msg in _messages)
+        <!-- Messages -->
+        <div class="chat-messages" id="chatMessages">
+            @if (_messages.Count == 0)
             {
-                <div class="message-row @(msg.IsUser ? "message-row-user" : "message-row-assistant")">
-                    <div class="message-bubble @(msg.IsUser ? "bubble-user" : "bubble-assistant")">
-                        <div class="message-sender">@(msg.IsUser ? "You" : "Fab Copilot")</div>
-                        @if (msg.IsUser)
-                        {
-                            <div class="message-text">@msg.Text</div>
-                        }
-                        else
-                        {
-                            <div class="message-text rendered-markdown">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
-                        }
-                        @if (msg.IsStreaming)
-                        {
-                            <span class="streaming-cursor">|</span>
-                        }
-                        @if (!string.IsNullOrEmpty(msg.Error))
-                        {
-                            <div class="message-error">Error: @msg.Error</div>
-                        }
+                <div class="empty-state">
+                    <div class="empty-logo">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                    </div>
+                    <h1 class="empty-title">Fab Copilot</h1>
+                    <p class="empty-subtitle">반도체 장비 운영 어시스턴트</p>
+                    <div class="empty-hints">
+                        <div class="hint-card" @onclick='() => SetQuickMessage("CMP 패드 교체 주기는 어떻게 되나요?")'>CMP 패드 교체 주기</div>
+                        <div class="hint-card" @onclick='() => SetQuickMessage("슬러리 유량 이상 시 조치 방법은?")'>슬러리 유량 이상 조치</div>
+                        <div class="hint-card" @onclick='() => SetQuickMessage("MRR이 불안정한 원인은 무엇인가요?")'>MRR 불안정 원인</div>
                     </div>
                 </div>
             }
-        }
-    </div>
-
-    <!-- Message Input -->
-    <div class="chat-input-area">
-        <div class="chat-input-row">
-            <textarea class="chat-input"
-                      @bind="UserMessage"
-                      @bind:event="oninput"
-                      @onkeydown="HandleKeyDown"
-                      placeholder="@(ChatService.IsConnected ? "Type your message..." : "Connect to an equipment first...")"
-                      disabled="@(!ChatService.IsConnected || _isSending)"
-                      rows="1"></textarea>
-            <button class="btn-send"
-                    @onclick="SendMessageAsync"
-                    disabled="@(!ChatService.IsConnected || _isSending || string.IsNullOrWhiteSpace(UserMessage))">
-                Send
-            </button>
+            else
+            {
+                @for (var i = 0; i < _messages.Count; i++)
+                {
+                    var idx = i;
+                    var msg = _messages[idx];
+                    <div class="msg-row @(msg.IsUser ? "msg-user-row" : "msg-assistant-row")">
+                        <div class="msg-wrapper">
+                            <div class="msg-avatar">
+                                @if (msg.IsUser)
+                                {
+                                    <div class="avatar avatar-user">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="avatar avatar-assistant">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-7.07-3.93l1.41-1.41m11.32-11.32l1.41-1.41M1 12h2m18 0h2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41"/></svg>
+                                    </div>
+                                }
+                            </div>
+                            <div class="msg-body">
+                                <div class="msg-sender">@(msg.IsUser ? "나" : "Fab Copilot")</div>
+                                @if (msg.IsEditing)
+                                {
+                                    <div class="msg-edit-area">
+                                        <textarea class="edit-textarea" @bind="msg.EditText" @bind:event="oninput" rows="3"></textarea>
+                                        <div class="edit-actions">
+                                            <button class="btn-primary-sm" @onclick="() => SaveEdit(idx)">저장 후 전송</button>
+                                            <button class="btn-secondary-sm" @onclick="() => CancelEdit(idx)">취소</button>
+                                        </div>
+                                    </div>
+                                }
+                                else if (msg.IsUser)
+                                {
+                                    <div class="msg-content user-text">@msg.Text</div>
+                                }
+                                else
+                                {
+                                    <div class="msg-content rendered-markdown">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
+                                    @if (msg.IsStreaming)
+                                    {
+                                        <span class="streaming-cursor"></span>
+                                    }
+                                }
+                                @if (!string.IsNullOrEmpty(msg.Error))
+                                {
+                                    <div class="msg-error">@msg.Error</div>
+                                }
+                                @if (!msg.IsStreaming && !msg.IsEditing)
+                                {
+                                    <div class="msg-actions">
+                                        @if (msg.IsUser)
+                                        {
+                                            <button class="action-btn" @onclick="() => StartEdit(idx)" title="편집" disabled="@_isSending">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="action-btn @(msg.CopyFeedback ? "action-copied" : "")" @onclick="() => CopyMessage(idx)" title="복사">
+                                                @if (msg.CopyFeedback)
+                                                {
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                                                }
+                                                else
+                                                {
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                                                }
+                                            </button>
+                                            <button class="action-btn @(msg.Feedback == 1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, true)" title="좋아요">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="@(msg.Feedback == 1 ? "currentColor" : "none")" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
+                                            </button>
+                                            <button class="action-btn @(msg.Feedback == -1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, false)" title="싫어요">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="@(msg.Feedback == -1 ? "currentColor" : "none")" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zm7-13h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>
+                                            </button>
+                                            @if (msg.Citations is { Count: > 0 })
+                                            {
+                                                <button class="action-btn" @onclick="() => ShowCitations(idx)" title="참조 문서">
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                                </button>
+                                            }
+                                            @if (msg.LatencyMs > 0)
+                                            {
+                                                <span class="msg-latency">@(msg.LatencyMs)ms</span>
+                                            }
+                                            @if (idx == _messages.Count - 1)
+                                            {
+                                                <button class="action-btn" @onclick="RegenerateResponse" title="재생성" disabled="@_isSending">
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                                                </button>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
         </div>
-    </div>
+
+        <!-- Input Area -->
+        <div class="chat-input-wrapper">
+            <div class="chat-input-box">
+                <button class="upload-btn" @onclick="TriggerFileUpload" title="파일 업로드" disabled="@(_isSending || _isUploading)">
+                    @if (_isUploading)
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                    }
+                    else
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                    }
+                </button>
+                <InputFile OnChange="HandleFileUpload" style="display:none" id="fileUploadInput" accept=".pdf,.md,.txt,.png,.jpg,.jpeg" />
+                <textarea id="chatInput"
+                          class="chat-textarea"
+                          @bind="UserMessage"
+                          @bind:event="oninput"
+                          @bind:after="AutoResizeInput"
+                          @onkeydown="HandleKeyDown"
+                          placeholder="메시지를 입력하세요..."
+                          disabled="@_isSending"
+                          rows="1"></textarea>
+                @if (_isSending)
+                {
+                    <button class="input-action-btn stop-btn" @onclick="StopResponseAsync" title="중지">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    </button>
+                }
+                else
+                {
+                    <button class="input-action-btn send-btn"
+                            @onclick="SendMessageAsync"
+                            disabled="@string.IsNullOrWhiteSpace(UserMessage)"
+                            title="전송">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                    </button>
+                }
+            </div>
+            <div class="input-disclaimer">Fab Copilot은 장비 매뉴얼 기반으로 답변하며, 오류가 있을 수 있습니다.</div>
+        </div>
+    </main>
+
+    <!-- ===== Citation Pane ===== -->
+    <CitationPane IsOpen="_citationPaneOpen"
+                  Citations="_activeCitations"
+                  OnClose="CloseCitationPane" />
 </div>
+
+@if (!string.IsNullOrEmpty(_connectionError))
+{
+    <div class="toast-error" @onclick="() => _connectionError = null">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        @_connectionError
+    </div>
+}
 
 @code {
     private string EquipmentId { get; set; } = "CMP01";
     private string UserMessage { get; set; } = string.Empty;
 
+    // Connection state
     private string _conversationId = Guid.NewGuid().ToString("N");
     private string? _connectionError;
-    private bool _isConnecting;
     private bool _isSending;
-    private int _renderCounter;
-    private string _selectedModelId = string.Empty;
-    private List<ModelEntry> _availableModels = new();
+    private bool _isStopping;
 
+    // UI state
+    private bool _sidebarOpen = true;
+    private bool _citationPaneOpen;
+    private List<CitationInfo>? _activeCitations;
+    private string _selectedModelId = string.Empty;
+    private string _searchMode = "hybrid";
+    private List<ModelEntry> _availableModels = new();
+    private List<EquipmentEntry> _availableEquipment = new();
     private readonly List<ChatMessageViewModel> _messages = new();
+
+    // Conversation history (sidebar)
+    private readonly List<ConversationItem> _conversationHistory = new();
+
+    // Render throttle
+    private int _renderCounter;
+    private bool _renderPending;
+    private Timer? _renderTimer;
+
+    // File upload
+    private bool _isUploading;
+
+    // Latency tracking
+    private System.Diagnostics.Stopwatch? _latencyStopwatch;
 
     protected override void OnInitialized()
     {
         ChatService.OnMessageReceived += HandleChunkReceived;
         ChatService.OnStateChanged += HandleStateChanged;
 
-        var modelOptions = ModelOptionsAccessor.Value;
-        _availableModels = modelOptions.Available;
-        _selectedModelId = !string.IsNullOrEmpty(modelOptions.Default)
-            ? modelOptions.Default
-            : _availableModels.FirstOrDefault()?.Id ?? string.Empty;
+        var opts = ModelOptionsAccessor.Value;
+        _availableModels = opts.Available;
+        _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
+
+        var eqOpts = EquipmentOptionsAccessor.Value;
+        _availableEquipment = eqOpts.Available;
+        if (_availableEquipment.Count > 0)
+            EquipmentId = !string.IsNullOrEmpty(eqOpts.Default) ? eqOpts.Default : _availableEquipment[0].Id;
     }
 
-    private async Task ConnectAsync()
+    // ─── Sidebar ────────────────────────────────────────────────────────
+
+    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+
+    private async Task StartNewChat()
     {
-        if (string.IsNullOrWhiteSpace(EquipmentId))
-            return;
+        // Save current conversation to history
+        SaveCurrentToHistory();
 
-        _isConnecting = true;
-        _connectionError = null;
+        // Reset state
+        _messages.Clear();
+        _conversationId = Guid.NewGuid().ToString("N");
+        _isSending = false;
+        _isStopping = false;
+
+        // Disconnect and reconnect with fresh conversation
+        if (ChatService.IsConnected)
+        {
+            await ChatService.DisconnectAsync();
+        }
+
         StateHasChanged();
+    }
 
+    private void SwitchConversation(string convId)
+    {
+        var target = _conversationHistory.FirstOrDefault(c => c.Id == convId);
+        if (target is null || target.Id == _conversationId) return;
+
+        SaveCurrentToHistory();
+
+        _conversationId = target.Id;
+        _messages.Clear();
+        _messages.AddRange(target.Messages.Select(m => new ChatMessageViewModel
+        {
+            Text = m.Text,
+            RenderedHtml = m.RenderedHtml,
+            IsUser = m.IsUser,
+            Error = m.Error
+        }));
+        StateHasChanged();
+    }
+
+    private void SaveCurrentToHistory()
+    {
+        if (_messages.Count == 0) return;
+
+        var existing = _conversationHistory.FirstOrDefault(c => c.Id == _conversationId);
+        if (existing is not null)
+        {
+            existing.Messages = _messages.Select(m => new ChatMessageViewModel
+            {
+                Text = m.Text, RenderedHtml = m.RenderedHtml, IsUser = m.IsUser, Error = m.Error
+            }).ToList();
+        }
+        else
+        {
+            var title = _messages.FirstOrDefault(m => m.IsUser)?.Text ?? "새 대화";
+            if (title.Length > 30) title = title[..30] + "...";
+            _conversationHistory.Insert(0, new ConversationItem
+            {
+                Id = _conversationId,
+                Title = title,
+                Messages = _messages.Select(m => new ChatMessageViewModel
+                {
+                    Text = m.Text, RenderedHtml = m.RenderedHtml, IsUser = m.IsUser, Error = m.Error
+                }).ToList()
+            });
+        }
+    }
+
+    // ─── Connection ─────────────────────────────────────────────────────
+
+    private async Task EnsureConnectedAsync()
+    {
+        if (ChatService.IsConnected) return;
+
+        _connectionError = null;
         try
         {
             await ChatService.ConnectAsync(EquipmentId.Trim());
-            _conversationId = Guid.NewGuid().ToString("N");
-            _messages.Clear();
         }
         catch (Exception ex)
         {
-            _connectionError = $"Failed to connect: {ex.Message}";
-        }
-        finally
-        {
-            _isConnecting = false;
-            StateHasChanged();
+            _connectionError = $"연결 실패: {ex.Message}";
+            throw;
         }
     }
 
-    private async Task DisconnectAsync()
-    {
-        await ChatService.DisconnectAsync();
-        StateHasChanged();
-    }
+    // ─── Chat ───────────────────────────────────────────────────────────
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
@@ -178,48 +412,307 @@
         }
     }
 
+    private async Task AutoResizeInput()
+    {
+        try { await JS.InvokeVoidAsync("chatInput.autoResize", "chatInput"); } catch { }
+    }
+
+    private void SetQuickMessage(string text)
+    {
+        UserMessage = text;
+        StateHasChanged();
+    }
+
     private async Task SendMessageAsync()
     {
-        if (string.IsNullOrWhiteSpace(UserMessage) || !ChatService.IsConnected || _isSending)
+        if (string.IsNullOrWhiteSpace(UserMessage) || _isSending)
             return;
 
         var text = UserMessage.Trim();
         UserMessage = string.Empty;
         _isSending = true;
 
-        // Add user message
-        _messages.Add(new ChatMessageViewModel { Text = text, IsUser = true });
+        // Auto-connect
+        try
+        {
+            await EnsureConnectedAsync();
+        }
+        catch
+        {
+            _isSending = false;
+            StateHasChanged();
+            return;
+        }
 
-        // Add placeholder for assistant response
-        _messages.Add(new ChatMessageViewModel { Text = string.Empty, IsUser = false, IsStreaming = true });
+        _messages.Add(new ChatMessageViewModel { Text = text, IsUser = true });
+        _messages.Add(new ChatMessageViewModel { IsUser = false, IsStreaming = true });
+        _latencyStopwatch = System.Diagnostics.Stopwatch.StartNew();
         StateHasChanged();
         await ScrollToBottom();
 
         try
         {
-            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId);
+            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId, _searchMode);
         }
         catch (Exception ex)
         {
             var last = _messages.LastOrDefault(m => !m.IsUser);
-            if (last is not null)
-            {
-                last.Error = ex.Message;
-                last.IsStreaming = false;
-            }
+            if (last is not null) { last.Error = ex.Message; last.IsStreaming = false; }
+            _isSending = false;
+            StateHasChanged();
+        }
+
+        try { await JS.InvokeVoidAsync("chatInput.resetHeight", "chatInput"); } catch { }
+    }
+
+    private async Task StopResponseAsync()
+    {
+        _isStopping = true;
+        StopRenderTimer();
+
+        var assistantMsg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
+        if (assistantMsg is not null)
+        {
+            assistantMsg.IsStreaming = false;
+            if (!string.IsNullOrEmpty(assistantMsg.Text))
+                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+        }
+
+        _isSending = false;
+        await ChatService.DisconnectAsync();
+        try { await ChatService.ConnectAsync(EquipmentId.Trim()); } catch { }
+
+        _isStopping = false;
+        StateHasChanged();
+    }
+
+    // ─── Edit / Copy / Regenerate ───────────────────────────────────────
+
+    private void StartEdit(int index)
+    {
+        if (_isSending || index < 0 || index >= _messages.Count) return;
+        var msg = _messages[index];
+        if (!msg.IsUser) return;
+        msg.IsEditing = true;
+        msg.EditText = msg.Text;
+        StateHasChanged();
+    }
+
+    private async Task SaveEdit(int index)
+    {
+        var msg = _messages[index];
+        var newText = msg.EditText?.Trim();
+        if (string.IsNullOrEmpty(newText)) { CancelEdit(index); return; }
+
+        msg.Text = newText;
+        msg.IsEditing = false;
+
+        // Remove all messages after this one
+        if (index + 1 < _messages.Count)
+            _messages.RemoveRange(index + 1, _messages.Count - index - 1);
+
+        // Send as new request
+        _isSending = true;
+        _messages.Add(new ChatMessageViewModel { IsUser = false, IsStreaming = true });
+        StateHasChanged();
+        await ScrollToBottom();
+
+        try
+        {
+            await EnsureConnectedAsync();
+            // New conversation for the edited branch
+            _conversationId = Guid.NewGuid().ToString("N");
+            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), newText, _selectedModelId, _searchMode);
+        }
+        catch (Exception ex)
+        {
+            var last = _messages.LastOrDefault(m => !m.IsUser);
+            if (last is not null) { last.Error = ex.Message; last.IsStreaming = false; }
             _isSending = false;
             StateHasChanged();
         }
     }
 
+    private void CancelEdit(int index)
+    {
+        if (index >= 0 && index < _messages.Count)
+        {
+            _messages[index].IsEditing = false;
+            _messages[index].EditText = string.Empty;
+        }
+        StateHasChanged();
+    }
+
+    private async Task CopyMessage(int index)
+    {
+        if (index < 0 || index >= _messages.Count) return;
+        var msg = _messages[index];
+        try
+        {
+            await JS.InvokeVoidAsync("clipboard.copyText", msg.Text);
+            msg.CopyFeedback = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            msg.CopyFeedback = false;
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private async Task RegenerateResponse()
+    {
+        if (_isSending) return;
+
+        // Find the last user message
+        var lastUserIdx = -1;
+        for (var i = _messages.Count - 1; i >= 0; i--)
+        {
+            if (_messages[i].IsUser) { lastUserIdx = i; break; }
+        }
+        if (lastUserIdx < 0) return;
+
+        var userText = _messages[lastUserIdx].Text;
+
+        // Remove the last assistant message
+        if (lastUserIdx + 1 < _messages.Count)
+            _messages.RemoveRange(lastUserIdx + 1, _messages.Count - lastUserIdx - 1);
+
+        _isSending = true;
+        _messages.Add(new ChatMessageViewModel { IsUser = false, IsStreaming = true });
+        StateHasChanged();
+        await ScrollToBottom();
+
+        try
+        {
+            await EnsureConnectedAsync();
+            _conversationId = Guid.NewGuid().ToString("N");
+            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), userText, _selectedModelId, _searchMode);
+        }
+        catch (Exception ex)
+        {
+            var last = _messages.LastOrDefault(m => !m.IsUser);
+            if (last is not null) { last.Error = ex.Message; last.IsStreaming = false; }
+            _isSending = false;
+            StateHasChanged();
+        }
+    }
+
+    // ─── Feedback ─────────────────────────────────────────────────────
+
+    private async Task SendFeedback(int index, bool isPositive)
+    {
+        if (index < 0 || index >= _messages.Count) return;
+        var msg = _messages[index];
+        if (msg.IsUser) return;
+
+        // Toggle: clicking the same button clears it
+        var newValue = msg.Feedback == (isPositive ? 1 : -1) ? 0 : (isPositive ? 1 : -1);
+        msg.Feedback = newValue;
+        StateHasChanged();
+
+        // Send to backend audit trail (only when setting, not clearing)
+        if (newValue != 0)
+        {
+            await ChatService.SendFeedbackAsync(_conversationId, EquipmentId, index, isPositive);
+        }
+    }
+
+    // ─── Citation Pane ─────────────────────────────────────────────────
+
+    private void ShowCitations(int index)
+    {
+        if (index < 0 || index >= _messages.Count) return;
+        var msg = _messages[index];
+        if (msg.Citations is { Count: > 0 })
+        {
+            _activeCitations = msg.Citations;
+            _citationPaneOpen = true;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseCitationPane()
+    {
+        _citationPaneOpen = false;
+        StateHasChanged();
+    }
+
+    // ─── File Upload ─────────────────────────────────────────────────────
+
+    private async Task TriggerFileUpload()
+    {
+        try { await JS.InvokeVoidAsync("document.getElementById('fileUploadInput').click"); } catch { }
+    }
+
+    private async Task HandleFileUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+
+        _isUploading = true;
+        StateHasChanged();
+
+        try
+        {
+            var gatewayBase = "http://localhost:5000";
+            using var http = new HttpClient { BaseAddress = new Uri(gatewayBase) };
+            using var content = new MultipartFormDataContent();
+            using var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            var streamContent = new StreamContent(stream);
+            content.Add(streamContent, "file", file.Name);
+
+            var response = await http.PostAsync($"/api/upload/{EquipmentId.Trim()}", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _messages.Add(new ChatMessageViewModel
+                {
+                    Text = $"[파일 업로드 완료: {file.Name} ({file.Size / 1024}KB)]",
+                    IsUser = true
+                });
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                _messages.Add(new ChatMessageViewModel
+                {
+                    Text = $"[파일 업로드 실패: {file.Name}]",
+                    IsUser = true,
+                    Error = error
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessageViewModel
+            {
+                Text = $"[파일 업로드 오류: {file.Name}]",
+                IsUser = true,
+                Error = ex.Message
+            });
+        }
+        finally
+        {
+            _isUploading = false;
+            StateHasChanged();
+            await ScrollToBottom();
+        }
+    }
+
+    // ─── Streaming handler ──────────────────────────────────────────────
+
     private void HandleChunkReceived(FabCopilot.Contracts.Messages.ChatStreamChunk chunk)
     {
+        if (_isStopping) return;
+
         InvokeAsync(async () =>
         {
+            if (_isStopping) return;
+
             var assistantMsg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
             if (assistantMsg is null)
             {
-                assistantMsg = new ChatMessageViewModel { Text = string.Empty, IsUser = false, IsStreaming = true };
+                assistantMsg = new ChatMessageViewModel { IsUser = false, IsStreaming = true };
                 _messages.Add(assistantMsg);
             }
 
@@ -228,69 +721,101 @@
                 assistantMsg.Error = chunk.Error;
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
+                StopRenderTimer();
+                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+                StateHasChanged();
+                await ScrollToBottom();
             }
             else if (chunk.IsComplete)
             {
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
-                // Final render with full text
+                StopRenderTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+
+                // Record latency
+                if (_latencyStopwatch is not null)
+                {
+                    _latencyStopwatch.Stop();
+                    assistantMsg.LatencyMs = _latencyStopwatch.ElapsedMilliseconds;
+                    _latencyStopwatch = null;
+                }
+
+                // Store citations from the completion chunk
+                if (chunk.Citations is { Count: > 0 })
+                {
+                    assistantMsg.Citations = chunk.Citations;
+                    _activeCitations = chunk.Citations;
+                    _citationPaneOpen = true;
+                }
+
+                StateHasChanged();
+                await ScrollToBottom();
             }
             else
             {
                 assistantMsg.Text += chunk.Token;
-                // Render periodically during streaming (every 5 chunks)
                 _renderCounter++;
-                if (_renderCounter % 5 == 0)
-                {
-                    assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
-                }
+                ScheduleRenderUpdate();
             }
-
-            StateHasChanged();
-            await ScrollToBottom();
         });
     }
 
+    private void ScheduleRenderUpdate()
+    {
+        if (_renderPending) return;
+        _renderPending = true;
+        _renderTimer ??= new Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                _renderPending = false;
+                var msg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
+                if (msg is not null)
+                {
+                    if (_renderCounter % 20 == 0)
+                        msg.RenderedHtml = await RenderMarkdownAsync(msg.Text);
+                    StateHasChanged();
+                    await ScrollToBottom();
+                }
+            });
+        }, null, Timeout.Infinite, Timeout.Infinite);
+        _renderTimer.Change(100, Timeout.Infinite);
+    }
+
+    private void StopRenderTimer()
+    {
+        _renderPending = false;
+        _renderTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+    }
+
+    // ─── State / Lifecycle ──────────────────────────────────────────────
+
     private void HandleStateChanged(System.Net.WebSockets.WebSocketState state)
     {
-        InvokeAsync(() =>
-        {
-            StateHasChanged();
-            return Task.CompletedTask;
-        });
+        InvokeAsync(() => { StateHasChanged(); return Task.CompletedTask; });
     }
 
     private async Task ScrollToBottom()
     {
-        try
-        {
-            await JS.InvokeVoidAsync("chatScroll.scrollToBottom", "chatMessages");
-        }
-        catch
-        {
-            // JS interop may fail during prerendering
-        }
+        try { await JS.InvokeVoidAsync("chatScroll.scrollToBottom", "chatMessages"); } catch { }
+    }
+
+    private async Task<string> RenderMarkdownAsync(string text)
+    {
+        try { return await JS.InvokeAsync<string>("chatRenderer.renderMarkdown", text); }
+        catch { return text; }
     }
 
     public async ValueTask DisposeAsync()
     {
         ChatService.OnMessageReceived -= HandleChunkReceived;
         ChatService.OnStateChanged -= HandleStateChanged;
+        if (_renderTimer is not null) await _renderTimer.DisposeAsync();
         await ChatService.DisposeAsync();
     }
 
-    private async Task<string> RenderMarkdownAsync(string text)
-    {
-        try
-        {
-            return await JS.InvokeAsync<string>("chatRenderer.renderMarkdown", text);
-        }
-        catch
-        {
-            return text;
-        }
-    }
+    // ─── Models ─────────────────────────────────────────────────────────
 
     private sealed class ChatMessageViewModel
     {
@@ -298,6 +823,19 @@
         public string? RenderedHtml { get; set; }
         public bool IsUser { get; set; }
         public bool IsStreaming { get; set; }
+        public bool IsEditing { get; set; }
+        public string EditText { get; set; } = string.Empty;
+        public bool CopyFeedback { get; set; }
         public string? Error { get; set; }
+        public List<CitationInfo>? Citations { get; set; }
+        public int Feedback { get; set; } // 0=none, 1=positive, -1=negative
+        public long LatencyMs { get; set; }
+    }
+
+    private sealed class ConversationItem
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Title { get; set; } = "새 대화";
+        public List<ChatMessageViewModel> Messages { get; set; } = [];
     }
 }

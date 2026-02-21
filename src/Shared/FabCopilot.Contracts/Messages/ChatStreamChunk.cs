@@ -18,4 +18,22 @@ public sealed class ChatStreamChunk
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }
+
+    [JsonPropertyName("citations")]
+    public List<CitationInfo>? Citations { get; set; }
+}
+
+public sealed class CitationInfo
+{
+    [JsonPropertyName("fileName")]
+    public string FileName { get; set; } = string.Empty;
+
+    [JsonPropertyName("chunkText")]
+    public string ChunkText { get; set; } = string.Empty;
+
+    [JsonPropertyName("section")]
+    public string? Section { get; set; }
+
+    [JsonPropertyName("score")]
+    public float Score { get; set; }
 }

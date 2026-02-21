@@ -8,7 +8,9 @@ namespace FabCopilot.WebClient.Services;
 public sealed class ChatService : IAsyncDisposable
 {
     private readonly string _gatewayBaseUrl;
+    private readonly string _gatewayHttpUrl;
     private readonly ILogger<ChatService> _logger;
+    private readonly HttpClient _httpClient = new();
     private ClientWebSocket? _webSocket;
     private CancellationTokenSource? _receiveCts;
     private Task? _receiveTask;
@@ -23,6 +25,8 @@ public sealed class ChatService : IAsyncDisposable
     {
         _gatewayBaseUrl = configuration["Gateway:WebSocketUrl"]
                           ?? "ws://localhost:5000/ws/chat";
+        _gatewayHttpUrl = configuration["Gateway:HttpUrl"]
+                          ?? "http://localhost:5000";
         _logger = logger;
     }
 
@@ -52,7 +56,7 @@ public sealed class ChatService : IAsyncDisposable
         }
     }
 
-    public async Task SendMessageAsync(string conversationId, string equipmentId, string message, string? modelId = null)
+    public async Task SendMessageAsync(string conversationId, string equipmentId, string message, string? modelId = null, string searchMode = "hybrid")
     {
         if (_webSocket is null || _webSocket.State != WebSocketState.Open)
         {
@@ -65,6 +69,7 @@ public sealed class ChatService : IAsyncDisposable
             EquipmentId = equipmentId,
             UserMessage = message,
             ModelId = modelId,
+            SearchMode = searchMode,
             Context = null
         };
 
@@ -181,8 +186,33 @@ public sealed class ChatService : IAsyncDisposable
         }
     }
 
+    public async Task SendFeedbackAsync(string conversationId, string equipmentId, int messageIndex, bool isPositive)
+    {
+        try
+        {
+            var feedback = new FeedbackMessage
+            {
+                ConversationId = conversationId,
+                EquipmentId = equipmentId,
+                MessageIndex = messageIndex,
+                IsPositive = isPositive,
+                Timestamp = DateTimeOffset.UtcNow
+            };
+
+            var json = JsonSerializer.Serialize(feedback);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"{_gatewayHttpUrl.TrimEnd('/')}/api/feedback", content);
+            response.EnsureSuccessStatusCode();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send feedback for conversation {ConversationId}", conversationId);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
+        _httpClient.Dispose();
         await DisconnectAsync();
     }
 }

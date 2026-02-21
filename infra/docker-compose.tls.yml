@@ -1,0 +1,24 @@
+# TLS overlay for Fab Copilot infrastructure.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# Prerequisites:
+#   1. Generate certificates: bash tls/generate-certs.sh
+#   2. Certificates should be in infra/tls/certs/
+
+services:
+  nats:
+    volumes:
+      - ./nats/nats-server-tls.conf:/etc/nats/nats-server.conf
+      - ./tls/certs:/etc/nats/certs:ro
+
+  redis:
+    volumes:
+      - ./tls/certs:/tls:ro
+      - ./tls/redis-tls.conf:/usr/local/etc/redis/redis.conf:ro
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+
+  qdrant:
+    environment:
+      - QDRANT__SERVICE__ENABLE_TLS=true
+    volumes:
+      - ./tls/certs:/qdrant/tls:ro

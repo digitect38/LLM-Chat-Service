@@ -38,7 +38,8 @@ public sealed class OllamaLlmClient : ILlmClient
         {
             Model = model,
             Messages = ConvertMessages(messages),
-            Stream = true
+            Stream = true,
+            Options = BuildRequestOptions(options)
         };
 
         await foreach (var response in _ollama.ChatAsync(chatRequest, ct))
@@ -83,6 +84,12 @@ public sealed class OllamaLlmClient : ILlmClient
 
         return [];
     }
+
+    internal static RequestOptions BuildRequestOptions(LlmOptions? options) => new()
+    {
+        Temperature = options?.Temperature ?? 0.1f,
+        NumPredict = options?.MaxTokens ?? 2048
+    };
 
     private static List<Message> ConvertMessages(IReadOnlyList<LlmChatMessage> messages)
     {

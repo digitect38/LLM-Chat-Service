@@ -6,9 +6,9 @@ public sealed class RagOptions
 {
     public const string SectionName = "Rag";
 
-    public float MinScore { get; set; } = 0.45f;
+    public float MinScore { get; set; } = 0.55f;
 
-    public int DefaultTopK { get; set; } = 3;
+    public int DefaultTopK { get; set; } = 5;
 
     public string? WatchFolder { get; set; }
 
@@ -28,6 +28,24 @@ public sealed class RagOptions
 
     // Agentic RAG
     public int DefaultMaxAgenticIterations { get; set; } = 3;
+
+    // BM25
+    public bool EnableBm25 { get; set; } = true;
+    public double Bm25K1 { get; set; } = 1.2;
+    public double Bm25B { get; set; } = 0.75;
+
+    // Hybrid Search (RRF)
+    public bool EnableHybridSearch { get; set; } = true;
+    public float VectorWeight { get; set; } = 1.0f;
+    public float Bm25Weight { get; set; } = 1.0f;
+
+    // MMR Diversity
+    public bool EnableMmr { get; set; } = true;
+    public double MmrLambda { get; set; } = 0.7;
+
+    // RAG Cache
+    public bool EnableRagCache { get; set; } = true;
+    public int RagCacheTtlHours { get; set; } = 24;
 
     // Default pipeline
     public RagPipelineMode DefaultPipelineMode { get; set; } = RagPipelineMode.Naive;
