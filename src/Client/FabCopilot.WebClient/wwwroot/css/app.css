@@ -1231,6 +1231,131 @@ html, body {
 }
 
 /* ================================================================
+   TOP BAR MODEL NAME & CONFIG BUTTON
+   ================================================================ */
+.topbar-model-name {
+    font-size: 13px;
+    color: #666;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.config-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    color: #555;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.config-btn:hover {
+    background: #e5e5e5;
+    color: #1a1a1a;
+}
+
+/* ================================================================
+   CONFIG MODAL
+   ================================================================ */
+.config-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 999;
+}
+
+.config-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    z-index: 1000;
+    width: 380px;
+    max-width: 90vw;
+    animation: fadeIn 0.15s ease;
+}
+
+.config-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.config-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.config-modal-body {
+    padding: 20px;
+}
+
+.config-section {
+    margin-bottom: 20px;
+}
+
+.config-section:last-child {
+    margin-bottom: 0;
+}
+
+.config-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #444;
+    margin-bottom: 8px;
+}
+
+.config-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    color: #1a1a1a;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.config-select:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.config-select:disabled {
+    background: #f5f5f5;
+    color: #999;
+    cursor: not-allowed;
+}
+
+.config-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 20px;
+    border-top: 1px solid #e5e5e5;
+}
+
+/* ================================================================
    FILE UPLOAD BUTTON
    ================================================================ */
 .upload-btn {
