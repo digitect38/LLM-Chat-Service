@@ -14,10 +14,12 @@ public sealed class OllamaLlmClient : ILlmClient
 {
     private readonly OllamaApiClient _ollama;
     private readonly OllamaOptions _options;
+    private readonly IEmbeddingClient _embeddingClient;
 
-    public OllamaLlmClient(IOptions<OllamaOptions> options)
+    public OllamaLlmClient(IOptions<OllamaOptions> options, IEmbeddingClient embeddingClient)
     {
         _options = options.Value;
+        _embeddingClient = embeddingClient;
         var httpClient = new HttpClient
         {
             BaseAddress = new Uri(_options.BaseUrl),
@@ -66,30 +68,8 @@ public sealed class OllamaLlmClient : ILlmClient
         return sb.ToString();
     }
 
-    public async Task<float[]> GetEmbeddingAsync(string text, bool isQuery = false, CancellationToken ct = default)
-    {
-        // nomic-embed-text requires task-type prefixes for optimal asymmetric retrieval;
-        // other models (e.g., EXAONE) do not use these prefixes.
-        var embeddingText = _options.EmbeddingModel.StartsWith("nomic", StringComparison.OrdinalIgnoreCase)
-            ? (isQuery ? "search_query: " + text : "search_document: " + text)
-            : text;
-
-        var response = await _ollama.EmbedAsync(
-            new EmbedRequest
-            {
-                Model = _options.EmbeddingModel,
-                Input = [embeddingText]
-            },
-            ct);
-
-        if (response?.Embeddings is { Count: > 0 })
-        {
-            var embedding = response.Embeddings[0];
-            return embedding.Select(d => (float)d).ToArray();
-        }
-
-        return [];
-    }
+    public Task<float[]> GetEmbeddingAsync(string text, bool isQuery = false, CancellationToken ct = default)
+        => _embeddingClient.GetEmbeddingAsync(text, isQuery, ct);
 
     internal static RequestOptions BuildRequestOptions(LlmOptions? options) => new()
     {
