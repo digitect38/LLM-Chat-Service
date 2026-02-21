@@ -8,6 +8,7 @@ builder.Services.AddServerSideBlazor();
 builder.Services.Configure<ModelOptions>(builder.Configuration.GetSection(ModelOptions.SectionName));
 builder.Services.Configure<EquipmentOptions>(builder.Configuration.GetSection(EquipmentOptions.SectionName));
 builder.Services.AddScoped<ChatService>();
+builder.Services.AddSingleton<EmbeddingConfigService>();
 
 var app = builder.Build();
 
