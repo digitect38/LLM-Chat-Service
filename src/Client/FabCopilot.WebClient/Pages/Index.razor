@@ -230,14 +230,6 @@
                 </div>
                 <div class="config-modal-body">
                     <div class="config-section">
-                        <label class="config-label">LLM 서버 URL</label>
-                        <input class="config-input" type="text"
-                               @bind="_gatewayUrl"
-                               @bind:event="oninput"
-                               placeholder="http://localhost:5000"
-                               disabled="@_isSending" />
-                    </div>
-                    <div class="config-section">
                         <label class="config-label">LLM 모델</label>
                         <select class="config-select"
                                 @bind="_selectedModelId"
@@ -261,7 +253,7 @@
                     </div>
                 </div>
                 <div class="config-modal-footer">
-                    <button class="btn-primary-sm" @onclick="ApplyAndCloseConfig">닫기</button>
+                    <button class="btn-primary-sm" @onclick="ToggleConfig">닫기</button>
                 </div>
             </div>
         }
@@ -348,7 +340,6 @@
     // UI state
     private bool _sidebarOpen = true;
     private bool _showConfig;
-    private string _gatewayUrl = string.Empty;
     private bool _citationPaneOpen;
     private List<CitationInfo>? _activeCitations;
     private string _selectedModelId = string.Empty;
@@ -395,8 +386,6 @@
         _availableModels = opts.Available;
         _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
 
-        _gatewayUrl = ChatService.GatewayHttpUrl;
-
         var eqOpts = EquipmentOptionsAccessor.Value;
         _availableEquipment = eqOpts.Available;
         if (_availableEquipment.Count > 0)
@@ -409,17 +398,6 @@
 
     private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
     private void ToggleConfig() => _showConfig = !_showConfig;
-
-    private async Task ApplyAndCloseConfig()
-    {
-        if (!string.IsNullOrWhiteSpace(_gatewayUrl) && _gatewayUrl != ChatService.GatewayHttpUrl)
-        {
-            ChatService.SetGatewayUrl(_gatewayUrl);
-            if (ChatService.IsConnected)
-                await ChatService.DisconnectAsync();
-        }
-        _showConfig = false;
-    }
 
     private async Task StartNewChat()
     {

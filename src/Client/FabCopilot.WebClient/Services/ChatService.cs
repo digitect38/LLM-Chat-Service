@@ -7,8 +7,8 @@ namespace FabCopilot.WebClient.Services;
 
 public sealed class ChatService : IAsyncDisposable
 {
-    private string _gatewayBaseUrl;
-    private string _gatewayHttpUrl;
+    private readonly string _gatewayBaseUrl;
+    private readonly string _gatewayHttpUrl;
     private readonly ILogger<ChatService> _logger;
     private readonly HttpClient _httpClient = new();
     private ClientWebSocket? _webSocket;
@@ -20,7 +20,6 @@ public sealed class ChatService : IAsyncDisposable
 
     public WebSocketState State => _webSocket?.State ?? WebSocketState.None;
     public bool IsConnected => _webSocket?.State == WebSocketState.Open;
-    public string GatewayHttpUrl => _gatewayHttpUrl;
 
     public ChatService(IConfiguration configuration, ILogger<ChatService> logger)
     {
@@ -29,17 +28,6 @@ public sealed class ChatService : IAsyncDisposable
         _gatewayHttpUrl = configuration["Gateway:HttpUrl"]
                           ?? "http://localhost:5000";
         _logger = logger;
-    }
-
-    public void SetGatewayUrl(string httpUrl)
-    {
-        var trimmed = httpUrl.TrimEnd('/');
-        _gatewayHttpUrl = trimmed;
-        // Derive WebSocket URL from HTTP URL: http→ws, https→wss
-        var wsScheme = trimmed.StartsWith("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
-        var authority = trimmed.Replace("https://", "", StringComparison.OrdinalIgnoreCase)
-                               .Replace("http://", "", StringComparison.OrdinalIgnoreCase);
-        _gatewayBaseUrl = $"{wsScheme}://{authority}/ws/chat";
     }
 
     public async Task ConnectAsync(string equipmentId, CancellationToken cancellationToken = default)
