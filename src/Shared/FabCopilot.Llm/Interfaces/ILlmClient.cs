@@ -14,5 +14,5 @@ public interface ILlmClient
         LlmOptions? options = null,
         CancellationToken ct = default);
 
-    Task<float[]> GetEmbeddingAsync(string text, CancellationToken ct = default);
+    Task<float[]> GetEmbeddingAsync(string text, bool isQuery = false, CancellationToken ct = default);
 }

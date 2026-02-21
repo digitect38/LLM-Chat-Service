@@ -150,7 +150,7 @@ public sealed class KnowledgeManager
         var textToEmbed = BuildEmbeddingText(knowledge);
 
         // Generate embedding
-        var embedding = await _llmClient.GetEmbeddingAsync(textToEmbed, ct);
+        var embedding = await _llmClient.GetEmbeddingAsync(textToEmbed, isQuery: false, ct);
 
         // Build payload for the vector store
         var payload = new Dictionary<string, object>

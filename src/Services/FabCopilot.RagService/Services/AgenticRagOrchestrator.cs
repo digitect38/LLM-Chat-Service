@@ -181,7 +181,7 @@ public sealed class AgenticRagOrchestrator : IAgenticRagOrchestrator
         }
 
         // Embed and search
-        var queryVector = await _llmClient.GetEmbeddingAsync(searchQuery, ct);
+        var queryVector = await _llmClient.GetEmbeddingAsync(searchQuery, isQuery: true, ct);
         var collection = _qdrantOptions.DefaultCollection;
         var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, originalRequest.TopK * 5);
         var searchResults = await _vectorStore.SearchAsync(

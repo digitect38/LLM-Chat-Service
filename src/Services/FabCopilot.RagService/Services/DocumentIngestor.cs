@@ -76,7 +76,8 @@ public sealed class DocumentIngestor
                 var (chunkText, charStart, charEnd) = chunks[i];
                 var chunkId = $"{documentId}:page:{pageNumber}:chunk:{i}";
 
-                var vector = await _llmClient.GetEmbeddingAsync(chunkText, ct);
+                var embeddingText = FlattenMarkdownTables(chunkText);
+                var vector = await _llmClient.GetEmbeddingAsync(embeddingText, isQuery: false, ct);
 
                 var (lineStart, lineEnd) = ComputeLineRange(pageText, charStart, charEnd);
 
@@ -150,10 +151,13 @@ public sealed class DocumentIngestor
             var chunk = chunks[i];
             var chunkId = $"{documentId}:chunk:{i}";
 
-            // Embed the chunk
-            var vector = await _llmClient.GetEmbeddingAsync(chunk, ct);
+            // Flatten markdown tables before embedding to avoid content dilution
+            var embeddingText = FlattenMarkdownTables(chunk);
 
-            // Build payload with metadata
+            // Embed the chunk (using search_document prefix via isQuery: false)
+            var vector = await _llmClient.GetEmbeddingAsync(embeddingText, isQuery: false, ct);
+
+            // Build payload with metadata (store original chunk text, not flattened)
             var payload = new Dictionary<string, object>
             {
                 ["text"] = chunk,
@@ -462,6 +466,68 @@ public sealed class DocumentIngestor
         }
 
         return sections;
+    }
+
+    // ─── Table Flattening ──────────────────────────────────────────────
+
+    private static readonly Regex TableRowRegex = new(@"^\|(.+)\|$", RegexOptions.Multiline);
+    private static readonly Regex SeparatorRowRegex = new(@"^\|[\s\-:|]+\|$", RegexOptions.Multiline);
+
+    /// <summary>
+    /// Converts markdown tables in a chunk to natural language sentences.
+    /// This prevents embedding content dilution caused by pipe/dash table syntax.
+    /// The header prefix (e.g., "[## Section > ### Sub]") is preserved.
+    /// </summary>
+    internal static string FlattenMarkdownTables(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains('|'))
+            return text;
+
+        var lines = text.Split('\n');
+        var result = new List<string>();
+        var i = 0;
+
+        while (i < lines.Length)
+        {
+            var line = lines[i].Trim();
+
+            // Detect table: current line has pipes and next line is a separator row
+            if (TableRowRegex.IsMatch(line) && i + 1 < lines.Length && SeparatorRowRegex.IsMatch(lines[i + 1].Trim()))
+            {
+                // Parse header row
+                var headers = ParseTableRow(line);
+                i += 2; // skip header + separator
+
+                // Parse data rows
+                while (i < lines.Length && TableRowRegex.IsMatch(lines[i].Trim()) && !SeparatorRowRegex.IsMatch(lines[i].Trim()))
+                {
+                    var cells = ParseTableRow(lines[i].Trim());
+                    var parts = new List<string>();
+                    for (var c = 0; c < Math.Min(headers.Count, cells.Count); c++)
+                    {
+                        if (!string.IsNullOrWhiteSpace(cells[c]))
+                            parts.Add($"{headers[c]}: {cells[c]}");
+                    }
+                    if (parts.Count > 0)
+                        result.Add(string.Join(", ", parts) + ".");
+                    i++;
+                }
+            }
+            else
+            {
+                result.Add(lines[i]);
+                i++;
+            }
+        }
+
+        return string.Join("\n", result);
+    }
+
+    private static List<string> ParseTableRow(string row)
+    {
+        // Remove leading/trailing pipe and split by pipe
+        var trimmed = row.Trim('|');
+        return trimmed.Split('|').Select(c => c.Trim()).ToList();
     }
 
     // ─── Metadata Inference ─────────────────────────────────────────────

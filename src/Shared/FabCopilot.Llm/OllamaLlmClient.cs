@@ -66,13 +66,19 @@ public sealed class OllamaLlmClient : ILlmClient
         return sb.ToString();
     }
 
-    public async Task<float[]> GetEmbeddingAsync(string text, CancellationToken ct = default)
+    public async Task<float[]> GetEmbeddingAsync(string text, bool isQuery = false, CancellationToken ct = default)
     {
+        // nomic-embed-text requires task-type prefixes for optimal asymmetric retrieval;
+        // other models (e.g., EXAONE) do not use these prefixes.
+        var embeddingText = _options.EmbeddingModel.StartsWith("nomic", StringComparison.OrdinalIgnoreCase)
+            ? (isQuery ? "search_query: " + text : "search_document: " + text)
+            : text;
+
         var response = await _ollama.EmbedAsync(
             new EmbedRequest
             {
                 Model = _options.EmbeddingModel,
-                Input = [text]
+                Input = [embeddingText]
             },
             ct);
 

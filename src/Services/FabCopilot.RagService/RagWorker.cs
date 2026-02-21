@@ -223,7 +223,7 @@ public sealed class RagWorker : BackgroundService
         _logger.LogDebug("Running Naive pipeline. ConversationId={ConversationId}", conversationId);
 
         // 1. Embed the query text
-        var queryVector = await _llmClient.GetEmbeddingAsync(request.Query, ct);
+        var queryVector = await _llmClient.GetEmbeddingAsync(request.Query, isQuery: true, ct);
 
         // 2. Over-fetch candidates from vector store
         var vectorSw = FabMetrics.StartTimer();
@@ -307,7 +307,7 @@ public sealed class RagWorker : BackgroundService
         }
 
         // 2. Embed the rewritten query
-        var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, ct);
+        var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, isQuery: true, ct);
 
         // 3. Over-fetch candidates (with timeout)
         IReadOnlyList<VectorSearchResult> searchResults;
@@ -391,7 +391,7 @@ public sealed class RagWorker : BackgroundService
 
         // 2. Embed + vector search
         var graphVectorSw = FabMetrics.StartTimer();
-        var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, ct);
+        var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, isQuery: true, ct);
         var collection = _qdrantOptions.DefaultCollection;
         var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
         var searchResults = await _vectorStore.SearchAsync(
