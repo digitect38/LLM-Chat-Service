@@ -1,6 +1,7 @@
 @page "/"
 @using Microsoft.Extensions.Options
 @using FabCopilot.Contracts.Messages
+@using FabCopilot.Observability.Metrics
 @using FabCopilot.WebClient.Configuration
 @inject ChatService ChatService
 @inject IJSRuntime JS
@@ -890,6 +891,8 @@
                 // Severity logic
                 if (_elapsedSeconds >= _timeoutBudgetSeconds * 0.9)
                 {
+                    if (_timeoutSeverity != "exceeded")
+                        FabMetrics.TimeoutOccurrenceCount.Add(1);
                     _timeoutSeverity = "exceeded";
                     _showTimeoutWarning = true;
                 }
@@ -915,6 +918,7 @@
 
     private void ExtendTimeout()
     {
+        FabMetrics.TimeoutExtendCount.Add(1);
         _timeoutBudgetSeconds = Math.Min(_timeoutBudgetSeconds * 2, 600);
         _showTimeoutWarning = false;
         _timeoutSeverity = "warning";
@@ -923,6 +927,7 @@
 
     private async Task CancelTimeout()
     {
+        FabMetrics.TimeoutCancelCount.Add(1);
         _showTimeoutWarning = false;
         StopTimeoutTimer();
         await StopResponseAsync();
@@ -930,6 +935,7 @@
 
     private async Task SimplifyQuery()
     {
+        FabMetrics.TimeoutSimplifyCount.Add(1);
         _showTimeoutWarning = false;
         StopTimeoutTimer();
 

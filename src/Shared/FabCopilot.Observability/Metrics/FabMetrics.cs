@@ -62,6 +62,20 @@ public static class FabMetrics
     public static readonly Counter<long> LlmGateBTriggeredCount =
         Meter.CreateCounter<long>("llm.gate_b.triggered", "triggers", "Gate B (no citation) trigger count");
 
+    // ─── Timeout Telemetry (v3.3 §11.1) ─────────────────────────────
+
+    public static readonly Counter<long> TimeoutOccurrenceCount =
+        Meter.CreateCounter<long>("timeout.occurrence", "timeouts", "Total timeout occurrences");
+
+    public static readonly Counter<long> TimeoutExtendCount =
+        Meter.CreateCounter<long>("timeout.extend", "extends", "User chose to extend timeout");
+
+    public static readonly Counter<long> TimeoutCancelCount =
+        Meter.CreateCounter<long>("timeout.cancel", "cancels", "User chose to cancel on timeout");
+
+    public static readonly Counter<long> TimeoutSimplifyCount =
+        Meter.CreateCounter<long>("timeout.simplify", "simplifies", "User chose to simplify query on timeout");
+
     // ─── Helpers ────────────────────────────────────────────────────
 
     /// <summary>

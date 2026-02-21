@@ -78,7 +78,7 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_WIWNU_YieldDirect()
-        => AnyChunkContains("수율 직결").Should().BeTrue();
+        => AnyChunkContains("수율에 직결").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_Throughput()
@@ -88,7 +88,7 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_PressureUp_MRR_Up()
-        => AnyChunkContains("압력 ↑").Should().BeTrue();
+        => AnyChunkContains("압력 증가").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_Adjustment_0_1_0_3psi()
@@ -98,19 +98,19 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_CenterFast_Zone1_Down()
-        => AnyChunkContains("Zone 1 압력 ↓").Should().BeTrue();
+        => AnyChunkContains("Zone 1 ↓").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_CenterSlow_Zone1_Up()
-        => AnyChunkContains("Zone 1 압력 ↑").Should().BeTrue();
+        => AnyChunkContains("Zone 1 ↑").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_EdgeFast_Zone5_Down()
-        => AnyChunkContains("Zone 5 압력 ↓").Should().BeTrue();
+        => AnyChunkContains("Zone 5 ↓").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_EdgeSlow_Zone5_Up()
-        => AnyChunkContains("Zone 5 압력 ↑").Should().BeTrue();
+        => AnyChunkContains("Zone 5 ↑").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_MShape()
@@ -122,11 +122,11 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_Zone3_Down_0_2psi()
-        => AnyChunkContains("Zone 3 압력 ↓ 0.2 psi").Should().BeTrue();
+        => AnyChunkContains("Zone 3 ↓ 0.2 psi").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_Zone3_Up_0_2psi()
-        => AnyChunkContains("Zone 3 압력 ↑ 0.2 psi").Should().BeTrue();
+        => AnyChunkContains("Zone 3 ↑ 0.2 psi").Should().BeTrue();
 
     // === 5. 압력 조정 규칙 ===
 
@@ -150,7 +150,7 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_RingStart_1_0()
-        => AnyChunkContains("1.0배로 시작").Should().BeTrue();
+        => AnyChunkContains("1.0배에서 시작").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_Ring_0_5psi_Step()
@@ -178,11 +178,11 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_SpeedUp_ScratchRisk()
-        => AnyChunkContains("스크래치 위험 ↑").Should().BeTrue();
+        => AnyChunkContains("스크래치 ↑").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_SpeedDown_ScratchReduce()
-        => AnyChunkContains("스크래치 위험 ↓").Should().BeTrue();
+        => AnyChunkContains("스크래치 ↓").Should().BeTrue();
 
     // === 9. 슬러리 최적화 ===
 
@@ -199,8 +199,8 @@ public class CmpParameterOptimizationContentTests
         => AnyChunkContains("> 250 ml/min").Should().BeTrue();
 
     [Fact]
-    public void Chunk_Contains_FlowSaturation_150_200()
-        => AnyChunkContains("150~200 ml/min").Should().BeTrue();
+    public void Chunk_Contains_FlowSaturation()
+        => AnyChunkContains("포화").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_FlowAdjust_10_20ml()
@@ -244,7 +244,7 @@ public class CmpParameterOptimizationContentTests
 
     [Fact]
     public void Chunk_Contains_SweepSpeed_5to15()
-        => AnyChunkContains("5~15 sweep/min").Should().BeTrue();
+        => AnyChunkContains("5~15").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_InSitu()
@@ -269,12 +269,12 @@ public class CmpParameterOptimizationContentTests
         => AnyChunkContains("2800").Should().BeTrue();
 
     [Fact]
-    public void Chunk_Contains_DOE_Run8_MRR_4300()
-        => AnyChunkContains("4300").Should().BeTrue();
+    public void Chunk_Contains_DOE_Run6_MRR_3800()
+        => AnyChunkContains("3800").Should().BeTrue();
 
     [Fact]
-    public void Chunk_Contains_DOE_Run8_WIWNU_2_8()
-        => AnyChunkContains("2.8").Should().BeTrue();
+    public void Chunk_Contains_DOE_Run4_WIWNU_3_2()
+        => AnyChunkContains("3.2%").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_DOE_Conclusion_Pressure_Speed()

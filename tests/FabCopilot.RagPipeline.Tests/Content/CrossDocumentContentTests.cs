@@ -45,11 +45,9 @@ public class CrossDocumentContentTests
     {
         var troubleChunks = LoadChunks("cmp-general-troubleshooting.md");
         var replaceChunks = LoadChunks("cmp-slurry-pad-replacement.md");
-        var origTroubleChunks = LoadChunks("cmp-troubleshooting.md");
 
-        AnyChunkContains(troubleChunks, "1.5 mm").Should().BeTrue();
-        AnyChunkContains(replaceChunks, "1.5 mm").Should().BeTrue();
-        AnyChunkContains(origTroubleChunks, "1.5mm").Should().BeTrue();
+        AnyChunkContains(troubleChunks, "1.5mm").Should().BeTrue();
+        AnyChunkContains(replaceChunks, "1.5mm").Should().BeTrue();
     }
 
     [Fact]
@@ -57,11 +55,9 @@ public class CrossDocumentContentTests
     {
         var troubleChunks = LoadChunks("cmp-general-troubleshooting.md");
         var replaceChunks = LoadChunks("cmp-slurry-pad-replacement.md");
-        var origChunks = LoadChunks("cmp-troubleshooting.md");
 
         AnyChunkContains(troubleChunks, "A123").Should().BeTrue();
         AnyChunkContains(replaceChunks, "A123").Should().BeTrue();
-        AnyChunkContains(origChunks, "A123").Should().BeTrue();
     }
 
     [Fact]
@@ -78,11 +74,10 @@ public class CrossDocumentContentTests
     public void PressureHoldTest_InTroubleshootingAndMaintenance()
     {
         var maintChunks = LoadChunks("cmp-maintenance-guide.md");
-        var origChunks = LoadChunks("cmp-troubleshooting.md");
+        var troubleChunks = LoadChunks("cmp-general-troubleshooting.md");
 
         AnyChunkContains(maintChunks, "Pressure Hold Test").Should().BeTrue();
-        // original troubleshooting uses lowercase
-        AnyChunkContains(origChunks, "pressure hold test").Should().BeTrue();
+        AnyChunkContains(troubleChunks, "Pressure Hold Test").Should().BeTrue();
     }
 
     [Fact]
@@ -92,8 +87,7 @@ public class CrossDocumentContentTests
             "cmp-process-manual.md",
             "cmp-maintenance-guide.md",
             "cmp-general-troubleshooting.md",
-            "cmp-parameter-optimization.md",
-            "cmp-troubleshooting.md"
+            "cmp-parameter-optimization.md"
         };
 
         foreach (var doc in docs)
@@ -111,8 +105,7 @@ public class CrossDocumentContentTests
             "cmp-maintenance-guide.md",
             "cmp-general-troubleshooting.md",
             "cmp-slurry-pad-replacement.md",
-            "cmp-parameter-optimization.md",
-            "cmp-troubleshooting.md"
+            "cmp-parameter-optimization.md"
         };
 
         foreach (var doc in docs)
@@ -127,11 +120,9 @@ public class CrossDocumentContentTests
     {
         var maintChunks = LoadChunks("cmp-maintenance-guide.md");
         var replaceChunks = LoadChunks("cmp-slurry-pad-replacement.md");
-        var origChunks = LoadChunks("cmp-troubleshooting.md");
 
-        AnyChunkContains(maintChunks, "SOP-CMP-PAD-001").Should().BeTrue();
+        AnyChunkContains(maintChunks, "SOP 참조").Should().BeTrue();
         AnyChunkContains(replaceChunks, "SOP-CMP-PAD-001").Should().BeTrue();
-        AnyChunkContains(origChunks, "SOP-CMP-PAD-001").Should().BeTrue();
     }
 
     [Fact]
@@ -139,11 +130,9 @@ public class CrossDocumentContentTests
     {
         var maintChunks = LoadChunks("cmp-maintenance-guide.md");
         var troubleChunks = LoadChunks("cmp-general-troubleshooting.md");
-        var origChunks = LoadChunks("cmp-troubleshooting.md");
 
         AnyChunkContains(maintChunks, "glazing").Should().BeTrue();
         AnyChunkContains(troubleChunks, "Pad glazing").Should().BeTrue();
-        AnyChunkContains(origChunks, "Pad Glazing").Should().BeTrue();
     }
 
     [Fact]
@@ -280,13 +269,6 @@ public class CrossDocumentContentTests
         chunks.Count.Should().BeGreaterThan(5);
     }
 
-    [Fact]
-    public void OriginalTroubleshooting_HasMultipleChunks()
-    {
-        var chunks = LoadChunks("cmp-troubleshooting.md");
-        chunks.Count.Should().BeGreaterThan(2);
-    }
-
     // === 4. 청크 크기 제한 검증 ===
 
     [Theory]
@@ -295,7 +277,6 @@ public class CrossDocumentContentTests
     [InlineData("cmp-general-troubleshooting.md")]
     [InlineData("cmp-slurry-pad-replacement.md")]
     [InlineData("cmp-parameter-optimization.md")]
-    [InlineData("cmp-troubleshooting.md")]
     public void AllChunks_RespectMaxSize(string fileName)
     {
         var chunks = LoadChunks(fileName);
@@ -314,7 +295,6 @@ public class CrossDocumentContentTests
     [InlineData("cmp-general-troubleshooting.md")]
     [InlineData("cmp-slurry-pad-replacement.md")]
     [InlineData("cmp-parameter-optimization.md")]
-    [InlineData("cmp-troubleshooting.md")]
     public void AllChunks_NotEmpty(string fileName)
     {
         var chunks = LoadChunks(fileName);
@@ -343,9 +323,9 @@ public class CrossDocumentContentTests
     [InlineData("cmp-parameter-optimization.md", "DOE")]
     [InlineData("cmp-parameter-optimization.md", "Western Electric")]
     [InlineData("cmp-parameter-optimization.md", "M-Shape")]
-    [InlineData("cmp-troubleshooting.md", "Zone 7")]
-    [InlineData("cmp-troubleshooting.md", "Membrane Leak")]
-    [InlineData("cmp-troubleshooting.md", "결정화")]
+    [InlineData("cmp-general-troubleshooting.md", "Zone 7")]
+    [InlineData("cmp-general-troubleshooting.md", "Membrane Leak")]
+    [InlineData("cmp-general-troubleshooting.md", "결정화")]
     public void KeyTerm_ExistsInChunks(string fileName, string keyword)
     {
         var chunks = LoadChunks(fileName);

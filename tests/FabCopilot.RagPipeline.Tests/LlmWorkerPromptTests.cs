@@ -2,6 +2,7 @@ using System.Text.Json;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Contracts.Models;
 using FabCopilot.LlmService;
+using FabCopilot.RagService.Services;
 using FluentAssertions;
 using Xunit;
 
@@ -38,7 +39,7 @@ public class LlmWorkerPromptTests
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithRagResults_ContainsCitationInstructions()
+    public void BuildSystemPrompt_WithRagResults_ContainsPrecisionCitationFormat()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -47,7 +48,8 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("파일명]에 따르면");
+        prompt.Should().Contain("[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]");
+        prompt.Should().Contain("[MNL-2025-001-Ch3-S3.2.1-{Line:142-158}]");
     }
 
     [Fact]
@@ -96,7 +98,7 @@ public class LlmWorkerPromptTests
     {
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, new List<RetrievalResult>());
 
-        prompt.Should().NotContain("REFERENCE DOCUMENTS");
+        prompt.Should().NotContain("REFERENCE DOCUMENTS - MANDATORY USE");
         prompt.Should().NotContain("MANDATORY USE");
     }
 
@@ -160,5 +162,119 @@ public class LlmWorkerPromptTests
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
         prompt.Should().Contain("my-doc.txt");
+    }
+
+    [Fact]
+    public void BuildSystemPrompt_WithChapterSectionMetadata_IncludesInDocumentListing()
+    {
+        var ragResults = new List<RetrievalResult>
+        {
+            new()
+            {
+                ChunkText = "Vacuum seal replacement.",
+                Score = 0.9f,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["file_name"] = "manual.pdf",
+                    ["chapter"] = "Ch3",
+                    ["section"] = "3.2.1",
+                    ["line_start"] = 142,
+                    ["line_end"] = 158
+                }
+            }
+        };
+
+        var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
+
+        prompt.Should().Contain("chapter: Ch3");
+        prompt.Should().Contain("section: 3.2.1");
+        prompt.Should().Contain("lines: 142-158");
+    }
+
+    [Fact]
+    public void BuildDisplayRef_WithAllFields_ReturnsFullPrecisionFormat()
+    {
+        var lineRange = new LineRangeInfo { From = 142, To = 158 };
+
+        var result = LlmWorker.BuildDisplayRef("MNL-2025-001", "Ch3", "3.2.1", lineRange, 42);
+
+        result.Should().Be("MNL-2025-001-Ch3-S3.2.1-{Line:142-158}");
+    }
+
+    [Fact]
+    public void BuildDisplayRef_WithoutLineRange_FallsBackToPage()
+    {
+        var result = LlmWorker.BuildDisplayRef("MNL-2025-001", "Ch3", "3.2.1", null, 42);
+
+        result.Should().Be("MNL-2025-001-Ch3-S3.2.1-{Page:42}");
+    }
+
+    [Fact]
+    public void BuildDisplayRef_WithOnlyDocId_ReturnsDocIdOnly()
+    {
+        var result = LlmWorker.BuildDisplayRef("MNL-2025-001", null, null, null, null);
+
+        result.Should().Be("MNL-2025-001");
+    }
+
+    [Fact]
+    public void ComputeLineRange_SingleLine_ReturnsLine1()
+    {
+        var text = "Hello world, no newlines here.";
+
+        var (lineStart, lineEnd) = DocumentIngestor.ComputeLineRange(text, 0, text.Length);
+
+        lineStart.Should().Be(1);
+        lineEnd.Should().Be(1);
+    }
+
+    [Fact]
+    public void ComputeLineRange_MultipleLines_ReturnsCorrectRange()
+    {
+        var text = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
+        // "Line 3" starts at index 14, ends at index 20
+
+        var (lineStart, lineEnd) = DocumentIngestor.ComputeLineRange(text, 14, 20);
+
+        lineStart.Should().Be(3);
+        lineEnd.Should().Be(3);
+    }
+
+    [Fact]
+    public void ComputeLineRange_SpanningMultipleLines_ReturnsSpan()
+    {
+        var text = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
+        // Span from "Line 2" (index 7) to end of "Line 4" (index 27)
+
+        var (lineStart, lineEnd) = DocumentIngestor.ComputeLineRange(text, 7, 27);
+
+        lineStart.Should().Be(2);
+        lineEnd.Should().Be(4);
+    }
+
+    [Fact]
+    public void BuildSourceCitations_WithMetadata_UsesPrecisionFormat()
+    {
+        var ragResults = new List<RetrievalResult>
+        {
+            new()
+            {
+                ChunkText = "Content",
+                Score = 0.9f,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["file_name"] = "manual.pdf",
+                    ["document_id"] = "MNL-001",
+                    ["chapter"] = "Ch1",
+                    ["section"] = "1.1",
+                    ["line_start"] = 10,
+                    ["line_end"] = 20
+                }
+            }
+        };
+
+        var result = LlmWorker.BuildSourceCitations(ragResults);
+
+        result.Should().Contain("MNL-001-Ch1-S1.1-{Line:10-20}");
     }
 }

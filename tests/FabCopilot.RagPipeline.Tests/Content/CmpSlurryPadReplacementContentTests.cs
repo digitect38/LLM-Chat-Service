@@ -242,7 +242,7 @@ public class CmpSlurryPadReplacementContentTests
 
     [Fact]
     public void Chunk_Contains_RingThickness_1_5mm()
-        => AnyChunkContains("1.5 mm").Should().BeTrue();
+        => AnyChunkContains("1.5mm").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_Uneven_Wear()

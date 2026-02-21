@@ -66,4 +66,25 @@ public sealed class CitationInfo
 
     [JsonPropertyName("revision")]
     public string? Revision { get; set; }
+
+    [JsonPropertyName("chapter")]
+    public string? Chapter { get; set; }
+
+    [JsonPropertyName("lineRange")]
+    public LineRangeInfo? LineRange { get; set; }
+
+    [JsonPropertyName("displayRef")]
+    public string? DisplayRef { get; set; }
+}
+
+/// <summary>
+/// Line range for precision citation tracking (v3.3).
+/// </summary>
+public sealed class LineRangeInfo
+{
+    [JsonPropertyName("from")]
+    public int From { get; set; }
+
+    [JsonPropertyName("to")]
+    public int To { get; set; }
 }

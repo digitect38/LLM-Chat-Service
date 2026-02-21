@@ -67,7 +67,7 @@ public class CmpProcessManualContentTests
 
     [Fact]
     public void Chunk_Contains_MRR_Formula_Kp()
-        => AnyChunkContains("K_p").Should().BeTrue();
+        => AnyChunkContains("Kp").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_PrestonCoefficient()

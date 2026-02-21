@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Shared\FabCopilot.Contracts\FabCopilot.Contracts.csproj" />
+    <ProjectReference Include="..\..\Shared\FabCopilot.Observability\FabCopilot.Observability.csproj" />
   </ItemGroup>
 
 </Project>

@@ -251,14 +251,28 @@ public sealed class LlmWorker : BackgroundService
                 {
                     var sourceName = ExtractSourceName(r);
                     var isPdf = sourceName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+                    var resolvedDocId = TryGetMetadataString(r.Metadata, "document_id", out var docId) ? docId : r.DocumentId;
+                    var chapter = TryGetMetadataString(r.Metadata, "chapter", out var ch) ? ch : null;
+                    var section = TryGetMetadataString(r.Metadata, "section", out var sec) ? sec : null;
+                    var lineStart = TryGetMetadataInt(r.Metadata, "line_start");
+                    var lineEnd = TryGetMetadataInt(r.Metadata, "line_end");
+
+                    var lineRange = lineStart.HasValue && lineEnd.HasValue
+                        ? new LineRangeInfo { From = lineStart.Value, To = lineEnd.Value }
+                        : null;
+
+                    var displayRef = BuildDisplayRef(resolvedDocId, chapter, section, lineRange,
+                        TryGetMetadataInt(r.Metadata, "page_number"));
+
                     return new CitationInfo
                     {
                         CitationId = $"cite-{idx + 1}",
-                        DocId = TryGetMetadataString(r.Metadata, "document_id", out var docId) ? docId : r.DocumentId,
+                        DocId = resolvedDocId,
                         FileName = sourceName,
                         ChunkId = r.DocumentId,
                         ChunkText = r.ChunkText,
-                        Section = TryGetMetadataString(r.Metadata, "section", out var sec) ? sec : null,
+                        Chapter = chapter,
+                        Section = section,
                         Page = TryGetMetadataInt(r.Metadata, "page_number"),
                         CharOffsetStart = TryGetMetadataInt(r.Metadata, "char_offset_start"),
                         CharOffsetEnd = TryGetMetadataInt(r.Metadata, "char_offset_end"),
@@ -266,7 +280,9 @@ public sealed class LlmWorker : BackgroundService
                         ParentContext = TryGetMetadataString(r.Metadata, "parent_context", out var pc) ? pc : null,
                         Score = r.Score,
                         HighlightType = TryGetMetadataString(r.Metadata, "highlight_type", out var ht) ? ht : "text",
-                        Revision = TryGetMetadataString(r.Metadata, "revision", out var rev) ? rev : null
+                        Revision = TryGetMetadataString(r.Metadata, "revision", out var rev) ? rev : null,
+                        LineRange = lineRange,
+                        DisplayRef = displayRef
                     };
                 })
                 .ToList();
@@ -365,6 +381,12 @@ public sealed class LlmWorker : BackgroundService
         return messages;
     }
 
+    // Citation format constants (avoid interpolation issues in raw strings)
+    private const string CitationFormatExample = "[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]";
+    private const string CitationFormatSample = "[MNL-2025-001-Ch3-S3.2.1-{Line:142-158}]";
+    private const string CitationFormatFallback = "[DOC_ID-Ch-S-{Page:XX}]";
+    private const string CitationPrecisionPrompt = "[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]";
+
     internal static string BuildSystemPrompt(
         string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults, bool isConfident = true)
     {
@@ -404,10 +426,13 @@ public sealed class LlmWorker : BackgroundService
             Note: 간단한 질문에는 '요약'과 '참조'만 사용해도 됩니다.
 
             [CITATION FORMAT - MANDATORY]
-            - 참조 문서의 페이지를 반드시 [Page XX] 형식으로 인용하세요.
-            - 예: "패드 교체 주기는 300시간입니다 [Page 12]"
-            - 여러 페이지 참조: [Page 12, 15]
-            - 모든 답변에서 근거가 되는 페이지를 반드시 명시하세요.
+            - 모든 인용에 정밀 출처를 반드시 포함하세요.
+            - 형식: {CitationFormatExample}
+            - 예: {CitationFormatSample}
+            - DOC_ID: 문서 식별자, Chapter: 장(Ch), Section: 절, Line: 참조 행 범위
+            - 각 문서의 DOC_ID와 Chapter/Section 정보는 아래 참조 문서에 명시되어 있습니다.
+            - 문서에 행 번호가 명시되지 않은 경우 페이지 번호를 사용: {CitationFormatFallback}
+            - 모든 답변에서 근거가 되는 출처를 반드시 명시하세요.
             """;
 
         if (context is not null)
@@ -473,10 +498,10 @@ public sealed class LlmWorker : BackgroundService
             [REFERENCE DOCUMENTS - MANDATORY USE]
             1. ALWAYS use the following reference documents as your PRIMARY source of information.
             2. Base your answer on the documents FIRST, before using general knowledge.
-            3. Cite the source document name in your answer: "📄 [파일명]에 따르면..." (e.g. "📄 cmp-troubleshooting.md에 따르면...")
+            3. Cite using precision format: {CitationPrecisionPrompt} (각 문서 메타데이터 참조)
             4. If NONE of the documents are relevant to the question, explicitly state: "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."
             5. NEVER contradict information in the reference documents.
-            6. At the end of your answer, list all referenced sources under "---\n📚 **참고 문서:**" section.
+            6. At the end of your answer, list all referenced sources under "---\n📚 **참고 문서:**" section with precision citation format.
 
             """;
 
@@ -484,8 +509,15 @@ public sealed class LlmWorker : BackgroundService
             {
                 var result = ragResults[i];
                 var sourceName = ExtractSourceName(result);
+                var docChapter = TryGetMetadataString(result.Metadata, "chapter", out var rch) ? rch : "-";
+                var docSection = TryGetMetadataString(result.Metadata, "section", out var rsc) ? rsc : "-";
+                var docLineStart = TryGetMetadataInt(result.Metadata, "line_start");
+                var docLineEnd = TryGetMetadataInt(result.Metadata, "line_end");
+                var lineInfo = docLineStart.HasValue && docLineEnd.HasValue
+                    ? $"lines: {docLineStart}-{docLineEnd}"
+                    : $"page: {TryGetMetadataInt(result.Metadata, "page_number")?.ToString() ?? "-"}";
                 prompt += $"""
-                --- Document {i + 1}: {sourceName} (score: {result.Score:F3}) ---
+                --- Document {i + 1}: {sourceName} (score: {result.Score:F3}, chapter: {docChapter}, section: {docSection}, {lineInfo}) ---
                 {result.ChunkText}
 
                 """;
@@ -572,26 +604,36 @@ public sealed class LlmWorker : BackgroundService
         if (ragResults is not { Count: > 0 })
             return string.Empty;
 
-        var sources = ragResults
-            .Select(r => ExtractSourceName(r))
-            .Where(name => name != "unknown")
-            .Distinct()
-            .ToList();
-
-        if (sources.Count == 0)
-            return string.Empty;
-
+        var cited = new HashSet<string>();
         var sb = new StringBuilder();
         sb.AppendLine();
         sb.AppendLine();
         sb.AppendLine("---");
         sb.AppendLine("📚 **참고 문서:**");
-        foreach (var source in sources)
+
+        foreach (var r in ragResults)
         {
-            sb.AppendLine($"- 📄 {source} (score: {ragResults.First(r => ExtractSourceName(r) == source).Score:F3})");
+            var sourceName = ExtractSourceName(r);
+            if (sourceName == "unknown" || !cited.Add(sourceName))
+                continue;
+
+            var docId = TryGetMetadataString(r.Metadata, "document_id", out var did) ? did : sourceName;
+            var chapter = TryGetMetadataString(r.Metadata, "chapter", out var ch) ? ch : null;
+            var section = TryGetMetadataString(r.Metadata, "section", out var sec) ? sec : null;
+            var lineStart = TryGetMetadataInt(r.Metadata, "line_start");
+            var lineEnd = TryGetMetadataInt(r.Metadata, "line_end");
+
+            var lineRange = lineStart.HasValue && lineEnd.HasValue
+                ? new LineRangeInfo { From = lineStart.Value, To = lineEnd.Value }
+                : null;
+
+            var displayRef = BuildDisplayRef(docId, chapter, section, lineRange,
+                TryGetMetadataInt(r.Metadata, "page_number"));
+
+            sb.AppendLine($"- 📄 [{displayRef}] (score: {r.Score:F3})");
         }
 
-        return sb.ToString();
+        return cited.Count == 0 ? string.Empty : sb.ToString();
     }
 
     private static string ExtractSourceName(RetrievalResult result)
@@ -681,6 +723,29 @@ public sealed class LlmWorker : BackgroundService
         }
 
         return result.ToString();
+    }
+
+    /// <summary>
+    /// Builds a v3.3 precision display reference string.
+    /// Format: "DOC_ID-Chapter-Section-{Line:From-To}" or fallback "DOC_ID-{Page:XX}".
+    /// </summary>
+    internal static string BuildDisplayRef(string docId, string? chapter, string? section,
+        LineRangeInfo? lineRange, int? page)
+    {
+        var parts = new List<string> { docId };
+
+        if (!string.IsNullOrEmpty(chapter))
+            parts.Add(chapter);
+
+        if (!string.IsNullOrEmpty(section))
+            parts.Add($"S{section}");
+
+        if (lineRange is not null)
+            parts.Add($"{{Line:{lineRange.From}-{lineRange.To}}}");
+        else if (page.HasValue)
+            parts.Add($"{{Page:{page.Value}}}");
+
+        return string.Join("-", parts);
     }
 
     private static string SanitizeToken(string token)

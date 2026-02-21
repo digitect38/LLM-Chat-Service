@@ -78,6 +78,8 @@ public sealed class DocumentIngestor
 
                 var vector = await _llmClient.GetEmbeddingAsync(chunkText, ct);
 
+                var (lineStart, lineEnd) = ComputeLineRange(pageText, charStart, charEnd);
+
                 var payload = new Dictionary<string, object>
                 {
                     ["text"] = chunkText,
@@ -87,6 +89,8 @@ public sealed class DocumentIngestor
                     ["page_number"] = pageNumber,
                     ["char_offset_start"] = charStart,
                     ["char_offset_end"] = charEnd,
+                    ["line_start"] = lineStart,
+                    ["line_end"] = lineEnd,
                     ["doc_type"] = InferDocType(documentId),
                     ["language"] = DetectLanguage(chunkText),
                     ["highlight_type"] = InferHighlightType(chunkText)
@@ -161,6 +165,15 @@ public sealed class DocumentIngestor
                 ["language"] = DetectLanguage(chunk),
                 ["highlight_type"] = InferHighlightType(chunk)
             };
+
+            // v3.3: Compute line range from chunk position in full text
+            var charStart = text.IndexOf(chunk, StringComparison.Ordinal);
+            if (charStart >= 0)
+            {
+                var (ls, le) = ComputeLineRange(text, charStart, charStart + chunk.Length);
+                payload["line_start"] = ls;
+                payload["line_end"] = le;
+            }
 
             // Extract section info from chunk header prefix (e.g. "[## Header > ### Sub]")
             var (chapter, section) = ExtractSectionFromChunk(chunk);
@@ -588,5 +601,27 @@ public sealed class DocumentIngestor
 
         var cleaned = string.Join(" > ", parts.Select(CleanHeaderText));
         return string.IsNullOrWhiteSpace(cleaned) ? null : cleaned;
+    }
+
+    /// <summary>
+    /// Computes 1-based line numbers for a character range within the full text (v3.3).
+    /// </summary>
+    internal static (int LineStart, int LineEnd) ComputeLineRange(string fullText, int charStart, int charEnd)
+    {
+        var lineStart = 1;
+        var lineEnd = 1;
+        var safeEnd = Math.Min(charEnd, fullText.Length);
+
+        for (var i = 0; i < safeEnd; i++)
+        {
+            if (fullText[i] == '\n')
+            {
+                if (i < charStart)
+                    lineStart++;
+                lineEnd++;
+            }
+        }
+
+        return (lineStart, lineEnd);
     }
 }

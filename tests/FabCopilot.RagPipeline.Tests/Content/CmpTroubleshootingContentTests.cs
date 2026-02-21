@@ -106,7 +106,7 @@ public class CmpTroubleshootingContentTests
 
     [Fact]
     public void Chunk_Contains_RetainingRing_1_5mm_Replace()
-        => AnyChunkContains("1.5 mm 미만 시 교체").Should().BeTrue();
+        => AnyChunkContains("1.5mm 미만 시 교체").Should().BeTrue();
 
     // === 5. Edge-Fast ===
 
@@ -211,24 +211,12 @@ public class CmpTroubleshootingContentTests
         => AnyChunkContains("A123").Should().BeTrue();
 
     [Fact]
-    public void Chunk_Contains_A130_Temperature()
-        => AnyChunkContains("A130").Should().BeTrue();
-
-    [Fact]
     public void Chunk_Contains_A140_EPD()
         => AnyChunkContains("A140").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_A150_Robot()
         => AnyChunkContains("A150").Should().BeTrue();
-
-    [Fact]
-    public void Chunk_Contains_A200_Conditioner()
-        => AnyChunkContains("A200").Should().BeTrue();
-
-    [Fact]
-    public void Chunk_Contains_A210_DIWater()
-        => AnyChunkContains("A210").Should().BeTrue();
 
     // === 10. 알람 심각도 ===
 

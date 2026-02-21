@@ -48,12 +48,27 @@
                     <div class="citation-item">
                         <div class="citation-file">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                            <span>@citation.FileName</span>
+                            @if (!string.IsNullOrEmpty(citation.DisplayRef))
+                            {
+                                <span title="@citation.FileName">@citation.DisplayRef</span>
+                            }
+                            else
+                            {
+                                <span>@citation.FileName</span>
+                            }
                             <span class="citation-score">@citation.Score.ToString("F3")</span>
                         </div>
+                        @if (!string.IsNullOrEmpty(citation.Chapter))
+                        {
+                            <div class="citation-chapter">@citation.Chapter</div>
+                        }
                         @if (citation.Page.HasValue)
                         {
                             <div class="citation-page">페이지 @citation.Page</div>
+                        }
+                        @if (citation.LineRange is not null)
+                        {
+                            <div class="citation-lines">Lines @citation.LineRange.From-@citation.LineRange.To</div>
                         }
                         @if (!string.IsNullOrEmpty(citation.ParentContext))
                         {
@@ -86,12 +101,18 @@
             @if (_viewingCitation is not null)
             {
                 <div class="pdf-doc-info-bar">
-                    <span class="pdf-doc-title">@(System.IO.Path.GetFileNameWithoutExtension(_viewingCitation.FileName))</span>
+                    <span class="pdf-doc-title" title="@_viewingCitation.FileName">
+                        @(!string.IsNullOrEmpty(_viewingCitation.DisplayRef) ? _viewingCitation.DisplayRef : System.IO.Path.GetFileNameWithoutExtension(_viewingCitation.FileName))
+                    </span>
                     <span class="pdf-doc-page">Page @_currentPage / @_totalPages</span>
                     <span class="pdf-doc-score">@((_viewingCitation.Score * 100).ToString("F0"))%</span>
                     @if (!string.IsNullOrEmpty(_viewingCitation.ParentContext))
                     {
                         <span class="pdf-doc-section" title="@_viewingCitation.ParentContext">@_viewingCitation.ParentContext</span>
+                    }
+                    @if (_viewingCitation.LineRange is not null)
+                    {
+                        <span class="pdf-doc-lines">Lines @_viewingCitation.LineRange.From-@_viewingCitation.LineRange.To</span>
                     }
                 </div>
             }

@@ -138,7 +138,7 @@ public class CmpMaintenanceGuideContentTests
 
     [Fact]
     public void Chunk_Contains_PadReplaceSOP()
-        => AnyChunkContains("SOP-CMP-PAD-001").Should().BeTrue();
+        => AnyChunkContains("SOP 참조").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_PressureRegulator_0_1psi()
@@ -154,7 +154,7 @@ public class CmpMaintenanceGuideContentTests
 
     [Fact]
     public void Chunk_Contains_PadThickness_1_0mm()
-        => AnyChunkContains("1.0 mm").Should().BeTrue();
+        => AnyChunkContains("1.0mm").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_MRR_Degradation_15Percent()
@@ -220,7 +220,7 @@ public class CmpMaintenanceGuideContentTests
 
     [Fact]
     public void Chunk_Contains_RetainingRingThreshold_1_5mm()
-        => AnyChunkContains("1.5 mm").Should().BeTrue();
+        => AnyChunkContains("1.5mm").Should().BeTrue();
 
     [Fact]
     public void Chunk_Contains_ConditionerDisk_6Months()
