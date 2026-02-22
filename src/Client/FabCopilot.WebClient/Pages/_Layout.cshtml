@@ -85,7 +85,13 @@
                 var blockMath = [];
                 var inlineMath = [];
 
-                // 1. Extract block math: $$...$$ and \[...\]
+                // 1a. Extract \begin{env}...\end{env} block environments
+                text = text.replace(/\\begin\{(equation|align|aligned|gather|gathered|multline|cases|bmatrix|pmatrix|vmatrix|matrix|array)\*?\}([\s\S]*?)\\end\{\1\*?\}/g, function (m, env, content) {
+                    blockMath.push(m);
+                    return '\n%%BLOCKMATH' + (blockMath.length - 1) + '%%\n';
+                });
+
+                // 1b. Extract block math: $$...$$ and \[...\]
                 text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (m, f) {
                     blockMath.push(f.trim());
                     return '\n%%BLOCKMATH' + (blockMath.length - 1) + '%%\n';
@@ -95,12 +101,12 @@
                     return '\n%%BLOCKMATH' + (blockMath.length - 1) + '%%\n';
                 });
 
-                // 2. Extract inline math: $...$ and \(...\)
-                text = text.replace(/\$([^\$\n]+?)\$/g, function (m, f) {
+                // 2. Extract inline math: \(...\) first, then $...$
+                text = text.replace(/\\\(([\s\S]*?)\\\)/g, function (m, f) {
                     inlineMath.push(f.trim());
                     return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
                 });
-                text = text.replace(/\\\((.*?)\\\)/g, function (m, f) {
+                text = text.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, function (m, f) {
                     inlineMath.push(f.trim());
                     return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
                 });

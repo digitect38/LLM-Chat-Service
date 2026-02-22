@@ -360,6 +360,10 @@ html, body {
     white-space: pre-wrap;
 }
 
+.streaming-text {
+    white-space: pre-wrap;
+}
+
 /* ===== Streaming Cursor ===== */
 .streaming-cursor {
     display: inline-block;

@@ -131,13 +131,14 @@
                                 {
                                     <div class="msg-content user-text">@msg.Text</div>
                                 }
+                                else if (msg.IsStreaming)
+                                {
+                                    <div class="msg-content streaming-text">@msg.Text</div>
+                                    <span class="streaming-cursor"></span>
+                                }
                                 else
                                 {
                                     <div class="msg-content rendered-markdown">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
-                                    @if (msg.IsStreaming)
-                                    {
-                                        <span class="streaming-cursor"></span>
-                                    }
                                 }
                                 @if (!string.IsNullOrEmpty(msg.Error))
                                 {
@@ -906,16 +907,14 @@
     {
         if (_renderPending) return;
         _renderPending = true;
-        _renderTimer ??= new Timer(async _ =>
+        _renderTimer ??= new Timer(_ =>
         {
-            await InvokeAsync(async () =>
+            InvokeAsync(async () =>
             {
                 _renderPending = false;
                 var msg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
                 if (msg is not null)
                 {
-                    if (_renderCounter % 20 == 0)
-                        msg.RenderedHtml = await RenderMarkdownAsync(msg.Text);
                     StateHasChanged();
                     await ScrollToBottom();
                 }
