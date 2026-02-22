@@ -1,0 +1,131 @@
+@page "/settings"
+@using Microsoft.Extensions.Options
+@using FabCopilot.WebClient.Configuration
+@using FabCopilot.WebClient.Services
+@inject EmbeddingConfigService EmbeddingConfigService
+@inject IOptions<ModelOptions> ModelOptionsAccessor
+@inject NavigationManager Navigation
+
+<div class="settings-page">
+    <div class="settings-card">
+        <div class="settings-header">
+            <h1 class="settings-title">서버 설정</h1>
+            <button class="btn-secondary-sm" @onclick='() => Navigation.NavigateTo("/")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                채팅으로
+            </button>
+        </div>
+
+        <div class="settings-body">
+            <!-- LLM Model -->
+            <div class="config-section">
+                <label class="config-label">LLM 모델</label>
+                <select class="config-select" @bind="_selectedModelId">
+                    @foreach (var m in _availableModels)
+                    {
+                        <option value="@m.Id">@m.DisplayName</option>
+                    }
+                </select>
+            </div>
+
+            <!-- Search Mode -->
+            <div class="config-section">
+                <label class="config-label">검색 모드</label>
+                <div class="search-mode-toggle">
+                    <button class="toggle-btn @(_searchMode == "hybrid" ? "toggle-active" : "")"
+                            @onclick='() => _searchMode = "hybrid"'>Hybrid</button>
+                    <button class="toggle-btn @(_searchMode == "strict" ? "toggle-active" : "")"
+                            @onclick='() => _searchMode = "strict"'>Strict</button>
+                </div>
+                <span class="config-hint">
+                    @(_searchMode == "strict" ? "Strict Grounded: 높은 신뢰도만 응답" : "Hybrid: 유연한 검색")
+                </span>
+            </div>
+
+            <!-- Embedding Provider -->
+            <div class="config-section">
+                <label class="config-label">Embedding Provider</label>
+                <select class="config-select" @bind="_embeddingProvider">
+                    <option value="Ollama">Ollama</option>
+                    <option value="Tei">HuggingFace TEI</option>
+                </select>
+                @if (_embeddingProviderChanged)
+                {
+                    <div class="config-warning">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        Provider 변경 시 서비스 재시작이 필요합니다
+                    </div>
+                }
+            </div>
+
+            <!-- Response Policy (read-only) -->
+            <div class="config-section">
+                <label class="config-label">Response Policy</label>
+                <div class="policy-grid">
+                    <div class="policy-item">
+                        <span class="policy-name">Gate A (Relevance Threshold)</span>
+                        <span class="policy-value">0.55</span>
+                    </div>
+                    <div class="policy-item">
+                        <span class="policy-name">Gate B (Faithfulness)</span>
+                        <span class="policy-badge badge-on">활성</span>
+                    </div>
+                    <div class="policy-item">
+                        <span class="policy-name">Gate C (Safety)</span>
+                        <span class="policy-badge badge-on">활성</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-footer">
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="settings-status @(_statusIsError ? "status-error" : "status-success")">@_statusMessage</span>
+            }
+            <button class="btn-primary-sm" @onclick="ApplySettings">적용</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _selectedModelId = string.Empty;
+    private string _searchMode = "hybrid";
+    private string _embeddingProvider = "Ollama";
+    private string _embeddingProviderOriginal = "Ollama";
+    private bool _embeddingProviderChanged => _embeddingProvider != _embeddingProviderOriginal;
+    private List<ModelEntry> _availableModels = new();
+
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    protected override void OnInitialized()
+    {
+        var opts = ModelOptionsAccessor.Value;
+        _availableModels = opts.Available;
+        _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
+
+        _embeddingProvider = EmbeddingConfigService.GetCurrentProvider();
+        _embeddingProviderOriginal = _embeddingProvider;
+    }
+
+    private void ApplySettings()
+    {
+        try
+        {
+            if (_embeddingProviderChanged)
+            {
+                EmbeddingConfigService.SetProvider(_embeddingProvider);
+                _embeddingProviderOriginal = _embeddingProvider;
+            }
+
+            _statusMessage = "설정이 적용되었습니다.";
+            _statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"설정 적용 실패: {ex.Message}";
+            _statusIsError = true;
+        }
+    }
+}

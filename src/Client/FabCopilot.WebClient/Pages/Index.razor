@@ -8,7 +8,7 @@
 @inject IJSRuntime JS
 @inject IOptions<ModelOptions> ModelOptionsAccessor
 @inject IOptions<EquipmentOptions> EquipmentOptionsAccessor
-@inject EmbeddingConfigService EmbeddingConfigService
+@inject NavigationManager Navigation
 @implements IAsyncDisposable
 
 <div class="chat-app">
@@ -58,6 +58,10 @@
                 </select>
                 <span class="status-dot @(ChatService.IsConnected ? "dot-on" : "dot-off")"></span>
             </div>
+            <button class="sidebar-settings-btn" @onclick='() => Navigation.NavigateTo("/settings")' title="서버 설정">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                <span>설정</span>
+            </button>
         </div>
     </aside>
 
@@ -75,9 +79,6 @@
                 </button>
             }
             <div class="topbar-spacer"></div>
-            <button class="config-btn" @onclick="ToggleConfig" title="설정">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-            </button>
         </div>
 
         <!-- Messages -->
@@ -220,63 +221,6 @@
             </div>
         }
 
-        @if (_showConfig)
-        {
-            <div class="config-overlay" @onclick="ToggleConfig"></div>
-            <div class="config-modal">
-                <div class="config-modal-header">
-                    <span class="config-modal-title">설정</span>
-                    <button class="icon-btn" @onclick="ToggleConfig" title="닫기">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                </div>
-                <div class="config-modal-body">
-                    <div class="config-section">
-                        <label class="config-label">LLM 모델</label>
-                        <select class="config-select"
-                                @bind="_selectedModelId"
-                                disabled="@_isSending">
-                            @foreach (var m in _availableModels)
-                            {
-                                <option value="@m.Id">@m.DisplayName</option>
-                            }
-                        </select>
-                    </div>
-                    <div class="config-section">
-                        <label class="config-label">검색 모드</label>
-                        <div class="search-mode-toggle" title="@(_searchMode == "strict" ? "Strict Grounded: 높은 신뢰도만 응답" : "Hybrid: 유연한 검색")">
-                            <button class="toggle-btn @(_searchMode == "hybrid" ? "toggle-active" : "")"
-                                    @onclick='() => _searchMode = "hybrid"'
-                                    disabled="@_isSending">Hybrid</button>
-                            <button class="toggle-btn @(_searchMode == "strict" ? "toggle-active" : "")"
-                                    @onclick='() => _searchMode = "strict"'
-                                    disabled="@_isSending">Strict</button>
-                        </div>
-                    </div>
-                    <div class="config-section">
-                        <label class="config-label">Embedding Provider</label>
-                        <select class="config-select"
-                                @bind="_embeddingProvider"
-                                disabled="@_isSending">
-                            <option value="Ollama">Ollama</option>
-                            <option value="Tei">HuggingFace TEI</option>
-                        </select>
-                    </div>
-                    @if (_embeddingProviderChanged)
-                    {
-                        <div class="config-warning">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                            Provider 변경 시 서비스 재시작이 필요합니다
-                        </div>
-                    }
-                </div>
-                <div class="config-modal-footer">
-                    <button class="btn-primary-sm" @onclick="ApplyConfig">적용</button>
-                    <button class="btn-secondary-sm" @onclick="CloseConfig">닫기</button>
-                </div>
-            </div>
-        }
-
         <!-- Input Area -->
         <div class="chat-input-wrapper">
             <div class="chat-input-box">
@@ -358,14 +302,10 @@
 
     // UI state
     private bool _sidebarOpen = true;
-    private bool _showConfig;
     private bool _citationPaneOpen;
     private List<CitationInfo>? _activeCitations;
     private string _selectedModelId = string.Empty;
     private string _searchMode = "hybrid";
-    private string _embeddingProvider = "Ollama";
-    private string _embeddingProviderOriginal = "Ollama";
-    private bool _embeddingProviderChanged => _embeddingProvider != _embeddingProviderOriginal;
     private List<ModelEntry> _availableModels = new();
     private List<EquipmentEntry> _availableEquipment = new();
     private readonly List<ChatMessageViewModel> _messages = new();
@@ -413,33 +353,12 @@
         if (_availableEquipment.Count > 0)
             _equipmentId = !string.IsNullOrEmpty(eqOpts.Default) ? eqOpts.Default : _availableEquipment[0].Id;
 
-        _embeddingProvider = EmbeddingConfigService.GetCurrentProvider();
-        _embeddingProviderOriginal = _embeddingProvider;
-
         await LoadConversationHistoryAsync();
     }
 
     // ─── Sidebar ────────────────────────────────────────────────────────
 
     private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
-    private void ToggleConfig() => _showConfig = !_showConfig;
-
-    private void ApplyConfig()
-    {
-        if (_embeddingProviderChanged)
-        {
-            EmbeddingConfigService.SetProvider(_embeddingProvider);
-            _embeddingProviderOriginal = _embeddingProvider;
-        }
-        _showConfig = false;
-    }
-
-    private void CloseConfig()
-    {
-        // Revert uncommitted changes
-        _embeddingProvider = _embeddingProviderOriginal;
-        _showConfig = false;
-    }
 
     private async Task StartNewChat()
     {
