@@ -603,9 +603,14 @@ html, body {
 
 /* ===== KaTeX Math ===== */
 .katex-block {
+    display: block;
     margin: 16px 0;
     text-align: center;
     overflow-x: auto;
+}
+
+.katex-inline {
+    display: inline;
 }
 
 .katex-error {

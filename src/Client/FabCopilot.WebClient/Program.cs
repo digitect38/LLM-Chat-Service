@@ -4,7 +4,9 @@ using FabCopilot.WebClient.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
+builder.Services.AddServerSideBlazor()
+    .AddHubOptions(o => o.MaximumReceiveMessageSize = 512 * 1024)
+    .AddCircuitOptions(o => o.DetailedErrors = builder.Environment.IsDevelopment());
 builder.Services.Configure<ModelOptions>(builder.Configuration.GetSection(ModelOptions.SectionName));
 builder.Services.Configure<EquipmentOptions>(builder.Configuration.GetSection(EquipmentOptions.SectionName));
 builder.Services.AddScoped<ChatService>();
