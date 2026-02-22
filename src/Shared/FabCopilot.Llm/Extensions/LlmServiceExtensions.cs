@@ -9,24 +9,35 @@ public static class LlmServiceExtensions
 {
     public static IServiceCollection AddFabLlm(this IServiceCollection services, IConfiguration configuration)
     {
-        // Chat (always Ollama)
+        // Chat provider options
         services.Configure<OllamaOptions>(
             configuration.GetSection(OllamaOptions.SectionName));
+        services.Configure<TgiOptions>(
+            configuration.GetSection(TgiOptions.SectionName));
+        services.Configure<LlmProviderOptions>(
+            configuration.GetSection(LlmProviderOptions.SectionName));
 
-        // Embedding provider selection
+        // Embedding provider options
         services.Configure<EmbeddingProviderOptions>(
             configuration.GetSection(EmbeddingProviderOptions.SectionName));
         services.Configure<TeiOptions>(
             configuration.GetSection(TeiOptions.SectionName));
 
-        var provider = configuration.GetSection("Embedding")?.GetValue<string>("Provider") ?? "Ollama";
+        // Embedding provider selection
+        var embeddingProvider = configuration.GetSection("Embedding")?.GetValue<string>("Provider") ?? "Ollama";
 
-        if (provider.Equals("Tei", StringComparison.OrdinalIgnoreCase))
+        if (embeddingProvider.Equals("Tei", StringComparison.OrdinalIgnoreCase))
             services.AddSingleton<IEmbeddingClient, TeiEmbeddingClient>();
         else
             services.AddSingleton<IEmbeddingClient, OllamaEmbeddingClient>();
 
-        services.AddSingleton<ILlmClient, OllamaLlmClient>();
+        // Chat provider selection
+        var llmProvider = configuration.GetSection("Llm")?.GetValue<string>("Provider") ?? "Ollama";
+
+        if (llmProvider.Equals("Tgi", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<ILlmClient, TgiLlmClient>();
+        else
+            services.AddSingleton<ILlmClient, OllamaLlmClient>();
 
         return services;
     }

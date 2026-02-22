@@ -42,6 +42,22 @@
                 </span>
             </div>
 
+            <!-- Chat Provider -->
+            <div class="config-section">
+                <label class="config-label">Chat Provider</label>
+                <select class="config-select" @bind="_llmProvider">
+                    <option value="Ollama">Ollama</option>
+                    <option value="Tgi">HuggingFace TGI</option>
+                </select>
+                @if (_llmProviderChanged)
+                {
+                    <div class="config-warning">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        Provider 변경 시 서비스 재시작이 필요합니다
+                    </div>
+                }
+            </div>
+
             <!-- Embedding Provider -->
             <div class="config-section">
                 <label class="config-label">Embedding Provider</label>
@@ -91,6 +107,9 @@
 @code {
     private string _selectedModelId = string.Empty;
     private string _searchMode = "hybrid";
+    private string _llmProvider = "Ollama";
+    private string _llmProviderOriginal = "Ollama";
+    private bool _llmProviderChanged => _llmProvider != _llmProviderOriginal;
     private string _embeddingProvider = "Ollama";
     private string _embeddingProviderOriginal = "Ollama";
     private bool _embeddingProviderChanged => _embeddingProvider != _embeddingProviderOriginal;
@@ -105,6 +124,9 @@
         _availableModels = opts.Available;
         _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
 
+        _llmProvider = EmbeddingConfigService.GetCurrentLlmProvider();
+        _llmProviderOriginal = _llmProvider;
+
         _embeddingProvider = EmbeddingConfigService.GetCurrentProvider();
         _embeddingProviderOriginal = _embeddingProvider;
     }
@@ -113,6 +135,12 @@
     {
         try
         {
+            if (_llmProviderChanged)
+            {
+                EmbeddingConfigService.SetLlmProvider(_llmProvider);
+                _llmProviderOriginal = _llmProvider;
+            }
+
             if (_embeddingProviderChanged)
             {
                 EmbeddingConfigService.SetProvider(_embeddingProvider);
