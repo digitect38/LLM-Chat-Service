@@ -13,7 +13,12 @@ namespace FabCopilot.ChatGateway.Services;
 
 public sealed class ConnectionManager : IConnectionManager
 {
-    private readonly ConcurrentDictionary<string, WebSocket> _connections = new();
+    // equipmentId -> (connectionId -> WebSocket): multiple clients per equipment
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WebSocket>> _equipmentConnections = new();
+
+    // conversationId -> connectionId: route responses to the connection that initiated the request
+    private readonly ConcurrentDictionary<string, string> _conversationToConnection = new();
+
     private readonly IMessageBus _messageBus;
     private readonly IConversationStore _conversationStore;
     private readonly IAuditTrail _auditTrail;
@@ -37,14 +42,20 @@ public sealed class ConnectionManager : IConnectionManager
         _logger = logger;
     }
 
-    public int ActiveConnectionCount => _connections.Count;
+    public int ActiveConnectionCount => _equipmentConnections.Values.Sum(d => d.Count);
 
     public async Task HandleConnectionAsync(string equipmentId, WebSocket ws, CancellationToken ct)
     {
-        // Register the connection (replaces any existing connection for this equipmentId)
-        var previousSocket = _connections.AddOrUpdate(equipmentId, ws, (_, __) => ws);
-        _logger.LogInformation("WebSocket connected for equipment {EquipmentId}. Active connections: {Count}",
-            equipmentId, _connections.Count);
+        var connectionId = Guid.NewGuid().ToString("N");
+
+        // Register the connection under this equipment
+        var connectionsForEquipment = _equipmentConnections.GetOrAdd(equipmentId, _ => new ConcurrentDictionary<string, WebSocket>());
+        connectionsForEquipment[connectionId] = ws;
+
+        _logger.LogInformation(
+            "WebSocket connected for equipment {EquipmentId}, connectionId={ConnectionId}. " +
+            "Equipment connections: {EquipCount}, Total: {TotalCount}",
+            equipmentId, connectionId, connectionsForEquipment.Count, ActiveConnectionCount);
 
         var buffer = new byte[4096];
 
@@ -56,7 +67,8 @@ public sealed class ConnectionManager : IConnectionManager
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    _logger.LogInformation("WebSocket close requested by equipment {EquipmentId}", equipmentId);
+                    _logger.LogInformation("WebSocket close requested by equipment {EquipmentId}, connectionId={ConnectionId}",
+                        equipmentId, connectionId);
                     await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed by client", CancellationToken.None);
                     break;
                 }
@@ -77,23 +89,27 @@ public sealed class ConnectionManager : IConnectionManager
                         json = messageBuilder.ToString();
                     }
 
-                    await ProcessIncomingMessageAsync(equipmentId, json, ct);
+                    await ProcessIncomingMessageAsync(equipmentId, connectionId, json, ct);
                 }
             }
         }
         catch (WebSocketException ex)
         {
-            _logger.LogWarning(ex, "WebSocket error for equipment {EquipmentId}", equipmentId);
+            _logger.LogWarning(ex, "WebSocket error for equipment {EquipmentId}, connectionId={ConnectionId}",
+                equipmentId, connectionId);
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("WebSocket connection cancelled for equipment {EquipmentId}", equipmentId);
+            _logger.LogInformation("WebSocket connection cancelled for equipment {EquipmentId}, connectionId={ConnectionId}",
+                equipmentId, connectionId);
         }
         finally
         {
-            _connections.TryRemove(equipmentId, out _);
-            _logger.LogInformation("WebSocket disconnected for equipment {EquipmentId}. Active connections: {Count}",
-                equipmentId, _connections.Count);
+            RemoveConnection(equipmentId, connectionId);
+
+            _logger.LogInformation(
+                "WebSocket disconnected for equipment {EquipmentId}, connectionId={ConnectionId}. Total: {TotalCount}",
+                equipmentId, connectionId, ActiveConnectionCount);
 
             if (ws.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
@@ -113,18 +129,55 @@ public sealed class ConnectionManager : IConnectionManager
 
     public async Task SendToEquipmentAsync(string equipmentId, string conversationId, ChatStreamChunk chunk)
     {
-        if (!_connections.TryGetValue(equipmentId, out var ws))
+        if (!_equipmentConnections.TryGetValue(equipmentId, out var connectionsForEquipment) || connectionsForEquipment.IsEmpty)
         {
-            _logger.LogWarning("No active WebSocket for equipment {EquipmentId}, dropping chunk for conversation {ConversationId}",
+            _logger.LogWarning(
+                "No active WebSocket connections for equipment {EquipmentId}, dropping chunk for conversation {ConversationId}",
                 equipmentId, conversationId);
             return;
         }
 
+        // Targeted routing: conversationId -> connectionId -> specific WebSocket
+        if (!string.IsNullOrEmpty(conversationId) &&
+            _conversationToConnection.TryGetValue(conversationId, out var targetConnectionId) &&
+            connectionsForEquipment.TryGetValue(targetConnectionId, out var targetWs))
+        {
+            if (!await SendToSocketAsync(equipmentId, targetConnectionId, targetWs, chunk))
+            {
+                RemoveConnection(equipmentId, targetConnectionId);
+            }
+            return;
+        }
+
+        // Fallback: broadcast to all connections for this equipment
+        _logger.LogDebug(
+            "No targeted connection for conversation {ConversationId} on equipment {EquipmentId}, broadcasting to {Count} connections",
+            conversationId, equipmentId, connectionsForEquipment.Count);
+
+        var deadConnections = new List<string>();
+
+        foreach (var (connId, ws) in connectionsForEquipment)
+        {
+            if (!await SendToSocketAsync(equipmentId, connId, ws, chunk))
+            {
+                deadConnections.Add(connId);
+            }
+        }
+
+        foreach (var deadConnId in deadConnections)
+        {
+            RemoveConnection(equipmentId, deadConnId);
+        }
+    }
+
+    private async Task<bool> SendToSocketAsync(string equipmentId, string connectionId, WebSocket ws, ChatStreamChunk chunk)
+    {
         if (ws.State != WebSocketState.Open)
         {
-            _logger.LogWarning("WebSocket not open for equipment {EquipmentId}, removing stale connection", equipmentId);
-            _connections.TryRemove(equipmentId, out _);
-            return;
+            _logger.LogWarning(
+                "WebSocket not open for equipment {EquipmentId}, connectionId={ConnectionId}, removing stale connection",
+                equipmentId, connectionId);
+            return false;
         }
 
         try
@@ -136,15 +189,43 @@ public sealed class ConnectionManager : IConnectionManager
                 WebSocketMessageType.Text,
                 endOfMessage: true,
                 CancellationToken.None);
+            return true;
         }
         catch (WebSocketException ex)
         {
-            _logger.LogWarning(ex, "Failed to send chunk to equipment {EquipmentId}, removing connection", equipmentId);
-            _connections.TryRemove(equipmentId, out _);
+            _logger.LogWarning(ex,
+                "Failed to send chunk to equipment {EquipmentId}, connectionId={ConnectionId}",
+                equipmentId, connectionId);
+            return false;
         }
     }
 
-    private async Task ProcessIncomingMessageAsync(string equipmentId, string json, CancellationToken ct)
+    private void RemoveConnection(string equipmentId, string connectionId)
+    {
+        // Remove from equipment connections
+        if (_equipmentConnections.TryGetValue(equipmentId, out var connectionsForEquipment))
+        {
+            connectionsForEquipment.TryRemove(connectionId, out _);
+
+            if (connectionsForEquipment.IsEmpty)
+            {
+                _equipmentConnections.TryRemove(equipmentId, out _);
+            }
+        }
+
+        // Remove conversation mappings that point to this connectionId
+        var staleConversations = _conversationToConnection
+            .Where(kvp => kvp.Value == connectionId)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var convId in staleConversations)
+        {
+            _conversationToConnection.TryRemove(convId, out _);
+        }
+    }
+
+    private async Task ProcessIncomingMessageAsync(string equipmentId, string connectionId, string json, CancellationToken ct)
     {
         ChatRequest? chatRequest;
         try
@@ -172,10 +253,14 @@ public sealed class ConnectionManager : IConnectionManager
             chatRequest.ConversationId = Guid.NewGuid().ToString();
         }
 
+        // Map this conversation to the connection that initiated it
+        _conversationToConnection[chatRequest.ConversationId] = connectionId;
+
         _logger.LogInformation(
-            "Received chat request from equipment {EquipmentId}, conversation {ConversationId}: {MessagePreview}",
+            "Received chat request from equipment {EquipmentId}, conversation {ConversationId}, connectionId={ConnectionId}: {MessagePreview}",
             equipmentId,
             chatRequest.ConversationId,
+            connectionId,
             chatRequest.UserMessage.Length > 80
                 ? chatRequest.UserMessage[..80] + "..."
                 : chatRequest.UserMessage);
