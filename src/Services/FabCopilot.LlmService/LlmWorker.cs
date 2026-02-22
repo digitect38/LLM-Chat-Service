@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using FabCopilot.Contracts.Constants;
 using FabCopilot.Contracts.Enums;
 using FabCopilot.Contracts.Messages;
@@ -24,6 +25,7 @@ public sealed class LlmWorker : BackgroundService
     private readonly int _ragTopK;
     private readonly float _gateAThreshold;
     private readonly bool _gateBEnabled;
+    private readonly bool _gateCEnabled;
     private readonly ILogger<LlmWorker> _logger;
 
     public LlmWorker(
@@ -48,6 +50,7 @@ public sealed class LlmWorker : BackgroundService
         _ragTopK = configuration.GetValue<int?>("Rag:DefaultTopK") ?? 5;
         _gateAThreshold = configuration.GetValue<float?>("ResponsePolicy:GateAThreshold") ?? 0.55f;
         _gateBEnabled = configuration.GetValue<bool?>("ResponsePolicy:GateBEnabled") ?? true;
+        _gateCEnabled = configuration.GetValue<bool?>("ResponsePolicy:GateCEnabled") ?? true;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -126,11 +129,9 @@ public sealed class LlmWorker : BackgroundService
 
             // Gate A: Reject if RAG max score is too low (no confident context)
             // Strict mode raises the threshold significantly
-            var effectiveThreshold = string.Equals(request.SearchMode, "strict", StringComparison.OrdinalIgnoreCase)
-                ? Math.Max(_gateAThreshold, 0.75f)
-                : _gateAThreshold;
+            var effectiveThreshold = ComputeEffectiveThreshold(request.SearchMode, _gateAThreshold);
             var maxScore = ragResults.Count > 0 ? ragResults.Max(r => r.Score) : 0f;
-            var isConfident = ragResults.Count == 0 || maxScore >= effectiveThreshold;
+            var isConfident = EvaluateConfidence(ragResults, maxScore, effectiveThreshold);
 
             if (ragResults.Count > 0 && !isConfident)
             {
@@ -140,8 +141,9 @@ public sealed class LlmWorker : BackgroundService
                     maxScore, _gateAThreshold, request.ConversationId);
             }
 
-            // 3. Build the LLM prompt messages (with RAG context, Gate A awareness)
-            var llmMessages = BuildPromptMessages(request, conversation, ragResults, isConfident);
+            // 3. Build the LLM prompt messages (with RAG context, Gate A awareness, intent routing)
+            var queryIntent = ragResponse?.QueryIntent;
+            var llmMessages = BuildPromptMessages(request, conversation, ragResults, isConfident, queryIntent);
 
             // 4. Stream the response from the LLM
             FabMetrics.LlmRequestCount.Add(1);
@@ -215,12 +217,16 @@ public sealed class LlmWorker : BackgroundService
                     ct);
             }
 
-            // Gate B: Add disclaimer if citations are missing in the response
+            // Ghost Citation Prevention: filter out RAG results not reflected in response
+            var filteredRagResults = FilterGhostCitations(responseText, ragResults);
+
+            // Gate B: Add disclaimer if citations are missing or partially reflected
             if (_gateBEnabled && ragResults.Count > 0)
             {
                 var finalText = fullResponse.ToString();
                 var hasCitation = finalText.Contains("📄") || finalText.Contains("참고 문서") || finalText.Contains("참고문서");
-                if (!hasCitation)
+
+                if (!hasCitation || filteredRagResults.Count == 0)
                 {
                     var disclaimer = "\n\n> ⚠️ *이 답변은 문서 기반으로 확인되지 않았습니다. 정확한 정보는 관련 문서를 직접 확인하시기 바랍니다.*";
                     fullResponse.Append(disclaimer);
@@ -242,10 +248,61 @@ public sealed class LlmWorker : BackgroundService
                         "Gate B triggered: No citations found in response. ConversationId={ConversationId}",
                         request.ConversationId);
                 }
+                else if (filteredRagResults.Count < ragResults.Count * 0.5)
+                {
+                    var partialWarning = "\n\n> ⚠️ *일부 참고 문서만 답변에 반영되었습니다.*";
+                    fullResponse.Append(partialWarning);
+
+                    var warningChunk = new ChatStreamChunk
+                    {
+                        ConversationId = request.ConversationId,
+                        Token = partialWarning,
+                        IsComplete = false
+                    };
+
+                    await _messageBus.PublishAsync(
+                        streamSubject,
+                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", warningChunk, request.EquipmentId),
+                        ct);
+
+                    FabMetrics.LlmGateBTriggeredCount.Add(1);
+                    _logger.LogInformation(
+                        "Gate B triggered: Partial citations ({FilteredCount}/{TotalCount}). ConversationId={ConversationId}",
+                        filteredRagResults.Count, ragResults.Count, request.ConversationId);
+                }
             }
 
-            // 6. Publish final chunk with IsComplete = true and citations
-            var citations = ragResults
+            // Gate C: Response quality validation
+            if (_gateCEnabled)
+            {
+                var gateCResult = EvaluateGateC(responseText, ragResults);
+                if (!gateCResult.Passed)
+                {
+                    var warningText = "\n\n> ⚠️ **응답 품질 경고:**\n" +
+                                      string.Join("\n", gateCResult.Warnings.Select(w => $"> - {w}"));
+                    fullResponse.Append(warningText);
+
+                    var gateCChunk = new ChatStreamChunk
+                    {
+                        ConversationId = request.ConversationId,
+                        Token = warningText,
+                        IsComplete = false
+                    };
+
+                    await _messageBus.PublishAsync(
+                        streamSubject,
+                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", gateCChunk, request.EquipmentId),
+                        ct);
+
+                    FabMetrics.LlmGateCTriggeredCount.Add(1);
+                    _logger.LogInformation(
+                        "Gate C triggered: {WarningCount} warnings. ConversationId={ConversationId}",
+                        gateCResult.Warnings.Count, request.ConversationId);
+                }
+            }
+
+            // 6. Publish final chunk with IsComplete = true and citations (using filtered results)
+            var citations = filteredRagResults
                 .Where(r => r.Score > 0)
                 .Select((r, idx) =>
                 {
@@ -350,12 +407,13 @@ public sealed class LlmWorker : BackgroundService
     }
 
     private static List<LlmChatMessage> BuildPromptMessages(
-        ChatRequest request, Conversation conversation, List<RetrievalResult> ragResults, bool isConfident = true)
+        ChatRequest request, Conversation conversation, List<RetrievalResult> ragResults,
+        bool isConfident = true, QueryIntent? intent = null)
     {
         var messages = new List<LlmChatMessage>();
 
-        // System message with equipment context and RAG documents
-        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context, ragResults, isConfident);
+        // System message with equipment context, RAG documents, and intent routing
+        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context, ragResults, isConfident, intent);
         messages.Add(LlmChatMessage.System(systemPrompt));
 
         // Conversation history
@@ -387,8 +445,21 @@ public sealed class LlmWorker : BackgroundService
     private const string CitationFormatFallback = "[DOC_ID-Ch-S-{Page:XX}]";
     private const string CitationPrecisionPrompt = "[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]";
 
+    internal static float ComputeEffectiveThreshold(string? searchMode, float baseThreshold)
+    {
+        return string.Equals(searchMode, "strict", StringComparison.OrdinalIgnoreCase)
+            ? Math.Max(baseThreshold, 0.75f)
+            : baseThreshold;
+    }
+
+    internal static bool EvaluateConfidence(List<RetrievalResult> ragResults, float maxScore, float effectiveThreshold)
+    {
+        return ragResults.Count == 0 || maxScore >= effectiveThreshold;
+    }
+
     internal static string BuildSystemPrompt(
-        string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults, bool isConfident = true)
+        string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults,
+        bool isConfident = true, QueryIntent? intent = null)
     {
         var prompt = $"""
             You are an equipment copilot assistant for semiconductor fab equipment.
@@ -434,6 +505,9 @@ public sealed class LlmWorker : BackgroundService
             - 문서에 행 번호가 명시되지 않은 경우 페이지 번호를 사용: {CitationFormatFallback}
             - 모든 답변에서 근거가 되는 출처를 반드시 명시하세요.
             """;
+
+        // Intent-based response style routing
+        prompt += BuildIntentStyleSection(intent);
 
         if (context is not null)
         {
@@ -758,5 +832,217 @@ public sealed class LlmWorker : BackgroundService
             .Replace("<|im_start|>", "")
             .Replace("<|im_end|>", "")
             .Replace("<|endoftext|>", "");
+    }
+
+    // ─── Gate C: Response Quality Validation ────────────────────────
+
+    internal record GateCResult(bool Passed, List<string> Warnings);
+
+    internal static GateCResult EvaluateGateC(string responseText, List<RetrievalResult> ragResults)
+    {
+        var warnings = new List<string>();
+        var text = responseText?.Trim() ?? string.Empty;
+
+        // 1. Empty response check
+        if (string.IsNullOrWhiteSpace(text) || text.All(c => !char.IsLetterOrDigit(c)))
+        {
+            warnings.Add("응답이 비어 있거나 유효한 내용이 없습니다.");
+            return new GateCResult(false, warnings);
+        }
+
+        // 2. Minimum length check (< 50 characters)
+        if (text.Length < 50)
+        {
+            warnings.Add("응답이 너무 짧습니다 (50자 미만).");
+        }
+
+        // 3. Repetition detection: same sentence/word repeated 3+ times
+        if (HasExcessiveRepetition(text))
+        {
+            warnings.Add("응답에 반복적인 내용이 감지되었습니다.");
+        }
+
+        // 4. Chinese character (漢字) check — violates system prompt language rule
+        if (ContainsChineseCharacters(text))
+        {
+            warnings.Add("응답에 한자(漢字)가 포함되어 있습니다. 한국어만 사용해야 합니다.");
+        }
+
+        // 5. Structure check: RAG docs present but no 참조 section
+        if (ragResults is { Count: > 0 } &&
+            !text.Contains("참조") && !text.Contains("참고 문서") && !text.Contains("참고문서") && !text.Contains("📄"))
+        {
+            warnings.Add("참고 문서가 제공되었으나 응답에 참조 섹션이 없습니다.");
+        }
+
+        return new GateCResult(warnings.Count == 0, warnings);
+    }
+
+    internal static bool HasExcessiveRepetition(string text)
+    {
+        // Check for repeated words (3+ consecutive identical words)
+        var words = Regex.Split(text, @"\s+").Where(w => w.Length >= 2).ToList();
+        for (var i = 0; i < words.Count - 2; i++)
+        {
+            if (string.Equals(words[i], words[i + 1], StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(words[i], words[i + 2], StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        // Check for repeated sentences (split by period, 3+ identical sentences)
+        var sentences = text.Split(new[] { '.', '。' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => s.Length >= 5)
+            .ToList();
+
+        var sentenceCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sentence in sentences)
+        {
+            sentenceCounts.TryGetValue(sentence, out var count);
+            sentenceCounts[sentence] = count + 1;
+            if (count + 1 >= 3) return true;
+        }
+
+        return false;
+    }
+
+    internal static bool ContainsChineseCharacters(string text)
+    {
+        foreach (var ch in text)
+        {
+            // CJK Unified Ideographs (main block used by Chinese characters)
+            if (ch is >= '\u4E00' and <= '\u9FFF')
+                return true;
+            // CJK Compatibility Ideographs
+            if (ch is >= '\uF900' and <= '\uFAFF')
+                return true;
+        }
+        return false;
+    }
+
+    // ─── Ghost Citation Prevention ──────────────────────────────────
+
+    internal static List<RetrievalResult> FilterGhostCitations(string responseText, List<RetrievalResult> ragResults)
+    {
+        if (ragResults is not { Count: > 0 })
+            return [];
+
+        if (string.IsNullOrWhiteSpace(responseText))
+            return [];
+
+        var responseLower = responseText.ToLowerInvariant();
+        var filtered = new List<RetrievalResult>();
+
+        foreach (var result in ragResults)
+        {
+            var keywords = ExtractKeywords(result.ChunkText);
+            if (keywords.Count == 0)
+            {
+                filtered.Add(result);
+                continue;
+            }
+
+            var matchCount = keywords.Count(kw => responseLower.Contains(kw));
+            var matchRatio = (double)matchCount / keywords.Count;
+
+            // Keep if 3+ keywords matched OR 30%+ keywords matched
+            if (matchCount >= 3 || matchRatio >= 0.3)
+            {
+                filtered.Add(result);
+            }
+        }
+
+        return filtered;
+    }
+
+    internal static List<string> ExtractKeywords(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return [];
+
+        // Extract words of 2+ characters, lowercase, deduplicate
+        var words = Regex.Split(text.ToLowerInvariant(), @"[\s\p{P}]+")
+            .Where(w => w.Length >= 2)
+            .Where(w => !IsStopWord(w))
+            .Distinct()
+            .ToList();
+
+        return words;
+    }
+
+    private static bool IsStopWord(string word)
+    {
+        // Common Korean/English stop words to exclude from keyword matching
+        return word is "the" or "and" or "for" or "that" or "this" or "with" or "from" or "are" or "was" or "has"
+            or "있는" or "하는" or "되는" or "이는" or "또는" or "등의" or "위한" or "대한" or "통해" or "경우";
+    }
+
+    // ─── Intent-based Response Style Routing ────────────────────────
+
+    internal static string BuildIntentStyleSection(QueryIntent? intent)
+    {
+        if (intent is null or QueryIntent.General)
+            return string.Empty;
+
+        var style = intent switch
+        {
+            QueryIntent.Error => """
+
+            [RESPONSE STYLE - ERROR/ALARM]
+            이 질문은 알람/에러 관련입니다. 다음 구조로 답변하세요:
+            1. **알람 코드**: 해당 알람 코드 명시
+            2. **원인**: 발생 가능한 원인 목록
+            3. **조치 방법**: 단계별 해결 절차
+            4. **예방 조치**: 재발 방지를 위한 권장 사항
+            """,
+            QueryIntent.Procedure => """
+
+            [RESPONSE STYLE - PROCEDURE]
+            이 질문은 절차/방법 관련입니다. 다음 구조로 답변하세요:
+            1. **사전 준비**: 필요한 도구, 안전 장비, 전제 조건
+            2. **절차**: 번호 매기기를 사용한 단계별 절차 (Step 1, Step 2, ...)
+            3. **주의사항**: 각 단계의 주의점 또는 팁
+            4. **완료 확인**: 절차 완료 후 확인 사항
+            """,
+            QueryIntent.Part => """
+
+            [RESPONSE STYLE - PART/CONSUMABLE]
+            이 질문은 부품/소모품 관련입니다. 다음 구조로 답변하세요:
+            | 항목 | 내용 |
+            |------|------|
+            | 부품명 | ... |
+            | 규격 | ... |
+            | 수명/교체주기 | ... |
+            | 호환 부품 | ... |
+            표 형식으로 부품 정보를 정리하세요.
+            """,
+            QueryIntent.Definition => """
+
+            [RESPONSE STYLE - DEFINITION]
+            이 질문은 정의/개념 관련입니다. 다음 구조로 답변하세요:
+            1. **정의**: 간결하고 명확한 1-2줄 정의
+            2. **관련 용어**: 연관된 기술 용어와 간략한 설명
+            3. **적용 예시**: 실제 장비에서의 적용 사례 (해당 시)
+            """,
+            QueryIntent.Spec => """
+
+            [RESPONSE STYLE - SPECIFICATION]
+            이 질문은 사양/파라미터 관련입니다. 다음 구조로 답변하세요:
+            | 파라미터 | 값/범위 | 단위 | 비고 |
+            |----------|---------|------|------|
+            표 형식으로 사양 정보를 정리하세요. 수치와 범위를 정확히 명시하세요.
+            """,
+            QueryIntent.Comparison => """
+
+            [RESPONSE STYLE - COMPARISON]
+            이 질문은 비교 관련입니다. 다음 구조로 답변하세요:
+            | 비교 항목 | A | B |
+            |-----------|---|---|
+            표 형식으로 비교하고, 각 항목의 장단점을 명시하세요.
+            """,
+            _ => string.Empty
+        };
+
+        return style;
     }
 }

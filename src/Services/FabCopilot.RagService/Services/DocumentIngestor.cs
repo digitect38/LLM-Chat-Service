@@ -81,6 +81,7 @@ public sealed class DocumentIngestor
 
                 var (lineStart, lineEnd) = ComputeLineRange(pageText, charStart, charEnd);
 
+                var folderTags = ExtractFolderTags(documentId);
                 var payload = new Dictionary<string, object>
                 {
                     ["text"] = chunkText,
@@ -96,6 +97,9 @@ public sealed class DocumentIngestor
                     ["language"] = DetectLanguage(chunkText),
                     ["highlight_type"] = InferHighlightType(chunkText)
                 };
+
+                if (folderTags.Count > 0)
+                    payload["folder_tags"] = folderTags;
 
                 foreach (var kvp in metadata)
                     payload[kvp.Key] = kvp.Value;
@@ -158,6 +162,7 @@ public sealed class DocumentIngestor
             var vector = await _llmClient.GetEmbeddingAsync(embeddingText, isQuery: false, ct);
 
             // Build payload with metadata (store original chunk text, not flattened)
+            var folderTags = ExtractFolderTags(documentId);
             var payload = new Dictionary<string, object>
             {
                 ["text"] = chunk,
@@ -169,6 +174,9 @@ public sealed class DocumentIngestor
                 ["language"] = DetectLanguage(chunk),
                 ["highlight_type"] = InferHighlightType(chunk)
             };
+
+            if (folderTags.Count > 0)
+                payload["folder_tags"] = folderTags;
 
             // v3.3: Compute line range from chunk position in full text
             var charStart = text.IndexOf(chunk, StringComparison.Ordinal);
@@ -561,10 +569,29 @@ public sealed class DocumentIngestor
 
     /// <summary>
     /// Infers the document type from the file name using keyword patterns.
+    /// Falls back to folder name matching if file name doesn't match.
     /// </summary>
     internal static string InferDocType(string fileName)
     {
-        var lower = fileName.ToLowerInvariant();
+        var result = InferDocTypeFromName(fileName);
+        if (result != "general")
+            return result;
+
+        // Fallback: try folder segments in the path
+        var segments = ExtractFolderTags(fileName);
+        foreach (var segment in segments)
+        {
+            var folderResult = InferDocTypeFromName(segment);
+            if (folderResult != "general")
+                return folderResult;
+        }
+
+        return "general";
+    }
+
+    private static string InferDocTypeFromName(string name)
+    {
+        var lower = name.ToLowerInvariant();
 
         if (lower.Contains("alarm") || lower.Contains("error") || lower.Contains("fault"))
             return "alarm";
@@ -584,6 +611,42 @@ public sealed class DocumentIngestor
             return "parts";
 
         return "general";
+    }
+
+    /// <summary>
+    /// Extracts folder segments from a relative path as metadata tags.
+    /// Filters out generic folder names (docs, src, etc.) and the file name.
+    /// </summary>
+    internal static List<string> ExtractFolderTags(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return [];
+
+        // Normalize path separators
+        var normalized = relativePath.Replace('\\', '/');
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length <= 1)
+            return []; // Only file name, no folders
+
+        // Exclude the last segment (file name) and filter generic folder names
+        var folderSegments = segments[..^1]
+            .Select(s => s.ToLowerInvariant())
+            .Where(s => !IsGenericFolderName(s))
+            .ToList();
+
+        return folderSegments;
+    }
+
+    private static readonly HashSet<string> GenericFolderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "docs", "doc", "documents", "src", "source", "resources", "res",
+        "assets", "data", "files", "content", "static", "public", "lib"
+    };
+
+    private static bool IsGenericFolderName(string name)
+    {
+        return GenericFolderNames.Contains(name);
     }
 
     /// <summary>
