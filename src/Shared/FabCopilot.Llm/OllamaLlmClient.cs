@@ -41,7 +41,7 @@ public sealed class OllamaLlmClient : ILlmClient
             Model = model,
             Messages = ConvertMessages(messages),
             Stream = true,
-            Options = BuildRequestOptions(options)
+            Options = BuildRequestOptions(options, _options.MaxTokens)
         };
 
         await foreach (var response in _ollama.ChatAsync(chatRequest, ct))
@@ -71,10 +71,10 @@ public sealed class OllamaLlmClient : ILlmClient
     public Task<float[]> GetEmbeddingAsync(string text, bool isQuery = false, CancellationToken ct = default)
         => _embeddingClient.GetEmbeddingAsync(text, isQuery, ct);
 
-    internal static RequestOptions BuildRequestOptions(LlmOptions? options) => new()
+    internal static RequestOptions BuildRequestOptions(LlmOptions? options, int defaultMaxTokens = 4096) => new()
     {
         Temperature = options?.Temperature ?? 0.1f,
-        NumPredict = options?.MaxTokens ?? 2048
+        NumPredict = options?.MaxTokens ?? defaultMaxTokens
     };
 
     private static List<Message> ConvertMessages(IReadOnlyList<LlmChatMessage> messages)

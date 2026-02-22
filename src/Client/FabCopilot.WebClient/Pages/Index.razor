@@ -314,6 +314,10 @@
     private bool _renderPending;
     private Timer? _renderTimer;
 
+    // Stale stream detection: auto-complete if no chunks arrive for N seconds
+    private Timer? _staleStreamTimer;
+    private const int StaleStreamTimeoutMs = 5000;
+
     // File upload
     private bool _isUploading;
 
@@ -577,6 +581,7 @@
     {
         _isStopping = true;
         StopRenderTimer();
+        StopStaleStreamTimer();
 
         var assistantMsg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
         if (assistantMsg is not null)
@@ -862,6 +867,7 @@
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
                 StopRenderTimer();
+                StopStaleStreamTimer();
                 StopTimeoutTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
                 StateHasChanged();
@@ -872,6 +878,7 @@
                 assistantMsg.IsStreaming = false;
                 _isSending = false;
                 StopRenderTimer();
+                StopStaleStreamTimer();
                 StopTimeoutTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
 
@@ -899,6 +906,7 @@
                 assistantMsg.Text += chunk.Token;
                 _renderCounter++;
                 ScheduleRenderUpdate();
+                ResetStaleStreamTimer();
             }
         });
     }
@@ -927,6 +935,43 @@
     {
         _renderPending = false;
         _renderTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+    }
+
+    // ─── Stale Stream Detection ──────────────────────────────────────────
+
+    private void ResetStaleStreamTimer()
+    {
+        _staleStreamTimer ??= new Timer(_ =>
+        {
+            InvokeAsync(async () =>
+            {
+                // No chunk received for StaleStreamTimeoutMs — treat as complete
+                var msg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
+                if (msg is null || !_isSending) return;
+
+                msg.IsStreaming = false;
+                _isSending = false;
+                StopRenderTimer();
+                StopTimeoutTimer();
+                msg.RenderedHtml = await RenderMarkdownAsync(msg.Text);
+
+                if (_latencyStopwatch is not null)
+                {
+                    _latencyStopwatch.Stop();
+                    msg.LatencyMs = _latencyStopwatch.ElapsedMilliseconds;
+                    _latencyStopwatch = null;
+                }
+
+                StateHasChanged();
+                await ScrollToBottom();
+            });
+        }, null, Timeout.Infinite, Timeout.Infinite);
+        _staleStreamTimer.Change(StaleStreamTimeoutMs, Timeout.Infinite);
+    }
+
+    private void StopStaleStreamTimer()
+    {
+        _staleStreamTimer?.Change(Timeout.Infinite, Timeout.Infinite);
     }
 
     // ─── Timeout Handling (v3.2 §5.3) ──────────────────────────────────
@@ -1045,6 +1090,7 @@
         ChatService.OnMessageReceived -= HandleChunkReceived;
         ChatService.OnStateChanged -= HandleStateChanged;
         if (_renderTimer is not null) await _renderTimer.DisposeAsync();
+        if (_staleStreamTimer is not null) await _staleStreamTimer.DisposeAsync();
         _timeoutTimer?.Dispose();
         try { await JS.InvokeVoidAsync("citationInterop.dispose"); } catch { }
         _dotNetRef?.Dispose();

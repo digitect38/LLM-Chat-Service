@@ -106,7 +106,17 @@
                     inlineMath.push(f.trim());
                     return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
                 });
-                text = text.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, function (m, f) {
+                text = text.replace(/\$([^\$\n]+?)\$/g, function (m, f) {
+                    inlineMath.push(f.trim());
+                    return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
+                });
+
+                // 2c. Cleanup orphaned delimiters (truncated responses)
+                text = text.replace(/\\\[([\s\S]+)$/g, function (m, f) {
+                    blockMath.push(f.trim());
+                    return '\n%%BLOCKMATH' + (blockMath.length - 1) + '%%\n';
+                });
+                text = text.replace(/\\\(([\s\S]+)$/g, function (m, f) {
                     inlineMath.push(f.trim());
                     return '%%INLINEMATH' + (inlineMath.length - 1) + '%%';
                 });

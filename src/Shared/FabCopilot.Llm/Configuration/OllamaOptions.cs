@@ -6,6 +6,7 @@ public class OllamaOptions
     public string BaseUrl { get; set; } = "http://localhost:11434";
     public string ChatModel { get; set; } = "llama3.1:8b";
     public string EmbeddingModel { get; set; } = "bge-m3";
+    public int MaxTokens { get; set; } = 4096;
     public int TimeoutSeconds { get; set; } = 120;
     public List<ModelInfo> AvailableModels { get; set; } = [];
     public List<EmbeddingModelInfo> AvailableEmbeddingModels { get; set; } = [];

@@ -46,7 +46,7 @@ public sealed class TgiLlmClient : ILlmClient
             messages = messages.Select(m => new { role = m.Role, content = m.Content }),
             stream = true,
             temperature = options?.Temperature ?? 0.1f,
-            max_tokens = options?.MaxTokens ?? 2048
+            max_tokens = options?.MaxTokens ?? tgiOptions.MaxTokens
         };
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
