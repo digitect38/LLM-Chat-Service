@@ -556,6 +556,11 @@ html, body {
     color: inherit;
 }
 
+.rendered-markdown pre code.hljs {
+    background: none;
+    padding: 0;
+}
+
 .rendered-markdown strong {
     font-weight: 600;
 }
@@ -1244,6 +1249,34 @@ html, body {
 .toggle-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* ================================================================
+   RENDER MODE TOGGLE
+   ================================================================ */
+.render-mode-toggle {
+    display: flex;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+/* ===== Batch Loading Indicator ===== */
+.batch-loading {
+    color: #888;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.batch-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #ddd;
+    border-top-color: #666;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
 }
 
 /* ================================================================
