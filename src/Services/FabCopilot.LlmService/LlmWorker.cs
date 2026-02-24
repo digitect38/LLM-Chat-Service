@@ -160,6 +160,9 @@ public sealed class LlmWorker : BackgroundService
             var insideThinkBlock = false;
             var tagBuffer = new StringBuilder();
 
+            // State for real-time citation section suppression
+            var citationSuppressed = false;
+
             await foreach (var token in _llmClient.StreamChatAsync(llmMessages, llmOptions, ct))
             {
                 // Record first token latency
@@ -181,6 +184,19 @@ public sealed class LlmWorker : BackgroundService
 
                 fullResponse.Append(filtered);
 
+                // Real-time citation section suppression: once detected, stop sending to client
+                if (citationSuppressed)
+                    continue;
+
+                if (DetectCitationSectionStart(fullResponse))
+                {
+                    citationSuppressed = true;
+                    _logger.LogInformation(
+                        "Citation section detected in stream, suppressing remaining tokens. ConversationId={ConversationId}",
+                        request.ConversationId);
+                    continue;
+                }
+
                 var chunk = new ChatStreamChunk
                 {
                     ConversationId = request.ConversationId,
@@ -196,10 +212,22 @@ public sealed class LlmWorker : BackgroundService
 
             FabMetrics.RecordElapsed(llmTotalSw, FabMetrics.LlmTotalDuration);
 
-            // 5. Append source citations if RAG results were used and LLM didn't already include them
+            // 5. Strip any LLM-generated citation/reference section and replace with verified citations
             var responseText = fullResponse.ToString();
-            var alreadyHasCitations = responseText.Contains("참고 문서") || responseText.Contains("참고문서");
-            var sourceSuffix = alreadyHasCitations ? null : BuildSourceCitations(ragResults);
+            var strippedResponse = StripLlmCitationSection(responseText);
+
+            if (strippedResponse.Length < responseText.Length)
+            {
+                _logger.LogInformation(
+                    "Stripped LLM-hallucinated citation section ({OrigLen} → {StrippedLen}). ConversationId={ConversationId}",
+                    responseText.Length, strippedResponse.Length, request.ConversationId);
+            }
+
+            // Always rebuild fullResponse: stripped body + service-generated verified citations
+            fullResponse.Clear();
+            fullResponse.Append(strippedResponse);
+
+            var sourceSuffix = BuildSourceCitations(ragResults, _gateAThreshold);
             if (!string.IsNullOrEmpty(sourceSuffix))
             {
                 fullResponse.Append(sourceSuffix);
@@ -223,10 +251,9 @@ public sealed class LlmWorker : BackgroundService
             // Gate B: Add disclaimer if citations are missing or partially reflected
             if (_gateBEnabled && ragResults.Count > 0)
             {
-                var finalText = fullResponse.ToString();
-                var hasCitation = finalText.Contains("📄") || finalText.Contains("참고 문서") || finalText.Contains("참고문서");
-
-                if (!hasCitation || filteredRagResults.Count == 0)
+                // Gate B uses filteredRagResults (ghost citation filter) to determine document usage,
+                // not text-based citation checks — since internal file citations are intentionally suppressed.
+                if (filteredRagResults.Count == 0)
                 {
                     var disclaimer = "\n\n> ⚠️ *이 답변은 문서 기반으로 확인되지 않았습니다. 정확한 정보는 관련 문서를 직접 확인하시기 바랍니다.*";
                     fullResponse.Append(disclaimer);
@@ -302,8 +329,9 @@ public sealed class LlmWorker : BackgroundService
             }
 
             // 6. Publish final chunk with IsComplete = true and citations (using filtered results)
+            // Only include citations above the Gate A threshold to avoid showing low-confidence docs in right pane
             var citations = filteredRagResults
-                .Where(r => r.Score > 0)
+                .Where(r => r.Score >= _gateAThreshold)
                 .Select((r, idx) =>
                 {
                     var sourceName = ExtractSourceName(r);
@@ -439,12 +467,6 @@ public sealed class LlmWorker : BackgroundService
         return messages;
     }
 
-    // Citation format constants (avoid interpolation issues in raw strings)
-    private const string CitationFormatExample = "[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]";
-    private const string CitationFormatSample = "[MNL-2025-001-Ch3-S3.2.1-{Line:142-158}]";
-    private const string CitationFormatFallback = "[DOC_ID-Ch-S-{Page:XX}]";
-    private const string CitationPrecisionPrompt = "[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]";
-
     internal static float ComputeEffectiveThreshold(string? searchMode, float baseThreshold)
     {
         return string.Equals(searchMode, "strict", StringComparison.OrdinalIgnoreCase)
@@ -488,22 +510,14 @@ public sealed class LlmWorker : BackgroundService
             ## 상세
             → 단계별 상세 설명, 번호 매기기 사용
 
-            ## 참조
-            → 인용한 문서명과 해당 섹션 (📄 파일명)
+            Note: "참조", "참고 문서", "신뢰도" 섹션은 시스템이 자동으로 추가합니다. 직접 작성하지 마세요.
 
-            ## 신뢰도
-            → 참고 문서 기반 확신 수준 (높음/중간/낮음)
-
-            Note: 간단한 질문에는 '요약'과 '참조'만 사용해도 됩니다.
-
-            [CITATION FORMAT - MANDATORY]
-            - 모든 인용에 정밀 출처를 반드시 포함하세요.
-            - 형식: {CitationFormatExample}
-            - 예: {CitationFormatSample}
-            - DOC_ID: 문서 식별자, Chapter: 장(Ch), Section: 절, Line: 참조 행 범위
-            - 각 문서의 DOC_ID와 Chapter/Section 정보는 아래 참조 문서에 명시되어 있습니다.
-            - 문서에 행 번호가 명시되지 않은 경우 페이지 번호를 사용: {CitationFormatFallback}
-            - 모든 답변에서 근거가 되는 출처를 반드시 명시하세요.
+            [CRITICAL CITATION RULES - ABSOLUTELY NO HALLUCINATION]
+            - 절대 존재하지 않는 문서, 매뉴얼, 가이드, 파일명을 만들어내거나 언급하지 마세요.
+            - "XXX 매뉴얼에 따르면", "XXX 문서에 의하면" 같은 표현을 사용하지 마세요.
+            - 아래 [REFERENCE DOCUMENTS] 섹션에 제공된 문서의 내용만 활용하되, 문서명을 직접 언급하지 마세요.
+            - 참고 문서 목록은 시스템이 자동으로 응답 끝에 추가합니다.
+            - 일반 지식으로 답변할 때는 출처 없이 답변 내용만 작성하세요.
             """;
 
         // Intent-based response style routing
@@ -536,31 +550,33 @@ public sealed class LlmWorker : BackgroundService
             prompt += """
 
             [NO REFERENCE DOCUMENTS AVAILABLE]
-            참고 문서를 찾지 못했습니다. 답변 시 "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."라고 반드시 명시하세요.
-            추측이나 불확실한 정보는 포함하지 마세요.
+            참고 문서를 찾지 못했습니다.
+            - 답변 시작에 "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."를 명시하세요.
+            - 절대 존재하지 않는 문서명, 매뉴얼명, 파일명을 만들어내지 마세요.
+            - "참조", "참고 문서" 섹션을 포함하지 마세요.
+            - 추측이나 불확실한 정보는 포함하지 마세요.
             """;
         }
         else if (!isConfident)
         {
             prompt += """
 
-            [LOW CONFIDENCE - GATE A WARNING]
-            검색된 참고 문서의 관련성 점수가 매우 낮습니다.
-            이 질문에 대해 신뢰할 수 있는 문서 기반 답변을 제공하기 어렵습니다.
+            [LOW CONFIDENCE WARNING]
+            아래 참고 내용의 관련성이 낮습니다.
             답변 시작 부분에 반드시 다음 경고를 포함하세요:
-            "⚠️ 관련 문서의 신뢰도가 낮아 정확하지 않을 수 있습니다. 반드시 원본 문서를 확인하세요."
-
-            참고 문서는 아래와 같지만 관련성이 낮을 수 있습니다:
+            "⚠️ 관련 정보의 신뢰도가 낮아 정확하지 않을 수 있습니다."
+            - 절대 문서명, 매뉴얼명, 파일명, Document N 등을 만들거나 언급하지 마세요.
+            - "참고 문서", "참조", "출처" 섹션을 절대 작성하지 마세요.
 
             """;
 
             for (var i = 0; i < ragResults.Count; i++)
             {
                 var result = ragResults[i];
-                var sourceName = ExtractSourceName(result);
                 prompt += $"""
-                --- Document {i + 1}: {sourceName} (score: {result.Score:F3}, LOW CONFIDENCE) ---
+                <context confidence="low">
                 {result.ChunkText}
+                </context>
 
                 """;
             }
@@ -569,32 +585,45 @@ public sealed class LlmWorker : BackgroundService
         {
             prompt += """
 
-            [REFERENCE DOCUMENTS - MANDATORY USE]
-            1. ALWAYS use the following reference documents as your PRIMARY source of information.
-            2. Base your answer on the documents FIRST, before using general knowledge.
-            3. Cite using precision format: {CitationPrecisionPrompt} (각 문서 메타데이터 참조)
-            4. If NONE of the documents are relevant to the question, explicitly state: "참고 문서에 관련 정보가 없어 일반 지식을 바탕으로 답변합니다."
-            5. NEVER contradict information in the reference documents.
-            6. At the end of your answer, list all referenced sources under "---\n📚 **참고 문서:**" section with precision citation format.
+            [REFERENCE CONTEXT]
+            아래 <context> 태그 안의 내용을 최우선 정보원으로 활용하세요.
+            - 아래 내용과 모순되는 답변을 하지 마세요.
+            - 아래 내용 중 질문과 관련된 것이 없으면: "관련 정보가 없어 일반 지식을 바탕으로 답변합니다."를 명시하세요.
+            - 절대 문서명, 매뉴얼명, 파일명, Document N 등을 만들거나 언급하지 마세요.
+            - "참고 문서", "참조", "출처" 섹션을 절대 작성하지 마세요. 시스템이 자동으로 처리합니다.
 
             """;
 
             for (var i = 0; i < ragResults.Count; i++)
             {
                 var result = ragResults[i];
-                var sourceName = ExtractSourceName(result);
-                var docChapter = TryGetMetadataString(result.Metadata, "chapter", out var rch) ? rch : "-";
-                var docSection = TryGetMetadataString(result.Metadata, "section", out var rsc) ? rsc : "-";
-                var docLineStart = TryGetMetadataInt(result.Metadata, "line_start");
-                var docLineEnd = TryGetMetadataInt(result.Metadata, "line_end");
-                var lineInfo = docLineStart.HasValue && docLineEnd.HasValue
-                    ? $"lines: {docLineStart}-{docLineEnd}"
-                    : $"page: {TryGetMetadataInt(result.Metadata, "page_number")?.ToString() ?? "-"}";
                 prompt += $"""
-                --- Document {i + 1}: {sourceName} (score: {result.Score:F3}, chapter: {docChapter}, section: {docSection}, {lineInfo}) ---
+                <context>
                 {result.ChunkText}
+                </context>
 
                 """;
+            }
+        }
+
+        // Inject knowledge graph context if available
+        var graphContexts = (ragResults ?? [])
+            .Where(r => !string.IsNullOrWhiteSpace(r.GraphContext))
+            .Select(r => r.GraphContext!)
+            .Distinct()
+            .ToList();
+
+        if (graphContexts.Count > 0)
+        {
+            prompt += """
+
+            [KNOWLEDGE GRAPH CONTEXT]
+            아래는 질문과 관련된 지식 그래프 정보입니다. 엔티티 간의 관계를 참고하여 보다 정확한 답변을 제공하세요.
+
+            """;
+            foreach (var gc in graphContexts)
+            {
+                prompt += gc + "\n";
             }
         }
 
@@ -673,25 +702,96 @@ public sealed class LlmWorker : BackgroundService
         }
     }
 
-    internal static string BuildSourceCitations(List<RetrievalResult> ragResults)
+    /// <summary>
+    /// Detects whether the accumulated response has started a citation/reference section.
+    /// Used during streaming to suppress citation content in real-time.
+    /// </summary>
+    internal static bool DetectCitationSectionStart(StringBuilder fullResponse)
+    {
+        // Only check the tail of the response for performance
+        var len = fullResponse.Length;
+        var checkLen = Math.Min(len, 80);
+        var tail = fullResponse.ToString(len - checkLen, checkLen);
+
+        return Regex.IsMatch(tail, @"\n#{1,3}\s*참고\s*문서") ||
+               Regex.IsMatch(tail, @"\n#{1,3}\s*참고\s*정보") ||
+               Regex.IsMatch(tail, @"\n#{1,3}\s*참조\s*$") ||
+               Regex.IsMatch(tail, @"\n#{1,3}\s*참조\s*\n") ||
+               Regex.IsMatch(tail, @"\n#{1,3}\s*출처") ||
+               Regex.IsMatch(tail, @"\n#{1,3}\s*신뢰도") ||
+               Regex.IsMatch(tail, @"\n---\s*\n\s*📚") ||
+               Regex.IsMatch(tail, @"\n📚\s*\*{0,2}참고") ||
+               Regex.IsMatch(tail, @"\n---\s*\n\s*\*{0,2}참고\s*정보") ||
+               Regex.IsMatch(tail, @"\n---\s*\n\s*-\s*📄");
+    }
+
+    /// <summary>
+    /// Strips LLM-generated citation/reference sections from the response.
+    /// The service appends its own verified citations, so any LLM-generated ones
+    /// (which may hallucinate document names) should be removed.
+    /// </summary>
+    internal static string StripLlmCitationSection(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return responseText;
+
+        // Patterns that indicate the start of an LLM-generated citation section.
+        // We find the earliest match and strip everything from there to the end.
+        string[] patterns =
+        [
+            @"\n---\s*\n\s*📚\s*\*{0,2}참고\s*문서",       // ---\n📚 **참고 문서:**
+            @"\n#{1,3}\s*참조\s*\n",                          // ## 참조
+            @"\n#{1,3}\s*참고\s*문서\s*\n",                   // ## 참고 문서
+            @"\n#{1,3}\s*참고문서\s*\n",                      // ## 참고문서
+            @"\n#{1,3}\s*출처\s*\n",                           // ## 출처
+            @"\n#{1,3}\s*신뢰도\s*\n",                        // ## 신뢰도
+            @"\n📚\s*\*{0,2}참고\s*문서",                     // 📚 **참고 문서:**
+            @"\n---\s*\n\s*\*{0,2}참고\s*문서",              // ---\n**참고 문서:**
+            @"\n---\s*\n\s*\*{0,2}참고\s*정보",              // ---\n**참고 정보**
+            @"\n---\s*\n\s*- 📄",                             // ---\n- 📄 ...
+        ];
+
+        var earliestIndex = responseText.Length;
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(responseText, pattern);
+            if (match.Success && match.Index < earliestIndex)
+            {
+                earliestIndex = match.Index;
+            }
+        }
+
+        if (earliestIndex < responseText.Length)
+        {
+            return responseText[..earliestIndex].TrimEnd();
+        }
+
+        return responseText;
+    }
+
+    internal static string BuildSourceCitations(List<RetrievalResult> ragResults, float scoreThreshold = 0f)
     {
         if (ragResults is not { Count: > 0 })
             return string.Empty;
 
         var cited = new HashSet<string>();
+        var verifiedCount = 0;
         var sb = new StringBuilder();
         sb.AppendLine();
         sb.AppendLine();
         sb.AppendLine("---");
         sb.AppendLine("📚 **참고 문서:**");
 
-        foreach (var r in ragResults)
+        foreach (var r in ragResults.Where(r => r.Score >= scoreThreshold))
         {
             var sourceName = ExtractSourceName(r);
             if (sourceName == "unknown" || !cited.Add(sourceName))
                 continue;
 
-            var docId = TryGetMetadataString(r.Metadata, "document_id", out var did) ? did : sourceName;
+            // Use document_id stripped of file extension for cleaner display
+            var rawDocId = TryGetMetadataString(r.Metadata, "document_id", out var did) ? did : sourceName;
+            var docId = StripFileExtension(rawDocId);
             var chapter = TryGetMetadataString(r.Metadata, "chapter", out var ch) ? ch : null;
             var section = TryGetMetadataString(r.Metadata, "section", out var sec) ? sec : null;
             var lineStart = TryGetMetadataInt(r.Metadata, "line_start");
@@ -704,10 +804,11 @@ public sealed class LlmWorker : BackgroundService
             var displayRef = BuildDisplayRef(docId, chapter, section, lineRange,
                 TryGetMetadataInt(r.Metadata, "page_number"));
 
+            verifiedCount++;
             sb.AppendLine($"- 📄 [{displayRef}] (score: {r.Score:F3})");
         }
 
-        return cited.Count == 0 ? string.Empty : sb.ToString();
+        return verifiedCount == 0 ? string.Empty : sb.ToString();
     }
 
     private static string ExtractSourceName(RetrievalResult result)
@@ -822,6 +923,13 @@ public sealed class LlmWorker : BackgroundService
         return string.Join("-", parts);
     }
 
+    private static string StripFileExtension(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return name;
+        var ext = Path.GetExtension(name);
+        return string.IsNullOrEmpty(ext) ? name : name[..^ext.Length];
+    }
+
     private static string SanitizeToken(string token)
     {
         if (string.IsNullOrEmpty(token))
@@ -868,12 +976,7 @@ public sealed class LlmWorker : BackgroundService
             warnings.Add("응답에 한자(漢字)가 포함되어 있습니다. 한국어만 사용해야 합니다.");
         }
 
-        // 5. Structure check: RAG docs present but no 참조 section
-        if (ragResults is { Count: > 0 } &&
-            !text.Contains("참조") && !text.Contains("참고 문서") && !text.Contains("참고문서") && !text.Contains("📄"))
-        {
-            warnings.Add("참고 문서가 제공되었으나 응답에 참조 섹션이 없습니다.");
-        }
+        // 5. (Removed) Citation section check no longer needed — service generates citations post-LLM
 
         return new GateCResult(warnings.Count == 0, warnings);
     }

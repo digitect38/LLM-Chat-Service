@@ -1,4 +1,7 @@
+using FabCopilot.Contracts.Configuration;
 using FabCopilot.Contracts.Enums;
+using FabCopilot.Contracts.Interfaces;
+using FabCopilot.Contracts.Models;
 using FabCopilot.KnowledgeService;
 using FabCopilot.KnowledgeService.Services;
 using FabCopilot.Messaging.Extensions;
@@ -15,6 +18,8 @@ builder.Services.AddFabRedis(builder.Configuration);
 builder.Services.AddFabLlm(builder.Configuration);
 builder.Services.AddFabVectorStore(builder.Configuration);
 builder.Services.AddFabTelemetry(builder.Configuration);
+builder.Services.Configure<GraphOptions>(builder.Configuration.GetSection(GraphOptions.SectionName));
+builder.Services.AddSingleton<IKnowledgeGraphStore, FabCopilot.Redis.RedisKnowledgeGraphStore>();
 builder.Services.AddSingleton<KnowledgeManager>();
 builder.Services.AddHostedService<KnowledgeWorker>();
 
@@ -47,6 +52,94 @@ app.MapPost("/api/knowledge/{id}/index", async (string id, KnowledgeManager mana
     var success = await manager.IndexApprovedAsync(id, ct);
     if (!success) return Results.NotFound();
     return Results.Ok(new { id, indexed = true });
+});
+
+// ─── Graph Management API ─────────────────────────────────────────
+
+app.MapGet("/api/graph/entities", async (string? type, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    var entities = await graphStore.ListEntitiesAsync(type, ct);
+    return Results.Ok(entities);
+});
+
+app.MapGet("/api/graph/entities/{name}", async (string name, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    var entity = await graphStore.GetEntityAsync(name, ct);
+    if (entity is null) return Results.NotFound();
+    return Results.Ok(entity);
+});
+
+app.MapGet("/api/graph/entities/{name}/related", async (string name, int? depth, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    var maxDepth = depth ?? 2;
+    var entities = await graphStore.GetRelatedEntitiesAsync(name, maxDepth, ct);
+    var relations = await graphStore.GetRelatedRelationsAsync(name, maxDepth, ct);
+    return Results.Ok(new { entities, relations });
+});
+
+app.MapPost("/api/graph/entities", async (GraphEntity entity, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(entity.Name))
+        return Results.BadRequest(new { error = "Entity name is required" });
+
+    if (string.IsNullOrWhiteSpace(entity.Id))
+        entity.Id = Guid.NewGuid().ToString();
+
+    await graphStore.UpsertEntityAsync(entity, ct);
+    return Results.Created($"/api/graph/entities/{entity.Name}", entity);
+});
+
+app.MapDelete("/api/graph/entities/{name}", async (string name, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    await graphStore.DeleteEntityAsync(name, ct);
+    return Results.NoContent();
+});
+
+app.MapPost("/api/graph/relations", async (GraphRelation relation, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(relation.SourceId) || string.IsNullOrWhiteSpace(relation.TargetId))
+        return Results.BadRequest(new { error = "SourceId and TargetId are required" });
+
+    await graphStore.UpsertRelationAsync(relation, ct);
+    return Results.Created($"/api/graph/relations", relation);
+});
+
+app.MapGet("/api/graph/search", async (string? query, IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(query))
+        return Results.BadRequest(new { error = "Query parameter is required" });
+
+    var keywords = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+    var context = await graphStore.BuildGraphContextAsync(query, keywords, ct);
+    var entities = new List<GraphEntity>();
+    var relations = new List<GraphRelation>();
+
+    foreach (var keyword in keywords)
+    {
+        var relatedEntities = await graphStore.GetRelatedEntitiesAsync(keyword, 2, ct);
+        entities.AddRange(relatedEntities);
+        var relatedRelations = await graphStore.GetRelatedRelationsAsync(keyword, 2, ct);
+        relations.AddRange(relatedRelations);
+    }
+
+    // Deduplicate
+    var uniqueEntities = entities
+        .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+        .Select(g => g.First())
+        .ToList();
+
+    var uniqueRelations = relations
+        .GroupBy(r => $"{r.SourceId}:{r.RelationType}:{r.TargetId}", StringComparer.OrdinalIgnoreCase)
+        .Select(g => g.First())
+        .ToList();
+
+    return Results.Ok(new { entities = uniqueEntities, relations = uniqueRelations, context });
+});
+
+app.MapGet("/api/graph/stats", async (IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    var stats = await graphStore.GetStatsAsync(ct);
+    return Results.Ok(stats);
 });
 
 app.Run();

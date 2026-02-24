@@ -1,12 +1,15 @@
+using FabCopilot.Contracts.Configuration;
+using FabCopilot.Contracts.Interfaces;
 using FabCopilot.Contracts.Models;
-using FabCopilot.RagService.Configuration;
-using FabCopilot.RagService.Interfaces;
 using FabCopilot.Redis.Interfaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace FabCopilot.RagService.Services;
+namespace FabCopilot.Redis;
 
+/// <summary>
+/// Redis-backed knowledge graph store shared by RagService and KnowledgeService.
+/// </summary>
 public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
 {
     private const string EntityPrefix = "graph:entity:";
@@ -16,16 +19,16 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
     private const string AllRelationsKey = "graph:all_relations";
 
     private readonly ISessionStore _sessionStore;
-    private readonly RagOptions _ragOptions;
+    private readonly int _graphMaxDepth;
     private readonly ILogger<RedisKnowledgeGraphStore> _logger;
 
     public RedisKnowledgeGraphStore(
         ISessionStore sessionStore,
-        IOptions<RagOptions> ragOptions,
+        IOptions<GraphOptions> graphOptions,
         ILogger<RedisKnowledgeGraphStore> logger)
     {
         _sessionStore = sessionStore;
-        _ragOptions = ragOptions.Value;
+        _graphMaxDepth = graphOptions.Value.GraphMaxDepth;
         _logger = logger;
     }
 
@@ -101,7 +104,6 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
             return entities;
         }
 
-        // All entities
         var allNames = await _sessionStore.GetAsync<HashSet<string>>(AllEntitiesKey, ct) ?? [];
         var result = new List<GraphEntity>();
         foreach (var name in allNames)
@@ -119,7 +121,6 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
         var entity = await _sessionStore.GetAsync<GraphEntity>($"{EntityPrefix}{normalizedName}", ct);
         if (entity is null) return;
 
-        // Remove from type index
         var indexKey = $"{IndexPrefix}{entity.Type.ToLowerInvariant()}";
         var index = await _sessionStore.GetAsync<HashSet<string>>(indexKey, ct);
         if (index is not null)
@@ -128,7 +129,6 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
             await _sessionStore.SetAsync(indexKey, index, ct: ct);
         }
 
-        // Remove from global entity list
         var allEntities = await _sessionStore.GetAsync<HashSet<string>>(AllEntitiesKey, ct);
         if (allEntities is not null)
         {
@@ -136,9 +136,7 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
             await _sessionStore.SetAsync(AllEntitiesKey, allEntities, ct: ct);
         }
 
-        // Remove the entity itself
         await _sessionStore.DeleteAsync($"{EntityPrefix}{normalizedName}", ct);
-
         _logger.LogDebug("Deleted entity: {Name}", name);
     }
 
@@ -181,43 +179,34 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
             if (!visited.Add(name) || depth > maxDepth)
                 continue;
 
-            // Get the entity itself
             var entity = await _sessionStore.GetAsync<GraphEntity>($"{EntityPrefix}{name}", ct);
             if (entity is not null)
-            {
                 result.Add(entity);
-            }
 
             if (depth >= maxDepth)
                 continue;
 
-            // Forward traversal: source → target
-            var sourceRelKey = $"graph:src:{name}";
-            var sourceRelationKeys = await _sessionStore.GetAsync<List<string>>(sourceRelKey, ct);
-            if (sourceRelationKeys is not null)
+            // Forward: source → target
+            var sourceRelKeys = await _sessionStore.GetAsync<List<string>>($"graph:src:{name}", ct);
+            if (sourceRelKeys is not null)
             {
-                foreach (var relKey in sourceRelationKeys)
+                foreach (var relKey in sourceRelKeys)
                 {
                     var relation = await _sessionStore.GetAsync<GraphRelation>(relKey, ct);
                     if (relation is not null)
-                    {
                         queue.Enqueue((relation.TargetId.ToLowerInvariant(), depth + 1));
-                    }
                 }
             }
 
-            // Reverse traversal: target → source
-            var targetRelKey = $"graph:tgt:{name}";
-            var targetRelationKeys = await _sessionStore.GetAsync<List<string>>(targetRelKey, ct);
-            if (targetRelationKeys is not null)
+            // Reverse: target → source
+            var targetRelKeys = await _sessionStore.GetAsync<List<string>>($"graph:tgt:{name}", ct);
+            if (targetRelKeys is not null)
             {
-                foreach (var relKey in targetRelationKeys)
+                foreach (var relKey in targetRelKeys)
                 {
                     var relation = await _sessionStore.GetAsync<GraphRelation>(relKey, ct);
                     if (relation is not null)
-                    {
                         queue.Enqueue((relation.SourceId.ToLowerInvariant(), depth + 1));
-                    }
                 }
             }
         }
@@ -243,12 +232,10 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
             if (depth >= maxDepth)
                 continue;
 
-            // Forward traversal: source → target
-            var sourceRelKey = $"graph:src:{name}";
-            var sourceRelationKeys = await _sessionStore.GetAsync<List<string>>(sourceRelKey, ct);
-            if (sourceRelationKeys is not null)
+            var sourceRelKeys = await _sessionStore.GetAsync<List<string>>($"graph:src:{name}", ct);
+            if (sourceRelKeys is not null)
             {
-                foreach (var relKey in sourceRelationKeys)
+                foreach (var relKey in sourceRelKeys)
                 {
                     if (!seenRelationKeys.Add(relKey)) continue;
                     var relation = await _sessionStore.GetAsync<GraphRelation>(relKey, ct);
@@ -260,12 +247,10 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
                 }
             }
 
-            // Reverse traversal: target → source
-            var targetRelKey = $"graph:tgt:{name}";
-            var targetRelationKeys = await _sessionStore.GetAsync<List<string>>(targetRelKey, ct);
-            if (targetRelationKeys is not null)
+            var targetRelKeys = await _sessionStore.GetAsync<List<string>>($"graph:tgt:{name}", ct);
+            if (targetRelKeys is not null)
             {
-                foreach (var relKey in targetRelationKeys)
+                foreach (var relKey in targetRelKeys)
                 {
                     if (!seenRelationKeys.Add(relKey)) continue;
                     var relation = await _sessionStore.GetAsync<GraphRelation>(relKey, ct);
@@ -284,11 +269,10 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
     public async Task<string> BuildGraphContextAsync(
         string query, List<string> keywords, CancellationToken ct)
     {
-        var maxDepth = _ragOptions.GraphMaxDepth;
+        var maxDepth = _graphMaxDepth;
         var allEntities = new List<GraphEntity>();
         var allRelations = new List<GraphRelation>();
 
-        // Find entities and relations matching keywords
         foreach (var keyword in keywords)
         {
             var related = await GetRelatedEntitiesAsync(keyword, maxDepth, ct);
@@ -301,13 +285,11 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
         if (allEntities.Count == 0 && allRelations.Count == 0)
             return string.Empty;
 
-        // Deduplicate entities by name
         var uniqueEntities = allEntities
             .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
 
-        // Deduplicate relations by source+type+target
         var uniqueRelations = allRelations
             .GroupBy(r => $"{r.SourceId}:{r.RelationType}:{r.TargetId}", StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())

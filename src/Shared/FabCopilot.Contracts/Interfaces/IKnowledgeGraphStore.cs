@@ -1,11 +1,10 @@
 using FabCopilot.Contracts.Models;
 
-namespace FabCopilot.RagService.Interfaces;
+namespace FabCopilot.Contracts.Interfaces;
 
 /// <summary>
-/// RagService-local interface for knowledge graph store.
-/// Mirrors the shared IKnowledgeGraphStore in Contracts for backward compatibility.
-/// The RagService implementation (RedisKnowledgeGraphStore) implements this interface.
+/// Shared interface for knowledge graph storage.
+/// Used by both RagService (graph context building) and KnowledgeService (REST API).
 /// </summary>
 public interface IKnowledgeGraphStore
 {

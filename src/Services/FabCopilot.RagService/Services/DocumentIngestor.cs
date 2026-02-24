@@ -214,40 +214,44 @@ public sealed class DocumentIngestor
             _logger.LogDebug(
                 "Upserted chunk {ChunkIndex}/{ChunkCount} for document {DocumentId}",
                 i + 1, chunks.Count, documentId);
-
-            // Extract entities and relations for knowledge graph (if enabled)
-            if (_entityExtractor is not null && _graphStore is not null && _ragOptions.ExtractEntitiesOnIngest)
-            {
-                try
-                {
-                    var entities = await _entityExtractor.ExtractEntitiesAsync(chunk, ct);
-                    foreach (var entity in entities)
-                    {
-                        await _graphStore.UpsertEntityAsync(entity, ct);
-                    }
-
-                    var relations = await _entityExtractor.ExtractRelationsAsync(chunk, entities, ct);
-                    foreach (var relation in relations)
-                    {
-                        await _graphStore.UpsertRelationAsync(relation, ct);
-                    }
-
-                    _logger.LogDebug(
-                        "Extracted {EntityCount} entities and {RelationCount} relations from chunk {ChunkIndex} of {DocumentId}",
-                        entities.Count, relations.Count, i + 1, documentId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex,
-                        "Entity extraction failed for chunk {ChunkIndex} of {DocumentId}, continuing",
-                        i + 1, documentId);
-                }
-            }
         }
 
         _logger.LogInformation(
-            "Completed ingestion of document {DocumentId}. Chunks upserted: {ChunkCount}",
+            "Completed vector ingestion of document {DocumentId}. Chunks upserted: {ChunkCount}",
             documentId, chunks.Count);
+
+        // Post-processing: batch entity extraction for knowledge graph (if enabled)
+        if (_entityExtractor is not null && _graphStore is not null && _ragOptions.ExtractEntitiesOnIngest)
+        {
+            try
+            {
+                _logger.LogInformation(
+                    "Starting batch entity extraction for {DocumentId} ({ChunkCount} chunks)",
+                    documentId, chunks.Count);
+
+                var (entities, relations) = await _entityExtractor.ExtractFromBatchAsync(chunks, ct);
+
+                foreach (var entity in entities)
+                {
+                    await _graphStore.UpsertEntityAsync(entity, ct);
+                }
+
+                foreach (var relation in relations)
+                {
+                    await _graphStore.UpsertRelationAsync(relation, ct);
+                }
+
+                _logger.LogInformation(
+                    "Batch entity extraction completed for {DocumentId}: {EntityCount} entities, {RelationCount} relations",
+                    documentId, entities.Count, relations.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Batch entity extraction failed for {DocumentId}, vector data is still available",
+                    documentId);
+            }
+        }
     }
 
     /// <summary>
