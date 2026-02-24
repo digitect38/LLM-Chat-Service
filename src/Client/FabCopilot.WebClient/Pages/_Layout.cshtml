@@ -33,6 +33,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/erlang.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
     <script>
@@ -317,6 +318,106 @@
                 text.textContent = '정확한 위치를 표시할 수 없습니다';
                 fallback.appendChild(text);
                 overlay.appendChild(fallback);
+            }
+        };
+
+        // ─── Client Settings (localStorage) ─────────────────────────
+        window.clientSettings = {
+            getCodeFont: function() {
+                return localStorage.getItem('fab-code-font') || 'Cascadia Code';
+            },
+            setCodeFont: function(font) {
+                localStorage.setItem('fab-code-font', font);
+                document.documentElement.style.setProperty('--code-font',
+                    "'" + font + "', 'Fira Code', 'Consolas', monospace");
+            },
+            init: function() {
+                this.setCodeFont(this.getCodeFont());
+            }
+        };
+        window.clientSettings.init();
+
+        // ─── Audio Recorder (STT) ─────────────────────────────────────
+        window.audioRecorder = {
+            _mediaRecorder: null,
+            _chunks: [],
+            _dotNetRef: null,
+            _gatewayUrl: '',
+            _equipmentId: 'default',
+
+            init: function(dotNetRef, equipmentId) {
+                this._dotNetRef = dotNetRef;
+                // Derive gateway URL from current browser origin (HTTPS→5001, HTTP→5000)
+                var gwPort = window.location.protocol === 'https:' ? '5001' : '5000';
+                this._gatewayUrl = window.location.protocol + '//' + window.location.hostname + ':' + gwPort;
+                this._equipmentId = equipmentId || 'default';
+            },
+
+            updateEquipmentId: function(equipmentId) {
+                this._equipmentId = equipmentId;
+            },
+
+            start: async function() {
+                try {
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        throw { name: 'NotSupportedError',
+                                message: 'HTTPS 연결이 필요합니다 (Tailscale HTTPS 또는 localhost만 지원)' };
+                    }
+                    var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this._chunks = [];
+                    var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                        ? 'audio/webm;codecs=opus' : 'audio/webm';
+                    this._mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+                    var self = this;
+                    this._mediaRecorder.ondataavailable = function(e) {
+                        if (e.data.size > 0) self._chunks.push(e.data);
+                    };
+                    this._mediaRecorder.onstop = function() {
+                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        self._sendAudio();
+                    };
+                    this._mediaRecorder.start();
+                    return true;
+                } catch (err) {
+                    if (this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError',
+                            err.name === 'NotAllowedError' ? '마이크 권한이 거부되었습니다' : err.message);
+                    return false;
+                }
+            },
+
+            stop: function() {
+                if (this._mediaRecorder && this._mediaRecorder.state === 'recording') {
+                    this._mediaRecorder.stop();
+                }
+            },
+
+            _sendAudio: async function() {
+                var blob = new Blob(this._chunks, { type: 'audio/webm' });
+                var form = new FormData();
+                form.append('audio', blob, 'recording.webm');
+                try {
+                    var resp = await fetch(
+                        this._gatewayUrl + '/api/transcribe/' + encodeURIComponent(this._equipmentId),
+                        { method: 'POST', body: form });
+                    if (!resp.ok) {
+                        var errText = await resp.text();
+                        throw new Error(errText || 'HTTP ' + resp.status);
+                    }
+                    var data = await resp.json();
+                    if (this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionComplete', data.text || '');
+                } catch (err) {
+                    if (this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError',
+                            err.message || '음성 변환 실패');
+                }
+            },
+
+            dispose: function() {
+                if (this._mediaRecorder && this._mediaRecorder.state === 'recording')
+                    this._mediaRecorder.stop();
+                this._dotNetRef = null;
             }
         };
 
