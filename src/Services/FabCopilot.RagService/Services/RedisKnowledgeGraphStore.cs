@@ -12,6 +12,7 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
     private const string EntityPrefix = "graph:entity:";
     private const string RelationPrefix = "graph:rel:";
     private const string IndexPrefix = "graph:idx:";
+    private const string KeywordPrefix = "graph:kw:";
     private const string AllEntitiesKey = "graph:all_entities";
     private const string AllRelationsKey = "graph:all_relations";
 
@@ -44,6 +45,18 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
         var allEntities = await _sessionStore.GetAsync<HashSet<string>>(AllEntitiesKey, ct) ?? [];
         allEntities.Add(entity.Name.ToLowerInvariant());
         await _sessionStore.SetAsync(AllEntitiesKey, allEntities, ct: ct);
+
+        // Add to keyword index: each word in entity name maps to the entity
+        var normalizedName = entity.Name.ToLowerInvariant();
+        var words = normalizedName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var word in words)
+        {
+            if (word.Length < 2) continue;
+            var kwKey = $"{KeywordPrefix}{word}";
+            var entityNames = await _sessionStore.GetAsync<HashSet<string>>(kwKey, ct) ?? [];
+            if (entityNames.Add(normalizedName))
+                await _sessionStore.SetAsync(kwKey, entityNames, ct: ct);
+        }
 
         _logger.LogDebug("Upserted entity: {Name} ({Type})", entity.Name, entity.Type);
     }
@@ -281,6 +294,65 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
         return collectedRelations;
     }
 
+    /// <summary>
+    /// Rebuilds the keyword index for all existing entities.
+    /// Call once on startup to ensure entities ingested before keyword indexing work correctly.
+    /// </summary>
+    public async Task RebuildKeywordIndexAsync(CancellationToken ct)
+    {
+        var allEntityNames = await _sessionStore.GetAsync<HashSet<string>>(AllEntitiesKey, ct) ?? [];
+        var indexedCount = 0;
+
+        foreach (var entityName in allEntityNames)
+        {
+            var words = entityName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var word in words)
+            {
+                if (word.Length < 2) continue;
+                var kwKey = $"{KeywordPrefix}{word}";
+                var names = await _sessionStore.GetAsync<HashSet<string>>(kwKey, ct) ?? [];
+                if (names.Add(entityName))
+                {
+                    await _sessionStore.SetAsync(kwKey, names, ct: ct);
+                    indexedCount++;
+                }
+            }
+        }
+
+        _logger.LogInformation(
+            "Keyword index rebuilt. Entities={EntityCount}, IndexEntries={IndexCount}",
+            allEntityNames.Count, indexedCount);
+    }
+
+    /// <summary>
+    /// Resolves keywords to actual entity names via keyword index and exact match.
+    /// For example, keyword "cmp" resolves to entity "cmp 장비".
+    /// </summary>
+    public async Task<List<string>> ResolveKeywordsToEntitiesAsync(
+        List<string> keywords, CancellationToken ct)
+    {
+        var resolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var keyword in keywords)
+        {
+            var normalized = keyword.ToLowerInvariant();
+
+            // 1. Exact entity match
+            var entity = await _sessionStore.GetAsync<GraphEntity>($"{EntityPrefix}{normalized}", ct);
+            if (entity is not null)
+                resolved.Add(normalized);
+
+            // 2. Keyword index lookup (word → entity names containing that word)
+            var kwKey = $"{KeywordPrefix}{normalized}";
+            var entityNames = await _sessionStore.GetAsync<HashSet<string>>(kwKey, ct);
+            if (entityNames is not null)
+            {
+                foreach (var name in entityNames)
+                    resolved.Add(name);
+            }
+        }
+        return resolved.ToList();
+    }
+
     public async Task<string> BuildGraphContextAsync(
         string query, List<string> keywords, CancellationToken ct)
     {
@@ -288,29 +360,41 @@ public sealed class RedisKnowledgeGraphStore : IKnowledgeGraphStore
         var allEntities = new List<GraphEntity>();
         var allRelations = new List<GraphRelation>();
 
-        // Find entities and relations matching keywords
-        foreach (var keyword in keywords)
+        // Resolve keywords to actual entity names via keyword index (cap at 10 to limit BFS)
+        var resolvedEntityNames = await ResolveKeywordsToEntitiesAsync(keywords, ct);
+
+        _logger.LogInformation(
+            "Resolved {KeywordCount} keywords to {EntityNameCount} entity names: [{EntityNames}]",
+            keywords.Count, resolvedEntityNames.Count,
+            string.Join(", ", resolvedEntityNames.Take(10)));
+
+        // Find entities and relations from resolved entity names
+        foreach (var entityName in resolvedEntityNames.Take(10))
         {
-            var related = await GetRelatedEntitiesAsync(keyword, maxDepth, ct);
+            var related = await GetRelatedEntitiesAsync(entityName, maxDepth, ct);
             allEntities.AddRange(related);
 
-            var relations = await GetRelatedRelationsAsync(keyword, maxDepth, ct);
+            var relations = await GetRelatedRelationsAsync(entityName, maxDepth, ct);
             allRelations.AddRange(relations);
         }
 
         if (allEntities.Count == 0 && allRelations.Count == 0)
             return string.Empty;
 
-        // Deduplicate entities by name
+        // Deduplicate and cap to avoid overwhelming the LLM prompt
+        const int maxEntities = 20;
+        const int maxRelations = 30;
+
         var uniqueEntities = allEntities
             .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
+            .Take(maxEntities)
             .ToList();
 
-        // Deduplicate relations by source+type+target
         var uniqueRelations = allRelations
             .GroupBy(r => $"{r.SourceId}:{r.RelationType}:{r.TargetId}", StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
+            .Take(maxRelations)
             .ToList();
 
         var parts = new List<string> { "[관련 지식 그래프]" };

@@ -66,6 +66,10 @@ public sealed class RagWorker : BackgroundService
         _llmReranker = llmReranker;
         _graphStore = graphStore;
         _agenticOrchestrator = agenticOrchestrator;
+
+        _logger.LogInformation(
+            "RagWorker initialized. GraphStore={GraphStoreAvailable}, EnableGraphLookup={EnableGraphLookup}, ExtractEntitiesOnIngest={ExtractEntities}",
+            _graphStore is not null, _ragOptions.EnableGraphLookup, _ragOptions.ExtractEntitiesOnIngest);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -73,6 +77,19 @@ public sealed class RagWorker : BackgroundService
         _logger.LogInformation(
             "RagWorker started. Subscribing to {Subject} with queue group {QueueGroup}. DefaultPipeline={DefaultPipeline}",
             NatsSubjects.RagRequest, QueueGroup, _ragOptions.DefaultPipelineMode);
+
+        // Rebuild keyword index for entities ingested before keyword indexing was added
+        if (_graphStore is not null && _ragOptions.EnableGraphLookup)
+        {
+            try
+            {
+                await _graphStore.RebuildKeywordIndexAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to rebuild graph keyword index on startup");
+            }
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -366,12 +383,40 @@ public sealed class RagWorker : BackgroundService
         // 5.5. MMR diversity selection
         var finalResults = ApplyMmr(reranked, request.Query, request.TopK);
 
+        // 6. Graph lookup: enrich results with knowledge graph context
+        var results = MapToRetrievalResults(finalResults);
+        if (_graphStore is not null && _ragOptions.EnableGraphLookup)
+        {
+            try
+            {
+                var keywords = ExtractKeywords(request.Query);
+                var graphContext = await _graphStore.BuildGraphContextAsync(
+                    request.Query, keywords, ct);
+
+                _logger.LogInformation(
+                    "Graph context built. ConversationId={ConversationId}, Keywords=[{Keywords}], ContextLength={Length}",
+                    conversationId, string.Join(", ", keywords.Take(5)), graphContext?.Length ?? 0);
+
+                if (!string.IsNullOrEmpty(graphContext))
+                {
+                    foreach (var result in results)
+                    {
+                        result.GraphContext = graphContext;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Graph lookup failed, continuing without graph context. ConversationId={ConversationId}", conversationId);
+            }
+        }
+
         return new RagResponse
         {
             ConversationId = conversationId,
             PipelineMode = RagPipelineMode.Advanced,
             RewrittenQuery = rewrittenQuery,
-            Results = MapToRetrievalResults(finalResults)
+            Results = results
         };
     }
 

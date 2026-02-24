@@ -142,6 +142,12 @@ app.MapGet("/api/graph/stats", async (IKnowledgeGraphStore graphStore, Cancellat
     return Results.Ok(stats);
 });
 
+app.MapPost("/api/graph/rebuild-keyword-index", async (IKnowledgeGraphStore graphStore, CancellationToken ct) =>
+{
+    await graphStore.RebuildKeywordIndexAsync(ct);
+    return Results.Ok(new { status = "rebuilt" });
+});
+
 app.Run();
 
 // Minimal request DTOs for the API endpoints
