@@ -151,7 +151,18 @@
                     var tempDiv = document.createElement('div');
                     tempDiv.innerHTML = html;
                     tempDiv.querySelectorAll('pre code').forEach(function (block) {
-                        hljs.highlightElement(block);
+                        var lang = (block.className.match(/language-(\w+)/) || [, ''])[1];
+                        var code = block.textContent;
+                        try {
+                            var result;
+                            if (lang && hljs.getLanguage(lang)) {
+                                result = hljs.highlight(code, { language: lang });
+                            } else {
+                                result = hljs.highlightAuto(code);
+                            }
+                            block.innerHTML = result.value;
+                            block.classList.add('hljs');
+                        } catch (e) {}
                     });
                     html = tempDiv.innerHTML;
                 }

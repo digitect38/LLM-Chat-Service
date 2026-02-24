@@ -548,6 +548,7 @@ html, body {
     margin: 12px 0;
     font-size: 0.88em;
     line-height: 1.5;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 
 .rendered-markdown pre code {
