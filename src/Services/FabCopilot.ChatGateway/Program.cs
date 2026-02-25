@@ -13,11 +13,24 @@ builder.Host.AddFabObservability(builder.Configuration);
 builder.Services.AddFabMessaging(builder.Configuration);
 builder.Services.AddFabRedis(builder.Configuration);
 builder.Services.AddFabTelemetry(builder.Configuration);
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+});
 builder.Services.AddSingleton<IConnectionManager, ConnectionManager>();
 builder.Services.AddHostedService<ChatStreamRelayService>();
+builder.Services.AddHttpClient("Whisper", (sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var baseUrl = config["Whisper:BaseUrl"] ?? "http://localhost:8300";
+    client.BaseAddress = new Uri(baseUrl);
+    client.Timeout = TimeSpan.FromSeconds(config.GetValue("Whisper:TimeoutSeconds", 60));
+});
 
 var app = builder.Build();
 
+app.UseCors();
 app.UseSerilogRequestLogging();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 
@@ -81,6 +94,55 @@ app.MapPost("/api/upload/{equipmentId}", async (HttpRequest req, string equipmen
         file.FileName, file.Length, equipmentId, destPath);
 
     return Results.Ok(new { fileName, size = file.Length, equipmentId, path = destPath });
+}).DisableAntiforgery();
+
+// Whisper STT transcription proxy endpoint
+app.MapPost("/api/transcribe/{equipmentId}", async (
+    HttpRequest req, string equipmentId,
+    IConfiguration config, IHttpClientFactory httpFactory,
+    ILogger<Program> logger) =>
+{
+    if (!req.HasFormContentType)
+        return Results.BadRequest(new { error = "Content-Type must be multipart/form-data" });
+
+    IFormCollection form;
+    try { form = await req.ReadFormAsync(); }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"Invalid form data: {ex.Message}" });
+    }
+
+    var file = form.Files["audio"] ?? form.Files.FirstOrDefault();
+    if (file is null || file.Length == 0)
+        return Results.BadRequest(new { error = "No audio file provided" });
+
+    var maxSizeMb = config.GetValue("Whisper:MaxFileSizeMb", 25);
+    if (file.Length > maxSizeMb * 1024L * 1024L)
+        return Results.BadRequest(new { error = $"Audio exceeds {maxSizeMb}MB limit" });
+
+    // Forward to Whisper server (language auto-detect if not specified)
+    using var client = httpFactory.CreateClient("Whisper");
+    using var content = new MultipartFormDataContent();
+    using var audioStream = file.OpenReadStream();
+    var streamContent = new StreamContent(audioStream);
+    streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+        file.ContentType ?? "audio/webm");
+    content.Add(streamContent, "file", file.FileName ?? "audio.webm");
+    var language = config["Whisper:Language"];
+    if (!string.IsNullOrEmpty(language))
+        content.Add(new StringContent(language), "language");
+
+    var response = await client.PostAsync("/v1/audio/transcriptions", content);
+    if (!response.IsSuccessStatusCode)
+    {
+        var err = await response.Content.ReadAsStringAsync();
+        logger.LogWarning("Whisper transcription failed: {Status} {Error}", response.StatusCode, err);
+        return Results.StatusCode((int)response.StatusCode);
+    }
+
+    var json = await response.Content.ReadAsStringAsync();
+    logger.LogInformation("Transcription for {EquipmentId}: {Length} chars", equipmentId, json.Length);
+    return Results.Content(json, "application/json");
 }).DisableAntiforgery();
 
 // Feedback endpoint — logs user feedback to the audit trail
@@ -150,6 +212,13 @@ app.MapGet("/api/conversations/{equipmentId}/{conversationId}", async (string eq
         return Results.NotFound(new { error = "Conversation not found" });
 
     return Results.Ok(conversation);
+});
+
+app.MapDelete("/api/conversations/{equipmentId}/{conversationId}", async (string equipmentId, string conversationId, IConversationStore store, ILogger<Program> logger) =>
+{
+    await store.DeleteAsync(conversationId, equipmentId);
+    logger.LogInformation("Conversation {ConversationId} deleted for equipment {EquipmentId}", conversationId, equipmentId);
+    return Results.Ok(new { status = "deleted" });
 });
 
 app.Run();

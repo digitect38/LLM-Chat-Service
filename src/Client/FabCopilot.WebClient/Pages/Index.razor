@@ -8,6 +8,8 @@
 @inject IJSRuntime JS
 @inject IOptions<ModelOptions> ModelOptionsAccessor
 @inject IOptions<EquipmentOptions> EquipmentOptionsAccessor
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
 @implements IAsyncDisposable
 
 <div class="chat-app">
@@ -35,12 +37,20 @@
             {
                 @foreach (var conv in _conversationHistory)
                 {
-                    <button class="conv-item @(conv.Id == _conversationId ? "conv-active" : "")"
-                            @onclick="() => SwitchConversation(conv.Id)"
-                            title="@conv.Title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                        <span class="conv-title">@conv.Title</span>
-                    </button>
+                    <div class="conv-item-wrapper">
+                        <button class="conv-item @(conv.Id == _conversationId ? "conv-active" : "")"
+                                @onclick="() => SwitchConversation(conv.Id)"
+                                title="@conv.Title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                            <span class="conv-title">@conv.Title</span>
+                        </button>
+                        <button class="conv-delete-btn"
+                                @onclick="() => DeleteConversationAsync(conv.Id)"
+                                @onclick:stopPropagation="true"
+                                title="대화 삭제">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
                 }
             }
         </nav>
@@ -57,6 +67,14 @@
                 </select>
                 <span class="status-dot @(ChatService.IsConnected ? "dot-on" : "dot-off")"></span>
             </div>
+            <button class="sidebar-settings-btn" @onclick='() => Navigation.NavigateTo("/settings")'>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                설정
+            </button>
+            <button class="sidebar-settings-btn" @onclick='() => Navigation.NavigateTo("/server/settings")'>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                서버 설정
+            </button>
         </div>
     </aside>
 
@@ -73,7 +91,18 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
             }
+            <div class="render-mode-toggle">
+                <button class="toggle-btn @(!_batchRenderMode ? "toggle-active" : "")"
+                        @onclick="() => SetRenderMode(false)">스트리밍</button>
+                <button class="toggle-btn @(_batchRenderMode ? "toggle-active" : "")"
+                        @onclick="() => SetRenderMode(true)">한꺼번에</button>
+            </div>
             <div class="topbar-spacer"></div>
+            <button class="topbar-icon-btn @(_citationPaneOpen ? "topbar-icon-active" : "")"
+                    @onclick="ToggleCitationPane"
+                    title="@(_citationPaneOpen ? "참조 패널 닫기" : "참조 패널 열기")">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </button>
         </div>
 
         <!-- Messages -->
@@ -130,6 +159,23 @@
                                 else if (msg.IsUser)
                                 {
                                     <div class="msg-content user-text">@msg.Text</div>
+                                }
+                                else if (msg.IsStreaming && _batchRenderMode)
+                                {
+                                    <div class="msg-content batch-loading">
+                                        <div class="skeleton-line" style="width:85%"></div>
+                                        <div class="skeleton-line" style="width:70%"></div>
+                                        <div class="skeleton-line" style="width:45%"></div>
+                                        <span class="batch-loading-text">응답 생성 중...</span>
+                                    </div>
+                                }
+                                else if (msg.IsStreaming && string.IsNullOrEmpty(msg.Text))
+                                {
+                                    <div class="msg-content typing-indicator">
+                                        <span class="typing-dot"></span>
+                                        <span class="typing-dot"></span>
+                                        <span class="typing-dot"></span>
+                                    </div>
                                 }
                                 else if (msg.IsStreaming)
                                 {
@@ -230,6 +276,23 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                     }
                 </button>
+                <button class="mic-btn @(_isRecording ? "mic-recording" : "") @(_isTranscribing ? "mic-transcribing" : "")"
+                        @onclick="ToggleRecording"
+                        disabled="@(_isSending || _isTranscribing || _isUploading)"
+                        title="@(_isRecording ? "녹음 중지" : "음성 입력")">
+                    @if (_isTranscribing)
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                    }
+                    else if (_isRecording)
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    }
+                    else
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    }
+                </button>
                 <InputFile OnChange="HandleFileUpload" style="display:none" id="fileUploadInput" accept=".pdf,.md,.txt,.png,.jpg,.jpeg" />
                 <textarea id="chatInput"
                           class="chat-textarea"
@@ -302,6 +365,7 @@
     private List<CitationInfo>? _activeCitations;
     private string _selectedModelId = string.Empty;
     private string _searchMode = "hybrid";
+    private bool _batchRenderMode;  // false=스트리밍, true=한꺼번에
     private List<ModelEntry> _availableModels = new();
     private List<EquipmentEntry> _availableEquipment = new();
     private readonly List<ChatMessageViewModel> _messages = new();
@@ -320,6 +384,10 @@
 
     // File upload
     private bool _isUploading;
+
+    // Voice recording (STT)
+    private bool _isRecording;
+    private bool _isTranscribing;
 
     // Latency tracking
     private System.Diagnostics.Stopwatch? _latencyStopwatch;
@@ -431,6 +499,25 @@
         await ScrollToBottom();
     }
 
+    private async Task DeleteConversationAsync(string convId)
+    {
+        var deleted = await ChatService.DeleteConversationAsync(EquipmentId, convId);
+        if (!deleted) return;
+
+        _conversationHistory.RemoveAll(c => c.Id == convId);
+
+        // If the active conversation was deleted, start a new chat
+        if (convId == _conversationId)
+        {
+            _messages.Clear();
+            _conversationId = Guid.NewGuid().ToString("N");
+            _isSending = false;
+            _isStopping = false;
+        }
+
+        StateHasChanged();
+    }
+
     private void SaveCurrentToHistory()
     {
         if (_messages.Count == 0) return;
@@ -492,6 +579,7 @@
         _conversationId = Guid.NewGuid().ToString("N");
         if (ChatService.IsConnected)
             await ChatService.DisconnectAsync();
+        try { await JS.InvokeVoidAsync("audioRecorder.updateEquipmentId", _equipmentId); } catch { }
         await LoadConversationHistoryAsync();
     }
 
@@ -738,6 +826,15 @@
         {
             _dotNetRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("citationInterop.init", _dotNetRef);
+
+            await JS.InvokeVoidAsync("audioRecorder.init", _dotNetRef, EquipmentId);
+
+            var saved = await JS.InvokeAsync<string>("localStorage.getItem", "renderMode");
+            if (saved == "batch")
+            {
+                _batchRenderMode = true;
+                StateHasChanged();
+            }
         }
     }
 
@@ -780,6 +877,64 @@
         _citationPaneOpen = false;
         _autoOpenPage = null;
         StateHasChanged();
+    }
+
+    private void ToggleCitationPane()
+    {
+        if (_citationPaneOpen)
+        {
+            CloseCitationPane();
+        }
+        else
+        {
+            // Re-open with last active citations, or show empty state
+            if (_activeCitations is null || _activeCitations.Count == 0)
+            {
+                // Find last assistant message with citations
+                var lastWithCitations = _messages.LastOrDefault(m => !m.IsUser && m.Citations is { Count: > 0 });
+                if (lastWithCitations is not null)
+                    _activeCitations = lastWithCitations.Citations;
+            }
+            _citationPaneOpen = true;
+            StateHasChanged();
+        }
+    }
+
+    // ─── Voice Recording (STT) ─────────────────────────────────────────
+
+    private async Task ToggleRecording()
+    {
+        if (_isRecording)
+        {
+            _isRecording = false;
+            _isTranscribing = true;
+            await JS.InvokeVoidAsync("audioRecorder.stop");
+        }
+        else
+        {
+            var started = await JS.InvokeAsync<bool>("audioRecorder.start");
+            _isRecording = started;
+        }
+    }
+
+    [JSInvokable]
+    public Task OnTranscriptionComplete(string text)
+    {
+        _isTranscribing = false;
+        if (!string.IsNullOrWhiteSpace(text))
+            UserMessage = text;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnTranscriptionError(string error)
+    {
+        _isTranscribing = false;
+        _isRecording = false;
+        _connectionError = $"음성 변환 실패: {error}";
+        StateHasChanged();
+        return Task.CompletedTask;
     }
 
     // ─── File Upload ─────────────────────────────────────────────────────
@@ -904,8 +1059,14 @@
             else
             {
                 assistantMsg.Text += chunk.Token;
-                _renderCounter++;
-                ScheduleRenderUpdate();
+
+                if (!_batchRenderMode)
+                {
+                    // 스트리밍 모드: 기존 동작 — 100ms 배치 렌더
+                    _renderCounter++;
+                    ScheduleRenderUpdate();
+                }
+                // 한꺼번에 모드: Text만 축적, 렌더 안 함 → IsComplete 시 한 번에 표시
                 ResetStaleStreamTimer();
             }
         });
@@ -1067,6 +1228,15 @@
         }
     }
 
+    // ─── Render Mode ─────────────────────────────────────────────────────
+
+    private async Task SetRenderMode(bool batch)
+    {
+        _batchRenderMode = batch;
+        await JS.InvokeVoidAsync("localStorage.setItem", "renderMode", batch ? "batch" : "stream");
+        StateHasChanged();
+    }
+
     // ─── State / Lifecycle ──────────────────────────────────────────────
 
     private void HandleStateChanged(System.Net.WebSockets.WebSocketState state)
@@ -1093,8 +1263,9 @@
         if (_staleStreamTimer is not null) await _staleStreamTimer.DisposeAsync();
         _timeoutTimer?.Dispose();
         try { await JS.InvokeVoidAsync("citationInterop.dispose"); } catch { }
+        try { await JS.InvokeVoidAsync("audioRecorder.dispose"); } catch { }
         _dotNetRef?.Dispose();
-        await ChatService.DisposeAsync();
+        await ChatService.DisconnectAsync();
     }
 
     // ─── Models ─────────────────────────────────────────────────────────

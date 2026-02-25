@@ -91,6 +91,18 @@ public sealed class RedisConversationStore : IConversationStore
         return conversations.AsReadOnly();
     }
 
+    public async Task DeleteAsync(string conversationId, string equipmentId, CancellationToken ct = default)
+    {
+        var convKey = ConversationKey(conversationId);
+        await _db.KeyDeleteAsync(convKey).ConfigureAwait(false);
+
+        if (!string.IsNullOrEmpty(equipmentId))
+        {
+            var equipKey = EquipmentKey(equipmentId);
+            await _db.SortedSetRemoveAsync(equipKey, conversationId).ConfigureAwait(false);
+        }
+    }
+
     private string ConversationKey(string conversationId) => $"{_prefix}conv:{conversationId}";
     private string EquipmentKey(string equipmentId) => $"{_prefix}equip:{equipmentId}:conversations";
 }

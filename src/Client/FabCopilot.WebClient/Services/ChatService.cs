@@ -227,6 +227,21 @@ public sealed class ChatService : IAsyncDisposable
         }
     }
 
+    public async Task<bool> DeleteConversationAsync(string equipmentId, string conversationId)
+    {
+        try
+        {
+            var url = $"{_gatewayHttpUrl.TrimEnd('/')}/api/conversations/{Uri.EscapeDataString(equipmentId)}/{Uri.EscapeDataString(conversationId)}";
+            var response = await _httpClient.DeleteAsync(url);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete conversation {ConversationId}", conversationId);
+            return false;
+        }
+    }
+
     public async Task<ConversationDetail?> GetConversationAsync(string equipmentId, string conversationId)
     {
         try
