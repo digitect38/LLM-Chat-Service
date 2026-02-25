@@ -97,4 +97,70 @@ public class EmbeddingConfigService
 
         File.WriteAllText(_llmServicePath, node.ToJsonString(options));
     }
+
+    private static readonly string[] RagToggleKeys =
+    {
+        "EnableQueryRewriting",
+        "EnableLlmReranking",
+        "EnableGraphLookup",
+        "EnableHybridSearch",
+        "EnableMmr",
+        "EnableRagCache",
+    };
+
+    public Dictionary<string, bool> GetRagToggles()
+    {
+        var ragPath = _appsettingsPaths[0]; // RagService appsettings.json
+        var defaults = new Dictionary<string, bool>
+        {
+            ["EnableQueryRewriting"] = true,
+            ["EnableLlmReranking"] = false,
+            ["EnableGraphLookup"] = true,
+            ["EnableHybridSearch"] = true,
+            ["EnableMmr"] = true,
+            ["EnableRagCache"] = true,
+        };
+
+        if (!File.Exists(ragPath)) return defaults;
+
+        var json = File.ReadAllText(ragPath);
+        var node = JsonNode.Parse(json);
+        var ragSection = node?["Rag"];
+        if (ragSection is null) return defaults;
+
+        foreach (var key in RagToggleKeys)
+        {
+            var val = ragSection[key];
+            if (val is not null)
+                defaults[key] = val.GetValue<bool>();
+        }
+
+        return defaults;
+    }
+
+    public void SetRagToggles(Dictionary<string, bool> toggles)
+    {
+        var ragPath = _appsettingsPaths[0]; // RagService appsettings.json
+        if (!File.Exists(ragPath)) return;
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+
+        var json = File.ReadAllText(ragPath);
+        var node = JsonNode.Parse(json);
+        if (node is null) return;
+
+        if (node["Rag"] is not JsonObject ragSection)
+        {
+            ragSection = new JsonObject();
+            node["Rag"] = ragSection;
+        }
+
+        foreach (var key in RagToggleKeys)
+        {
+            if (toggles.TryGetValue(key, out var value))
+                ragSection[key] = value;
+        }
+
+        File.WriteAllText(ragPath, node.ToJsonString(options));
+    }
 }

@@ -1,0 +1,367 @@
+@page "/server/settings"
+@using Microsoft.Extensions.Options
+@using FabCopilot.WebClient.Configuration
+@using FabCopilot.WebClient.Services
+@inject IOptions<AdminOptions> AdminOpts
+@inject EmbeddingConfigService EmbeddingConfigService
+@inject IOptions<ModelOptions> ModelOptionsAccessor
+@inject NavigationManager Navigation
+
+<div class="settings-page">
+    <div class="settings-container">
+
+        <!-- ===== Navigation Bar ===== -->
+        <div style="display:flex; justify-content:flex-end; gap:8px;">
+            <button class="btn-secondary-sm" @onclick='() => Navigation.NavigateTo("/settings")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                클라이언트 설정
+            </button>
+            <button class="btn-secondary-sm" @onclick='() => Navigation.NavigateTo("/")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                채팅으로
+            </button>
+        </div>
+
+        @if (!_isAuthenticated)
+        {
+            <!-- ═══════════════════════════════════════════════════════════
+                 PASSWORD GATE
+                 ═══════════════════════════════════════════════════════════ -->
+            <div class="settings-card">
+                <div class="auth-gate">
+                    <div class="auth-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                    </div>
+                    <h2 class="auth-title">서버 설정</h2>
+                    <p class="auth-subtitle">관리자 비밀번호를 입력하세요</p>
+                    <form class="auth-form" @onsubmit="Authenticate" @onsubmit:preventDefault>
+                        <input type="password"
+                               class="auth-input"
+                               placeholder="비밀번호"
+                               @bind="_passwordInput"
+                               @bind:event="oninput" />
+                        <button type="submit" class="btn-primary-sm">확인</button>
+                    </form>
+                    @if (_authError)
+                    {
+                        <div class="auth-error">비밀번호가 올바르지 않습니다</div>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- ═══════════════════════════════════════════════════════════
+                 SERVER SETTINGS CARD (authenticated)
+                 ═══════════════════════════════════════════════════════════ -->
+            <div class="settings-card">
+                <div class="settings-header">
+                    <h1 class="settings-title">
+                        <span class="settings-title-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                            서버 설정
+                        </span>
+                    </h1>
+                    <button class="btn-secondary-sm" @onclick="Logout">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        로그아웃
+                    </button>
+                </div>
+
+                <div class="settings-body">
+                    <!-- LLM Model -->
+                    <div class="config-section">
+                        <label class="config-label">LLM 모델</label>
+                        <select class="config-select" @bind="_selectedModelId">
+                            @foreach (var m in _availableModels)
+                            {
+                                <option value="@m.Id">@m.DisplayName</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Search Mode -->
+                    <div class="config-section">
+                        <label class="config-label">검색 모드</label>
+                        <div class="search-mode-toggle">
+                            <button class="toggle-btn @(_searchMode == "hybrid" ? "toggle-active" : "")"
+                                    @onclick='() => _searchMode = "hybrid"'>Hybrid</button>
+                            <button class="toggle-btn @(_searchMode == "strict" ? "toggle-active" : "")"
+                                    @onclick='() => _searchMode = "strict"'>Strict</button>
+                        </div>
+                        <span class="config-hint">
+                            @(_searchMode == "strict" ? "Strict Grounded: 높은 신뢰도만 응답" : "Hybrid: 유연한 검색")
+                        </span>
+                    </div>
+
+                    <!-- Chat Provider -->
+                    <div class="config-section">
+                        <label class="config-label">Chat Provider</label>
+                        <select class="config-select" @bind="_llmProvider">
+                            <option value="Ollama">Ollama</option>
+                            <option value="Tgi">HuggingFace TGI</option>
+                        </select>
+                        @if (_llmProviderChanged)
+                        {
+                            <div class="config-warning">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                Provider 변경 시 서비스 재시작이 필요합니다
+                            </div>
+                        }
+                    </div>
+
+                    <!-- Embedding Provider -->
+                    <div class="config-section">
+                        <label class="config-label">Embedding Provider</label>
+                        <select class="config-select" @bind="_embeddingProvider">
+                            <option value="Ollama">Ollama</option>
+                            <option value="Tei">HuggingFace TEI</option>
+                        </select>
+                        @if (_embeddingProviderChanged)
+                        {
+                            <div class="config-warning">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                Provider 변경 시 서비스 재시작이 필요합니다
+                            </div>
+                        }
+                    </div>
+
+                    <!-- RAG Pipeline Toggles -->
+                    <div class="config-section">
+                        <label class="config-label">RAG 파이프라인</label>
+                        <div class="policy-grid">
+                            <div class="policy-item">
+                                <span class="policy-name">Query Rewriting (LLM 쿼리 재작성)</span>
+                                <div class="search-mode-toggle">
+                                    <button class="toggle-btn @(_ragQueryRewriting ? "toggle-active" : "")"
+                                            @onclick="() => _ragQueryRewriting = true">ON</button>
+                                    <button class="toggle-btn @(!_ragQueryRewriting ? "toggle-active" : "")"
+                                            @onclick="() => _ragQueryRewriting = false">OFF</button>
+                                </div>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">LLM Reranking (LLM 재정렬)</span>
+                                <div class="search-mode-toggle">
+                                    <button class="toggle-btn @(_ragLlmReranking ? "toggle-active" : "")"
+                                            @onclick="() => _ragLlmReranking = true">ON</button>
+                                    <button class="toggle-btn @(!_ragLlmReranking ? "toggle-active" : "")"
+                                            @onclick="() => _ragLlmReranking = false">OFF</button>
+                                </div>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">Graph Lookup (지식 그래프 탐색)</span>
+                                <div class="search-mode-toggle">
+                                    <button class="toggle-btn @(_ragGraphLookup ? "toggle-active" : "")"
+                                            @onclick="() => _ragGraphLookup = true">ON</button>
+                                    <button class="toggle-btn @(!_ragGraphLookup ? "toggle-active" : "")"
+                                            @onclick="() => _ragGraphLookup = false">OFF</button>
+                                </div>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">Hybrid Search (벡터+BM25 융합)</span>
+                                <div class="search-mode-toggle">
+                                    <button class="toggle-btn @(_ragHybridSearch ? "toggle-active" : "")"
+                                            @onclick="() => _ragHybridSearch = true">ON</button>
+                                    <button class="toggle-btn @(!_ragHybridSearch ? "toggle-active" : "")"
+                                            @onclick="() => _ragHybridSearch = false">OFF</button>
+                                </div>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">MMR (다양성 선택)</span>
+                                <div class="search-mode-toggle">
+                                    <button class="toggle-btn @(_ragMmr ? "toggle-active" : "")"
+                                            @onclick="() => _ragMmr = true">ON</button>
+                                    <button class="toggle-btn @(!_ragMmr ? "toggle-active" : "")"
+                                            @onclick="() => _ragMmr = false">OFF</button>
+                                </div>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">RAG Cache (결과 캐시)</span>
+                                <div class="search-mode-toggle">
+                                    <button class="toggle-btn @(_ragCache ? "toggle-active" : "")"
+                                            @onclick="() => _ragCache = true">ON</button>
+                                    <button class="toggle-btn @(!_ragCache ? "toggle-active" : "")"
+                                            @onclick="() => _ragCache = false">OFF</button>
+                                </div>
+                            </div>
+                        </div>
+                        @if (_ragToggleChanged)
+                        {
+                            <div class="config-warning">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                RAG 설정 변경 시 RagService 재시작이 필요합니다
+                            </div>
+                        }
+                    </div>
+
+                    <!-- Response Policy (read-only) -->
+                    <div class="config-section">
+                        <label class="config-label">Response Policy</label>
+                        <div class="policy-grid">
+                            <div class="policy-item">
+                                <span class="policy-name">Gate A (Relevance Threshold)</span>
+                                <span class="policy-value">0.55</span>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">Gate B (Faithfulness)</span>
+                                <span class="policy-badge badge-on">활성</span>
+                            </div>
+                            <div class="policy-item">
+                                <span class="policy-name">Gate C (Safety)</span>
+                                <span class="policy-badge badge-on">활성</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-footer">
+                    @if (!string.IsNullOrEmpty(_serverStatus))
+                    {
+                        <span class="settings-status @(_serverStatusIsError ? "status-error" : "status-success")">@_serverStatus</span>
+                    }
+                    <button class="btn-primary-sm" @onclick="ApplyServerSettings">적용</button>
+                </div>
+            </div>
+        }
+
+    </div>
+</div>
+
+@code {
+    // ─── Auth state ──────────────────────────────────────────────
+    private bool _isAuthenticated;
+    private string _passwordInput = string.Empty;
+    private bool _authError;
+
+    // ─── Server settings ─────────────────────────────────────────
+    private string _selectedModelId = string.Empty;
+    private string _searchMode = "hybrid";
+    private string _llmProvider = "Ollama";
+    private string _llmProviderOriginal = "Ollama";
+    private bool _llmProviderChanged => _llmProvider != _llmProviderOriginal;
+    private string _embeddingProvider = "Ollama";
+    private string _embeddingProviderOriginal = "Ollama";
+    private bool _embeddingProviderChanged => _embeddingProvider != _embeddingProviderOriginal;
+    private List<ModelEntry> _availableModels = new();
+    private string? _serverStatus;
+    private bool _serverStatusIsError;
+
+    // ─── RAG pipeline toggles ────────────────────────────────────
+    private bool _ragQueryRewriting;
+    private bool _ragLlmReranking;
+    private bool _ragGraphLookup;
+    private bool _ragHybridSearch;
+    private bool _ragMmr;
+    private bool _ragCache;
+    private bool _ragQueryRewritingOrig;
+    private bool _ragLlmRerankingOrig;
+    private bool _ragGraphLookupOrig;
+    private bool _ragHybridSearchOrig;
+    private bool _ragMmrOrig;
+    private bool _ragCacheOrig;
+    private bool _ragToggleChanged =>
+        _ragQueryRewriting != _ragQueryRewritingOrig ||
+        _ragLlmReranking != _ragLlmRerankingOrig ||
+        _ragGraphLookup != _ragGraphLookupOrig ||
+        _ragHybridSearch != _ragHybridSearchOrig ||
+        _ragMmr != _ragMmrOrig ||
+        _ragCache != _ragCacheOrig;
+
+    protected override void OnInitialized()
+    {
+        var opts = ModelOptionsAccessor.Value;
+        _availableModels = opts.Available;
+        _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
+
+        _llmProvider = EmbeddingConfigService.GetCurrentLlmProvider();
+        _llmProviderOriginal = _llmProvider;
+
+        _embeddingProvider = EmbeddingConfigService.GetCurrentProvider();
+        _embeddingProviderOriginal = _embeddingProvider;
+
+        LoadRagToggles();
+    }
+
+    private void LoadRagToggles()
+    {
+        var toggles = EmbeddingConfigService.GetRagToggles();
+        _ragQueryRewriting = toggles["EnableQueryRewriting"];
+        _ragLlmReranking = toggles["EnableLlmReranking"];
+        _ragGraphLookup = toggles["EnableGraphLookup"];
+        _ragHybridSearch = toggles["EnableHybridSearch"];
+        _ragMmr = toggles["EnableMmr"];
+        _ragCache = toggles["EnableRagCache"];
+        _ragQueryRewritingOrig = _ragQueryRewriting;
+        _ragLlmRerankingOrig = _ragLlmReranking;
+        _ragGraphLookupOrig = _ragGraphLookup;
+        _ragHybridSearchOrig = _ragHybridSearch;
+        _ragMmrOrig = _ragMmr;
+        _ragCacheOrig = _ragCache;
+    }
+
+    private void Authenticate()
+    {
+        if (_passwordInput == AdminOpts.Value.Password)
+        {
+            _isAuthenticated = true;
+            _authError = false;
+            _passwordInput = string.Empty;
+        }
+        else
+        {
+            _authError = true;
+        }
+    }
+
+    private void Logout()
+    {
+        _isAuthenticated = false;
+        _passwordInput = string.Empty;
+        _authError = false;
+    }
+
+    private void ApplyServerSettings()
+    {
+        try
+        {
+            if (_llmProviderChanged)
+            {
+                EmbeddingConfigService.SetLlmProvider(_llmProvider);
+                _llmProviderOriginal = _llmProvider;
+            }
+
+            if (_embeddingProviderChanged)
+            {
+                EmbeddingConfigService.SetProvider(_embeddingProvider);
+                _embeddingProviderOriginal = _embeddingProvider;
+            }
+
+            if (_ragToggleChanged)
+            {
+                EmbeddingConfigService.SetRagToggles(new Dictionary<string, bool>
+                {
+                    ["EnableQueryRewriting"] = _ragQueryRewriting,
+                    ["EnableLlmReranking"] = _ragLlmReranking,
+                    ["EnableGraphLookup"] = _ragGraphLookup,
+                    ["EnableHybridSearch"] = _ragHybridSearch,
+                    ["EnableMmr"] = _ragMmr,
+                    ["EnableRagCache"] = _ragCache,
+                });
+                _ragQueryRewritingOrig = _ragQueryRewriting;
+                _ragLlmRerankingOrig = _ragLlmReranking;
+                _ragGraphLookupOrig = _ragGraphLookup;
+                _ragHybridSearchOrig = _ragHybridSearch;
+                _ragMmrOrig = _ragMmr;
+                _ragCacheOrig = _ragCache;
+            }
+
+            _serverStatus = "서버 설정이 적용되었습니다.";
+            _serverStatusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _serverStatus = $"적용 실패: {ex.Message}";
+            _serverStatusIsError = true;
+        }
+    }
+}

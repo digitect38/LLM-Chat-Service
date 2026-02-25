@@ -8,10 +8,11 @@
 ---
 
 ## 0. 문서 버전
-- Version: 1.7
-- Date: 2026-02-21
+- Version: 1.8
+- Date: 2026-02-25
 - Scope: Architecture Design + Implementation Spec (SDS-lite)
 - Changes:
+  - v1.8: Query Rewriting 기본 활성화 + ServerSettings RAG 파이프라인 토글 UI (6개 ON/OFF: QueryRewriting, LlmReranking, GraphLookup, HybridSearch, MMR, RagCache)
   - v1.7: Spec v3.2 구현 — CitationInfo 12필드 확장, pdf.js PDF 뷰어 + 하이라이트 오버레이, char offset 추적, PDF 테이블 추출(Markdown), 드래그 리사이즈, per-stage timeout 강제, 모바일 전체화면 Citation Pane
   - v1.6: Spec v3.2 Backend Quick Wins — LlmRerankCandidateCount 20→50, 캐시키 (equipment,intent,normalizedQuery), parent_context 메타데이터, RAG timeout 10s→60s, DefaultPipelineMode Naive→Advanced
   - v1.5: 4세대 RAG 파이프라인 아키텍처 추가 (Naive → Advanced → GraphRAG → Agentic RAG)
@@ -574,6 +575,7 @@ flowchart TB
 | **FileWatcher 자동 문서 수집** | ✅ 완료 | FileSystemWatcher → 텍스트 추출(MD/TXT/PDF) → 벡터 수집/삭제 |
 | **RAG 출처 인용** | ✅ 완료 | LLM 응답에 참고 문서명 자동 인용 (📄 파일명에 따르면...) |
 | **메타데이터 역직렬화 수정** | ✅ 완료 | NATS JsonElement→string 변환 (TryGetMetadataString 헬퍼) |
+| **RAG 파이프라인 토글 UI** | ✅ 완료 | ServerSettings에서 6개 RAG 토글 ON/OFF 제어, QueryRewriting 기본 활성화 |
 
 ## 9.2 현재 설정
 
@@ -834,6 +836,7 @@ Pad 유지보수 절차...
 - [x] **v3.2: 모바일 전체화면 Citation Pane 오버레이**
 - [x] **v3.2: PDF serving endpoint (GET /api/documents/{fileName})**
 - [x] **v3.2: 새 텔레메트리 메트릭 (query_rewrite.ms, graph_lookup.ms, stage.timeout)**
+- [x] **v1.8: Query Rewriting 기본 활성화 + ServerSettings RAG 파이프라인 토글 UI (6개 ON/OFF)**
 - [x] Knowledge Base 초기 데이터 적재 (CMP 매뉴얼/SOP 12문서, ~140KB)
 - [ ] MCP Tool schema 확정 및 테스트 데이터로 검증
 - [ ] Log source 연동 방식 선택(DB vs 파일 인덱스)
