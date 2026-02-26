@@ -91,12 +91,7 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
             }
-            <div class="render-mode-toggle">
-                <button class="toggle-btn @(!_batchRenderMode ? "toggle-active" : "")"
-                        @onclick="() => SetRenderMode(false)">스트리밍</button>
-                <button class="toggle-btn @(_batchRenderMode ? "toggle-active" : "")"
-                        @onclick="() => SetRenderMode(true)">한꺼번에</button>
-            </div>
+            <span class="render-mode-badge" title="렌더링 모드 (설정에서 변경)">@(_renderMode switch { "jit" => "JIT", "fade" => "Fade", _ => "Batch" })</span>
             <div class="topbar-spacer"></div>
             <button class="topbar-icon-btn @(_citationPaneOpen ? "topbar-icon-active" : "")"
                     @onclick="ToggleCitationPane"
@@ -166,7 +161,7 @@
                                 {
                                     <div class="msg-content user-text">@msg.Text</div>
                                 }
-                                else if (msg.IsStreaming && _batchRenderMode)
+                                else if (msg.IsStreaming && _renderMode == "batch")
                                 {
                                     <div class="msg-content batch-loading">
                                         <div class="skeleton-line" style="width:85%"></div>
@@ -183,6 +178,11 @@
                                         <span class="typing-dot"></span>
                                     </div>
                                 }
+                                else if (msg.IsStreaming && _renderMode == "jit" && !string.IsNullOrEmpty(msg.RenderedHtml))
+                                {
+                                    <div class="msg-content rendered-markdown">@((MarkupString)msg.RenderedHtml)</div>
+                                    <span class="streaming-cursor"></span>
+                                }
                                 else if (msg.IsStreaming)
                                 {
                                     <div class="msg-content streaming-text">@msg.Text</div>
@@ -190,7 +190,7 @@
                                 }
                                 else
                                 {
-                                    <div class="msg-content rendered-markdown">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
+                                    <div class="msg-content rendered-markdown @(msg.FadeIn ? "msg-fade-in" : "")">@((MarkupString)(msg.RenderedHtml ?? msg.Text))</div>
                                 }
                                 @if (!string.IsNullOrEmpty(msg.Error))
                                 {
@@ -381,7 +381,7 @@
     private List<CitationInfo>? _activeCitations;
     private string _selectedModelId = string.Empty;
     private string _searchMode = "hybrid";
-    private bool _batchRenderMode;  // false=스트리밍, true=한꺼번에
+    private string _renderMode = "jit";  // "jit" | "fade" | "batch"
     private List<ModelEntry> _availableModels = new();
     private List<EquipmentEntry> _availableEquipment = new();
     private readonly List<ChatMessageViewModel> _messages = new();
@@ -847,10 +847,10 @@
 
             await JS.InvokeVoidAsync("audioRecorder.init", _dotNetRef, EquipmentId);
 
-            var saved = await JS.InvokeAsync<string>("localStorage.getItem", "renderMode");
-            if (saved == "batch")
+            var savedRenderMode = await JS.InvokeAsync<string>("clientSettings.getRenderMode");
+            if (!string.IsNullOrEmpty(savedRenderMode))
             {
-                _batchRenderMode = true;
+                _renderMode = savedRenderMode;
                 StateHasChanged();
             }
         }
@@ -1091,6 +1091,8 @@
                 StopStaleStreamTimer();
                 StopTimeoutTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+                if (_renderMode == "fade")
+                    assistantMsg.FadeIn = true;
 
                 // Record latency
                 if (_latencyStopwatch is not null)
@@ -1115,13 +1117,12 @@
             {
                 assistantMsg.Text += chunk.Token;
 
-                if (!_batchRenderMode)
+                if (_renderMode != "batch")
                 {
-                    // 스트리밍 모드: 기존 동작 — 100ms 배치 렌더
                     _renderCounter++;
                     ScheduleRenderUpdate();
                 }
-                // 한꺼번에 모드: Text만 축적, 렌더 안 함 → IsComplete 시 한 번에 표시
+                // batch 모드: Text만 축적, 렌더 안 함 → IsComplete 시 한 번에 표시
                 ResetStaleStreamTimer();
             }
         });
@@ -1131,6 +1132,7 @@
     {
         if (_renderPending) return;
         _renderPending = true;
+        var interval = _renderMode == "jit" ? 300 : 100;
         _renderTimer ??= new Timer(_ =>
         {
             InvokeAsync(async () =>
@@ -1139,12 +1141,21 @@
                 var msg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
                 if (msg is not null)
                 {
+                    if (_renderMode == "jit" && !string.IsNullOrEmpty(msg.Text))
+                    {
+                        try
+                        {
+                            msg.RenderedHtml = await JS.InvokeAsync<string>(
+                                "chatRenderer.renderMarkdownLite", msg.Text);
+                        }
+                        catch { /* JS interop may fail during dispose */ }
+                    }
                     StateHasChanged();
                     await ScrollToBottom();
                 }
             });
         }, null, Timeout.Infinite, Timeout.Infinite);
-        _renderTimer.Change(100, Timeout.Infinite);
+        _renderTimer.Change(interval, Timeout.Infinite);
     }
 
     private void StopRenderTimer()
@@ -1285,10 +1296,10 @@
 
     // ─── Render Mode ─────────────────────────────────────────────────────
 
-    private async Task SetRenderMode(bool batch)
+    private async Task SetRenderMode(string mode)
     {
-        _batchRenderMode = batch;
-        await JS.InvokeVoidAsync("localStorage.setItem", "renderMode", batch ? "batch" : "stream");
+        _renderMode = mode;
+        await JS.InvokeVoidAsync("clientSettings.setRenderMode", mode);
         StateHasChanged();
     }
 
@@ -1334,6 +1345,7 @@
         public bool IsEditing { get; set; }
         public string EditText { get; set; } = string.Empty;
         public bool CopyFeedback { get; set; }
+        public bool FadeIn { get; set; }
         public string? Error { get; set; }
         public List<CitationInfo>? Citations { get; set; }
         public int Feedback { get; set; } // 0=none, 1=positive, -1=negative

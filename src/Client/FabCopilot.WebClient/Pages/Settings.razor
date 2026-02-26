@@ -51,6 +51,17 @@
                     </select>
                     <span class="config-hint">자동 감지: Whisper 서버 가용 시 우선 사용, 실패 시 Web Speech API fallback</span>
                 </div>
+
+                <!-- Render Mode -->
+                <div class="config-section">
+                    <label class="config-label">스트리밍 렌더링</label>
+                    <select class="config-select" @bind="_renderMode">
+                        <option value="jit">JIT 렌더링 (마크다운 실시간)</option>
+                        <option value="fade">Fade 전환 (완료 후 렌더링)</option>
+                        <option value="batch">한꺼번에 (완료까지 숨김)</option>
+                    </select>
+                    <span class="config-hint">JIT: 스트리밍 중 마크다운/코드 포맷 실시간 표시, 수식은 완료 후 렌더링</span>
+                </div>
             </div>
 
             <div class="settings-footer">
@@ -112,6 +123,7 @@
 @code {
     private string _codeFont = "Cascadia Code";
     private string _sttEngine = "auto";
+    private string _renderMode = "jit";
     private string? _clientStatus;
     private bool _clientStatusIsError;
     private bool _historyOpen;
@@ -193,6 +205,10 @@
                 if (!string.IsNullOrEmpty(savedStt))
                     _sttEngine = savedStt;
 
+                var savedRender = await JS.InvokeAsync<string>("clientSettings.getRenderMode");
+                if (!string.IsNullOrEmpty(savedRender))
+                    _renderMode = savedRender;
+
                 StateHasChanged();
             }
             catch { }
@@ -205,6 +221,7 @@
         {
             await JS.InvokeVoidAsync("clientSettings.setCodeFont", _codeFont);
             await JS.InvokeVoidAsync("clientSettings.setSttEngine", _sttEngine);
+            await JS.InvokeVoidAsync("clientSettings.setRenderMode", _renderMode);
             _clientStatus = "클라이언트 설정이 적용되었습니다.";
             _clientStatusIsError = false;
         }

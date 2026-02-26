@@ -202,6 +202,68 @@
                 });
 
                 return html;
+            },
+
+            // Lite renderer: markdown + hljs only, KaTeX skipped (for JIT streaming)
+            renderMarkdownLite: function (text) {
+                if (!text) return '';
+                if (typeof marked === 'undefined' || typeof marked.parse !== 'function') return text;
+                try {
+                    var mathBlocks = [];
+                    // Protect $$...$$
+                    text = text.replace(/\$\$([\s\S]*?)\$\$/g, function (m) {
+                        mathBlocks.push(m); return '%%MATHBLOCK' + (mathBlocks.length - 1) + '%%';
+                    });
+                    // Protect \[...\]
+                    text = text.replace(/\\\[([\s\S]*?)\\\]/g, function (m) {
+                        mathBlocks.push(m); return '%%MATHBLOCK' + (mathBlocks.length - 1) + '%%';
+                    });
+                    // Protect \begin{env}...\end{env}
+                    text = text.replace(/\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\}/g, function (m) {
+                        mathBlocks.push(m); return '%%MATHBLOCK' + (mathBlocks.length - 1) + '%%';
+                    });
+                    // Protect \(...\)
+                    text = text.replace(/\\\(([\s\S]*?)\\\)/g, function (m) {
+                        mathBlocks.push(m); return '%%MATHBLOCK' + (mathBlocks.length - 1) + '%%';
+                    });
+                    // Protect $...$
+                    text = text.replace(/\$([^\$\n]+?)\$/g, function (m) {
+                        mathBlocks.push(m); return '%%MATHBLOCK' + (mathBlocks.length - 1) + '%%';
+                    });
+                    // Protect unclosed math (streaming truncation)
+                    text = text.replace(/(\$\$|\\\[)[\s\S]*$/g, function (m) {
+                        mathBlocks.push(m); return '%%MATHBLOCK' + (mathBlocks.length - 1) + '%%';
+                    });
+
+                    var html = marked.parse(text);
+
+                    // Syntax highlighting
+                    if (typeof hljs !== 'undefined') {
+                        var tmp = document.createElement('div');
+                        tmp.innerHTML = html;
+                        tmp.querySelectorAll('pre code').forEach(function (block) {
+                            var lang = (block.className.match(/language-(\w+)/) || [, ''])[1];
+                            try {
+                                var r = lang && hljs.getLanguage(lang)
+                                    ? hljs.highlight(block.textContent, { language: lang })
+                                    : hljs.highlightAuto(block.textContent);
+                                block.innerHTML = r.value;
+                                block.classList.add('hljs');
+                            } catch (e) {}
+                        });
+                        html = tmp.innerHTML;
+                    }
+
+                    // Restore math as styled raw text
+                    html = html.replace(/%%MATHBLOCK(\d+)%%/g, function (m, i) {
+                        var orig = mathBlocks[parseInt(i)];
+                        return '<span class="math-pending">' +
+                            orig.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+                            '</span>';
+                    });
+
+                    return html;
+                } catch (e) { return text; }
             }
         };
 
@@ -337,6 +399,12 @@
             setSttEngine: function(v) {
                 localStorage.setItem('sttEngine', v);
                 if (window.audioRecorder) window.audioRecorder.setEngine(v);
+            },
+            getRenderMode: function() {
+                return localStorage.getItem('renderMode') || 'jit';
+            },
+            setRenderMode: function(v) {
+                localStorage.setItem('renderMode', v);
             },
             init: function() {
                 this.setCodeFont(this.getCodeFont());

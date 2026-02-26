@@ -936,7 +936,8 @@ html, body {
         max-width: 120px;
     }
 
-    .render-mode-toggle {
+    .render-mode-toggle,
+    .render-mode-badge {
         display: none; /* save space on mobile */
     }
 
@@ -1381,6 +1382,37 @@ html, body {
     border-radius: 8px;
     overflow: hidden;
     flex-shrink: 0;
+}
+
+.render-mode-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: #888;
+    background: #f0f0f0;
+    padding: 3px 10px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+/* Math pending (JIT streaming — raw math text) */
+.math-pending {
+    font-family: var(--code-font);
+    font-size: 13px;
+    color: #8b5cf6;
+    background: #f5f3ff;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+/* Fade-in transition (mode D) */
+.msg-fade-in {
+    animation: fadeInRender 0.4s ease-in;
+}
+
+@keyframes fadeInRender {
+    from { opacity: 0.3; }
+    to { opacity: 1; }
 }
 
 /* ===== Typing Indicator (3-dot bounce) ===== */
