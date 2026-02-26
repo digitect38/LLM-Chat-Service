@@ -14,6 +14,8 @@ html, body {
     margin: 0;
     padding: 0;
     height: 100%;
+    height: 100dvh;
+    overflow: hidden;
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
     font-size: 15px;
     color: #1a1a1a;
@@ -24,7 +26,8 @@ html, body {
 /* ===== App Shell (sidebar + main) ===== */
 .chat-app {
     display: flex;
-    height: 100vh;
+    position: fixed;
+    inset: 0;
     overflow: hidden;
 }
 
@@ -311,15 +314,15 @@ html, body {
 }
 
 .empty-logo {
-    width: 56px;
-    height: 56px;
+    width: 72px;
+    height: 72px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f0f0f0;
+    background: linear-gradient(145deg, #c2693d, #d97757);
     border-radius: 50%;
-    margin-bottom: 16px;
-    color: #666;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 20px rgba(217, 119, 87, 0.3);
 }
 
 .empty-title {
@@ -400,7 +403,9 @@ html, body {
 }
 
 .avatar-assistant {
-    background: #1a1a1a;
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(145deg, #c2693d, #d97757);
     color: #fff;
 }
 
@@ -879,7 +884,7 @@ html, body {
         position: fixed;
         top: 0;
         left: 0;
-        height: 100vh;
+        bottom: 0;
         z-index: 100;
         box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
     }
@@ -888,13 +893,45 @@ html, body {
         margin-left: -260px;
     }
 
+    .chat-topbar {
+        padding: 6px 10px;
+        height: 44px;
+        min-height: 44px;
+    }
+
+    .chat-messages {
+        flex: 1;
+        min-height: 0;
+    }
+
     .msg-wrapper {
-        padding: 0 16px;
-        gap: 12px;
+        padding: 0 12px;
+        gap: 10px;
     }
 
     .chat-input-wrapper {
-        padding: 0 16px 12px;
+        padding: 0 10px 8px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        flex-shrink: 0;
+    }
+
+    .chat-input-box {
+        padding: 6px 6px 6px 14px;
+        border-radius: 20px;
+    }
+
+    .chat-textarea {
+        font-size: 16px; /* prevent iOS zoom on focus */
+    }
+
+    .model-selector {
+        font-size: 13px;
+        padding: 4px 8px;
+        max-width: 120px;
+    }
+
+    .render-mode-toggle {
+        display: none; /* save space on mobile */
     }
 
     .empty-hints {
@@ -912,9 +949,9 @@ html, body {
         position: fixed;
         top: 0;
         right: 0;
+        bottom: 0;
         width: 100vw !important;
         min-width: 100vw !important;
-        height: 100vh;
         z-index: 150;
         transform: translateX(0);
         transition: transform 0.25s ease;
@@ -928,6 +965,15 @@ html, body {
 
     .citation-resize-handle {
         display: none;
+    }
+
+    /* Sidebar overlay backdrop */
+    .sidebar:not(.sidebar-closed) ~ .chat-main::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 99;
     }
 }
 
@@ -1596,6 +1642,40 @@ html, body {
     color: #2563eb !important;
 }
 
+.mic-disabled {
+    opacity: 0.3 !important;
+    cursor: not-allowed !important;
+    text-decoration: line-through;
+}
+
+.recording-timer {
+    font-size: 12px;
+    font-weight: 600;
+    color: #dc2626;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    margin-right: 4px;
+    animation: mic-pulse 1s ease-in-out infinite;
+}
+
+.interim-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 8px 12px;
+    font-size: 15px;
+    color: #999;
+    font-style: italic;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+}
+
 .spin-icon {
     animation: spin 1s linear infinite;
 }
@@ -1741,8 +1821,11 @@ html, body {
     align-items: flex-start;
     justify-content: center;
     min-height: 100vh;
+    min-height: 100dvh;
     padding: 48px 24px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
     background: #f7f7f8;
+    overflow-y: auto;
 }
 
 .settings-container {

@@ -96,6 +96,24 @@ app.MapPost("/api/upload/{equipmentId}", async (HttpRequest req, string equipmen
     return Results.Ok(new { fileName, size = file.Length, equipmentId, path = destPath });
 }).DisableAntiforgery();
 
+// Whisper STT health check endpoint
+app.MapGet("/api/transcribe/health", async (IHttpClientFactory httpFactory) =>
+{
+    try
+    {
+        using var client = httpFactory.CreateClient("Whisper");
+        client.Timeout = TimeSpan.FromSeconds(3);
+        var resp = await client.GetAsync("/health");
+        return resp.IsSuccessStatusCode
+            ? Results.Ok(new { status = "ok" })
+            : Results.StatusCode(503);
+    }
+    catch
+    {
+        return Results.StatusCode(503);
+    }
+});
+
 // Whisper STT transcription proxy endpoint
 app.MapPost("/api/transcribe/{equipmentId}", async (
     HttpRequest req, string equipmentId,
@@ -131,6 +149,11 @@ app.MapPost("/api/transcribe/{equipmentId}", async (
     var language = config["Whisper:Language"];
     if (!string.IsNullOrEmpty(language))
         content.Add(new StringContent(language), "language");
+
+    // Forward domain prompt biasing if provided
+    var prompt = form.ContainsKey("prompt") ? form["prompt"].ToString() : null;
+    if (!string.IsNullOrEmpty(prompt))
+        content.Add(new StringContent(prompt), "prompt");
 
     var response = await client.PostAsync("/v1/audio/transcriptions", content);
     if (!response.IsSuccessStatusCode)

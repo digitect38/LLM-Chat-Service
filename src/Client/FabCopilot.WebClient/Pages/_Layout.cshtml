@@ -6,7 +6,7 @@
 <html lang="ko">
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <base href="~/" />
     <link href="css/app.css" rel="stylesheet" asp-append-version="true" />
     <link href="FabCopilot.WebClient.styles.css" rel="stylesheet" asp-append-version="true" />
@@ -331,33 +331,165 @@
                 document.documentElement.style.setProperty('--code-font',
                     "'" + font + "', 'Fira Code', 'Consolas', monospace");
             },
+            getSttEngine: function() {
+                return localStorage.getItem('sttEngine') || 'auto';
+            },
+            setSttEngine: function(v) {
+                localStorage.setItem('sttEngine', v);
+                if (window.audioRecorder) window.audioRecorder.setEngine(v);
+            },
             init: function() {
                 this.setCodeFont(this.getCodeFont());
             }
         };
         window.clientSettings.init();
 
-        // ─── Audio Recorder (STT) ─────────────────────────────────────
+        // ─── Audio Recorder (STT) — Dual Engine ─────────────────────────
         window.audioRecorder = {
             _mediaRecorder: null,
             _chunks: [],
             _dotNetRef: null,
             _gatewayUrl: '',
             _equipmentId: 'default',
+            _engine: 'whisper',           // 'whisper' | 'webspeech'
+            _engineSetting: 'auto',       // 'auto' | 'whisper' | 'webspeech'
+            _recognition: null,           // SpeechRecognition instance
+            _startTime: null,
+            _timerInterval: null,
+            _disabled: false,
 
-            init: function(dotNetRef, equipmentId) {
+            // Domain prompt biasing terms for CMP equipment
+            _domainPrompts: {
+                'default': 'CMP polishing pad slurry MRR wafer removal rate planarization',
+                'cmp': 'CMP chemical mechanical polishing pad conditioner slurry MRR removal rate WIWNU planarization endpoint detection retaining ring carrier head platen',
+                'etch': 'etch plasma RF chamber selectivity etch rate uniformity endpoint polymer residue',
+                'cvd': 'CVD deposition film thickness uniformity precursor chamber temperature pressure'
+            },
+
+            init: async function(dotNetRef, equipmentId) {
                 this._dotNetRef = dotNetRef;
-                // Derive gateway URL from current browser origin (HTTPS→5001, HTTP→5000)
                 var gwPort = window.location.protocol === 'https:' ? '5001' : '5000';
                 this._gatewayUrl = window.location.protocol + '//' + window.location.hostname + ':' + gwPort;
                 this._equipmentId = equipmentId || 'default';
+
+                // Load saved engine preference
+                this._engineSetting = localStorage.getItem('sttEngine') || 'auto';
+                if (this._engineSetting === 'auto') {
+                    await this.autoDetectEngine();
+                } else {
+                    this._engine = this._engineSetting;
+                }
             },
 
             updateEquipmentId: function(equipmentId) {
                 this._equipmentId = equipmentId;
             },
 
+            setEngine: function(engine) {
+                this._engineSetting = engine;
+                if (engine === 'auto') {
+                    this.autoDetectEngine();
+                } else {
+                    this._engine = engine;
+                    this._disabled = false;
+                }
+            },
+
+            _checkWebSpeechAvailable: function() {
+                return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+            },
+
+            _checkWhisperAvailable: async function() {
+                try {
+                    var resp = await fetch(this._gatewayUrl + '/api/transcribe/health', { signal: AbortSignal.timeout(3000) });
+                    return resp.ok;
+                } catch { return false; }
+            },
+
+            autoDetectEngine: async function() {
+                var whisperOk = await this._checkWhisperAvailable();
+                if (whisperOk) {
+                    this._engine = 'whisper';
+                    this._disabled = false;
+                    return 'whisper';
+                }
+                if (this._checkWebSpeechAvailable()) {
+                    this._engine = 'webspeech';
+                    this._disabled = false;
+                    return 'webspeech';
+                }
+                this._disabled = true;
+                return 'disabled';
+            },
+
+            getEngine: function() { return this._engine; },
+            isDisabled: function() { return this._disabled; },
+
             start: async function() {
+                if (this._disabled) {
+                    if (this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError', 'STT 엔진을 사용할 수 없습니다');
+                    return false;
+                }
+                if (this._engine === 'webspeech') {
+                    return this._startWebSpeech();
+                }
+                return this._startWhisper();
+            },
+
+            // ── Web Speech API mode ──
+            _startWebSpeech: function() {
+                try {
+                    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SpeechRecognition) {
+                        if (this._dotNetRef)
+                            this._dotNetRef.invokeMethodAsync('OnTranscriptionError', 'Web Speech API를 지원하지 않는 브라우저입니다');
+                        return false;
+                    }
+                    this._recognition = new SpeechRecognition();
+                    this._recognition.lang = 'ko-KR';
+                    this._recognition.interimResults = true;
+                    this._recognition.continuous = false;
+                    this._recognition.maxAlternatives = 1;
+                    var self = this;
+
+                    this._recognition.onresult = function(event) {
+                        var transcript = '';
+                        var isFinal = false;
+                        for (var i = event.resultIndex; i < event.results.length; i++) {
+                            transcript += event.results[i][0].transcript;
+                            if (event.results[i].isFinal) isFinal = true;
+                        }
+                        if (self._dotNetRef) {
+                            self._dotNetRef.invokeMethodAsync('OnInterimResult', transcript, isFinal);
+                        }
+                    };
+
+                    this._recognition.onerror = function(event) {
+                        self._stopTimer();
+                        var msg = '음성 인식 오류';
+                        if (event.error === 'not-allowed') msg = '마이크 권한이 거부되었습니다';
+                        else if (event.error === 'no-speech') msg = '음성이 감지되지 않았습니다';
+                        else if (event.error === 'network') msg = '네트워크 오류';
+                        if (self._dotNetRef) self._dotNetRef.invokeMethodAsync('OnTranscriptionError', msg);
+                    };
+
+                    this._recognition.onend = function() {
+                        self._stopTimer();
+                    };
+
+                    this._recognition.start();
+                    this._startTimer();
+                    return true;
+                } catch (err) {
+                    if (this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError', err.message);
+                    return false;
+                }
+            },
+
+            // ── Whisper (MediaRecorder) mode ──
+            _startWhisper: async function() {
                 try {
                     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                         throw { name: 'NotSupportedError',
@@ -374,9 +506,11 @@
                     };
                     this._mediaRecorder.onstop = function() {
                         stream.getTracks().forEach(function(t) { t.stop(); });
+                        self._stopTimer();
                         self._sendAudio();
                     };
                     this._mediaRecorder.start();
+                    this._startTimer();
                     return true;
                 } catch (err) {
                     if (this._dotNetRef)
@@ -387,15 +521,29 @@
             },
 
             stop: function() {
-                if (this._mediaRecorder && this._mediaRecorder.state === 'recording') {
+                if (this._engine === 'webspeech' && this._recognition) {
+                    this._recognition.stop();
+                    this._recognition = null;
+                } else if (this._mediaRecorder && this._mediaRecorder.state === 'recording') {
                     this._mediaRecorder.stop();
                 }
+            },
+
+            _getDomainPrompt: function() {
+                var eqLower = (this._equipmentId || '').toLowerCase();
+                for (var key in this._domainPrompts) {
+                    if (key !== 'default' && eqLower.indexOf(key) !== -1) return this._domainPrompts[key];
+                }
+                return this._domainPrompts['default'];
             },
 
             _sendAudio: async function() {
                 var blob = new Blob(this._chunks, { type: 'audio/webm' });
                 var form = new FormData();
                 form.append('audio', blob, 'recording.webm');
+                // Domain prompt biasing
+                var prompt = this._getDomainPrompt();
+                if (prompt) form.append('prompt', prompt);
                 try {
                     var resp = await fetch(
                         this._gatewayUrl + '/api/transcribe/' + encodeURIComponent(this._equipmentId),
@@ -414,7 +562,27 @@
                 }
             },
 
+            // ── Recording timer ──
+            _startTimer: function() {
+                this._startTime = Date.now();
+                var self = this;
+                this._timerInterval = setInterval(function() {
+                    var elapsed = Math.floor((Date.now() - self._startTime) / 1000);
+                    if (self._dotNetRef) self._dotNetRef.invokeMethodAsync('OnRecordingTick', elapsed);
+                }, 1000);
+            },
+
+            _stopTimer: function() {
+                if (this._timerInterval) {
+                    clearInterval(this._timerInterval);
+                    this._timerInterval = null;
+                }
+                this._startTime = null;
+            },
+
             dispose: function() {
+                this._stopTimer();
+                if (this._recognition) { try { this._recognition.abort(); } catch {} this._recognition = null; }
                 if (this._mediaRecorder && this._mediaRecorder.state === 'recording')
                     this._mediaRecorder.stop();
                 this._dotNetRef = null;
@@ -449,6 +617,23 @@
                 });
             }
         };
+
+        // ─── Mobile keyboard viewport fix ────────────────────────────
+        (function () {
+            if (!window.visualViewport) return;
+            window.visualViewport.addEventListener('resize', function () {
+                // When keyboard closes (viewport height recovers), reset scroll
+                window.scrollTo(0, 0);
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
+            });
+            // Also fix on focus out (keyboard dismiss)
+            document.addEventListener('focusout', function () {
+                setTimeout(function () {
+                    window.scrollTo(0, 0);
+                }, 100);
+            });
+        })();
     </script>
 </body>
 </html>

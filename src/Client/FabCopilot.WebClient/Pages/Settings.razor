@@ -1,159 +1,118 @@
 @page "/settings"
-@using Microsoft.Extensions.Options
-@using FabCopilot.WebClient.Configuration
-@using FabCopilot.WebClient.Services
-@inject EmbeddingConfigService EmbeddingConfigService
-@inject IOptions<ModelOptions> ModelOptionsAccessor
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <div class="settings-page">
-    <div class="settings-card">
-        <div class="settings-header">
-            <h1 class="settings-title">서버 설정</h1>
+    <div class="settings-container">
+
+        <!-- ===== Navigation Bar ===== -->
+        <div style="display:flex; justify-content:flex-end;">
             <button class="btn-secondary-sm" @onclick='() => Navigation.NavigateTo("/")'>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                 채팅으로
             </button>
         </div>
 
-        <div class="settings-body">
-            <!-- LLM Model -->
-            <div class="config-section">
-                <label class="config-label">LLM 모델</label>
-                <select class="config-select" @bind="_selectedModelId">
-                    @foreach (var m in _availableModels)
-                    {
-                        <option value="@m.Id">@m.DisplayName</option>
-                    }
-                </select>
+        <!-- ═══════════════════════════════════════════════════════════
+             CLIENT SETTINGS CARD
+             ═══════════════════════════════════════════════════════════ -->
+        <div class="settings-card">
+            <div class="settings-header">
+                <h1 class="settings-title">
+                    <span class="settings-title-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                        클라이언트 설정
+                    </span>
+                </h1>
+                <span class="config-hint" style="margin:0">브라우저 로컬 저장, 재시작 불필요</span>
             </div>
 
-            <!-- Search Mode -->
-            <div class="config-section">
-                <label class="config-label">검색 모드</label>
-                <div class="search-mode-toggle">
-                    <button class="toggle-btn @(_searchMode == "hybrid" ? "toggle-active" : "")"
-                            @onclick='() => _searchMode = "hybrid"'>Hybrid</button>
-                    <button class="toggle-btn @(_searchMode == "strict" ? "toggle-active" : "")"
-                            @onclick='() => _searchMode = "strict"'>Strict</button>
+            <div class="settings-body">
+                <!-- Code Font -->
+                <div class="config-section">
+                    <label class="config-label">코드 폰트</label>
+                    <select class="config-select" @bind="_codeFont">
+                        <option value="Cascadia Code">Cascadia Code</option>
+                        <option value="Fira Code">Fira Code</option>
+                        <option value="Consolas">Consolas</option>
+                        <option value="JetBrains Mono">JetBrains Mono</option>
+                        <option value="D2Coding">D2Coding</option>
+                    </select>
+                    <span class="config-hint">코드 블록에 사용할 폰트 (로컬 설치 필요)</span>
                 </div>
-                <span class="config-hint">
-                    @(_searchMode == "strict" ? "Strict Grounded: 높은 신뢰도만 응답" : "Hybrid: 유연한 검색")
-                </span>
-            </div>
 
-            <!-- Chat Provider -->
-            <div class="config-section">
-                <label class="config-label">Chat Provider</label>
-                <select class="config-select" @bind="_llmProvider">
-                    <option value="Ollama">Ollama</option>
-                    <option value="Tgi">HuggingFace TGI</option>
-                </select>
-                @if (_llmProviderChanged)
-                {
-                    <div class="config-warning">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                        Provider 변경 시 서비스 재시작이 필요합니다
-                    </div>
-                }
-            </div>
-
-            <!-- Embedding Provider -->
-            <div class="config-section">
-                <label class="config-label">Embedding Provider</label>
-                <select class="config-select" @bind="_embeddingProvider">
-                    <option value="Ollama">Ollama</option>
-                    <option value="Tei">HuggingFace TEI</option>
-                </select>
-                @if (_embeddingProviderChanged)
-                {
-                    <div class="config-warning">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                        Provider 변경 시 서비스 재시작이 필요합니다
-                    </div>
-                }
-            </div>
-
-            <!-- Response Policy (read-only) -->
-            <div class="config-section">
-                <label class="config-label">Response Policy</label>
-                <div class="policy-grid">
-                    <div class="policy-item">
-                        <span class="policy-name">Gate A (Relevance Threshold)</span>
-                        <span class="policy-value">0.55</span>
-                    </div>
-                    <div class="policy-item">
-                        <span class="policy-name">Gate B (Faithfulness)</span>
-                        <span class="policy-badge badge-on">활성</span>
-                    </div>
-                    <div class="policy-item">
-                        <span class="policy-name">Gate C (Safety)</span>
-                        <span class="policy-badge badge-on">활성</span>
-                    </div>
+                <!-- STT Engine -->
+                <div class="config-section">
+                    <label class="config-label">음성 인식 엔진</label>
+                    <select class="config-select" @bind="_sttEngine">
+                        <option value="auto">자동 감지</option>
+                        <option value="whisper">Whisper (On-Premise)</option>
+                        <option value="webspeech">Web Speech API</option>
+                    </select>
+                    <span class="config-hint">자동 감지: Whisper 서버 가용 시 우선 사용, 실패 시 Web Speech API fallback</span>
                 </div>
+            </div>
+
+            <div class="settings-footer">
+                @if (!string.IsNullOrEmpty(_clientStatus))
+                {
+                    <span class="settings-status @(_clientStatusIsError ? "status-error" : "status-success")">@_clientStatus</span>
+                }
+                <button class="btn-primary-sm" @onclick="ApplyClientSettings">적용</button>
             </div>
         </div>
 
-        <div class="settings-footer">
-            @if (!string.IsNullOrEmpty(_statusMessage))
-            {
-                <span class="settings-status @(_statusIsError ? "status-error" : "status-success")">@_statusMessage</span>
-            }
-            <button class="btn-primary-sm" @onclick="ApplySettings">적용</button>
+        <!-- ===== Server Settings Link ===== -->
+        <div style="text-align:center;">
+            <button class="btn-secondary-sm" @onclick='() => Navigation.NavigateTo("/server/settings")'>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                서버 설정으로
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </button>
         </div>
+
     </div>
 </div>
 
 @code {
-    private string _selectedModelId = string.Empty;
-    private string _searchMode = "hybrid";
-    private string _llmProvider = "Ollama";
-    private string _llmProviderOriginal = "Ollama";
-    private bool _llmProviderChanged => _llmProvider != _llmProviderOriginal;
-    private string _embeddingProvider = "Ollama";
-    private string _embeddingProviderOriginal = "Ollama";
-    private bool _embeddingProviderChanged => _embeddingProvider != _embeddingProviderOriginal;
-    private List<ModelEntry> _availableModels = new();
+    private string _codeFont = "Cascadia Code";
+    private string _sttEngine = "auto";
+    private string? _clientStatus;
+    private bool _clientStatusIsError;
 
-    private string? _statusMessage;
-    private bool _statusIsError;
-
-    protected override void OnInitialized()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        var opts = ModelOptionsAccessor.Value;
-        _availableModels = opts.Available;
-        _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
+        if (firstRender)
+        {
+            try
+            {
+                var saved = await JS.InvokeAsync<string>("clientSettings.getCodeFont");
+                if (!string.IsNullOrEmpty(saved))
+                    _codeFont = saved;
 
-        _llmProvider = EmbeddingConfigService.GetCurrentLlmProvider();
-        _llmProviderOriginal = _llmProvider;
+                var savedStt = await JS.InvokeAsync<string>("clientSettings.getSttEngine");
+                if (!string.IsNullOrEmpty(savedStt))
+                    _sttEngine = savedStt;
 
-        _embeddingProvider = EmbeddingConfigService.GetCurrentProvider();
-        _embeddingProviderOriginal = _embeddingProvider;
+                StateHasChanged();
+            }
+            catch { }
+        }
     }
 
-    private void ApplySettings()
+    private async Task ApplyClientSettings()
     {
         try
         {
-            if (_llmProviderChanged)
-            {
-                EmbeddingConfigService.SetLlmProvider(_llmProvider);
-                _llmProviderOriginal = _llmProvider;
-            }
-
-            if (_embeddingProviderChanged)
-            {
-                EmbeddingConfigService.SetProvider(_embeddingProvider);
-                _embeddingProviderOriginal = _embeddingProvider;
-            }
-
-            _statusMessage = "설정이 적용되었습니다.";
-            _statusIsError = false;
+            await JS.InvokeVoidAsync("clientSettings.setCodeFont", _codeFont);
+            await JS.InvokeVoidAsync("clientSettings.setSttEngine", _sttEngine);
+            _clientStatus = "클라이언트 설정이 적용되었습니다.";
+            _clientStatusIsError = false;
         }
         catch (Exception ex)
         {
-            _statusMessage = $"설정 적용 실패: {ex.Message}";
-            _statusIsError = true;
+            _clientStatus = $"적용 실패: {ex.Message}";
+            _clientStatusIsError = true;
         }
     }
 }

@@ -111,7 +111,10 @@
             {
                 <div class="empty-state">
                     <div class="empty-logo">
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="7" fill="white" opacity="0.18"/>
+                            <path d="M12 2 L13.1 8.2 L17.4 4.6 L14.5 10.5 L21 10.3 L15.2 13 L18.8 18.4 L12.8 14.8 L12 22 L11.2 14.8 L5.2 18.4 L8.8 13 L3 10.3 L9.5 10.5 L6.6 4.6 L10.9 8.2 Z" fill="white"/>
+                        </svg>
                     </div>
                     <h1 class="empty-title">Fab Copilot</h1>
                     <p class="empty-subtitle">반도체 장비 운영 어시스턴트</p>
@@ -140,7 +143,10 @@
                                 else
                                 {
                                     <div class="avatar avatar-assistant">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-7.07-3.93l1.41-1.41m11.32-11.32l1.41-1.41M1 12h2m18 0h2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41"/></svg>
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                                            <circle cx="12" cy="12" r="7" fill="white" opacity="0.18"/>
+                                            <path d="M12 2 L13.1 8.2 L17.4 4.6 L14.5 10.5 L21 10.3 L15.2 13 L18.8 18.4 L12.8 14.8 L12 22 L11.2 14.8 L5.2 18.4 L8.8 13 L3 10.3 L9.5 10.5 L6.6 4.6 L10.9 8.2 Z" fill="white"/>
+                                        </svg>
                                     </div>
                                 }
                             </div>
@@ -293,16 +299,26 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
                     }
                 </button>
+                @if (_isRecording)
+                {
+                    <span class="recording-timer">@TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
+                }
                 <InputFile OnChange="HandleFileUpload" style="display:none" id="fileUploadInput" accept=".pdf,.md,.txt,.png,.jpg,.jpeg" />
-                <textarea id="chatInput"
-                          class="chat-textarea"
-                          @bind="UserMessage"
-                          @bind:event="oninput"
-                          @bind:after="AutoResizeInput"
-                          @onkeydown="HandleKeyDown"
-                          placeholder="메시지를 입력하세요..."
-                          disabled="@_isSending"
-                          rows="1"></textarea>
+                <div style="position:relative; flex:1; min-width:0;">
+                    <textarea id="chatInput"
+                              class="chat-textarea"
+                              @bind="UserMessage"
+                              @bind:event="oninput"
+                              @bind:after="AutoResizeInput"
+                              @onkeydown="HandleKeyDown"
+                              placeholder="@(_isRecording && !string.IsNullOrEmpty(_interimText) ? "" : "메시지를 입력하세요...")"
+                              disabled="@_isSending"
+                              rows="1"></textarea>
+                    @if (_isRecording && !string.IsNullOrEmpty(_interimText))
+                    {
+                        <div class="interim-text">@_interimText</div>
+                    }
+                </div>
                 @if (_isSending)
                 {
                     <button class="input-action-btn stop-btn" @onclick="StopResponseAsync" title="중지">
@@ -388,6 +404,8 @@
     // Voice recording (STT)
     private bool _isRecording;
     private bool _isTranscribing;
+    private string _interimText = "";
+    private int _recordingSeconds;
 
     // Latency tracking
     private System.Diagnostics.Stopwatch? _latencyStopwatch;
@@ -907,11 +925,17 @@
         if (_isRecording)
         {
             _isRecording = false;
-            _isTranscribing = true;
+            _recordingSeconds = 0;
+            // For Whisper mode, show transcribing spinner while server processes
+            var engine = await JS.InvokeAsync<string>("audioRecorder.getEngine");
+            if (engine == "whisper")
+                _isTranscribing = true;
             await JS.InvokeVoidAsync("audioRecorder.stop");
         }
         else
         {
+            _interimText = "";
+            _recordingSeconds = 0;
             var started = await JS.InvokeAsync<bool>("audioRecorder.start");
             _isRecording = started;
         }
@@ -921,6 +945,9 @@
     public Task OnTranscriptionComplete(string text)
     {
         _isTranscribing = false;
+        _isRecording = false;
+        _interimText = "";
+        _recordingSeconds = 0;
         if (!string.IsNullOrWhiteSpace(text))
             UserMessage = text;
         StateHasChanged();
@@ -932,7 +959,35 @@
     {
         _isTranscribing = false;
         _isRecording = false;
+        _interimText = "";
+        _recordingSeconds = 0;
         _connectionError = $"음성 변환 실패: {error}";
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnInterimResult(string text, bool isFinal)
+    {
+        if (isFinal)
+        {
+            UserMessage = text;
+            _interimText = "";
+            _isRecording = false;
+            _recordingSeconds = 0;
+        }
+        else
+        {
+            _interimText = text;
+        }
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnRecordingTick(int seconds)
+    {
+        _recordingSeconds = seconds;
         StateHasChanged();
         return Task.CompletedTask;
     }
