@@ -222,16 +222,125 @@
                     <button class="btn-primary-sm" @onclick="ApplyServerSettings">적용</button>
                 </div>
             </div>
+
+            <!-- Update History Button -->
+            <div style="text-align:center;">
+                <button class="btn-secondary-sm" @onclick="() => _historyOpen = true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    업데이트 히스토리
+                </button>
+            </div>
         }
 
     </div>
 </div>
+
+@* ───── Update History Modal ───── *@
+@if (_historyOpen)
+{
+    <div class="changelog-overlay" @onclick="() => _historyOpen = false">
+        <div class="changelog-modal" @onclick:stopPropagation="true">
+            <div class="changelog-modal-header">
+                <h2 class="changelog-modal-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    업데이트 히스토리
+                </h2>
+                <button class="changelog-modal-close" @onclick="() => _historyOpen = false">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="changelog-modal-body">
+                @foreach (var ver in Changelog)
+                {
+                    <div class="changelog-entry">
+                        <div class="changelog-header-row">
+                            <span class="changelog-version">@ver.Version</span>
+                            <span class="changelog-date">@ver.Date</span>
+                        </div>
+                        <ul class="changelog-items">
+                            @foreach (var item in ver.Items)
+                            {
+                                <li>@item</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     // ─── Auth state ──────────────────────────────────────────────
     private bool _isAuthenticated;
     private string _passwordInput = string.Empty;
     private bool _authError;
+
+    // ─── Update history modal ─────────────────────────────────
+    private bool _historyOpen;
+
+    private record ChangelogEntry(string Version, string Date, string[] Items);
+
+    private static readonly ChangelogEntry[] Changelog =
+    [
+        new("v1.9.0", "2025-02-27", [
+            "듀얼 STT 엔진 지원 (Whisper + Web Speech API)",
+            "음성 인식 엔진 자동 감지 및 수동 전환",
+            "실시간 interim 인식 결과 표시",
+            "녹음 타이머 및 도메인 프롬프트 바이어싱",
+            "JIT / Fade / Batch 스트리밍 렌더링 모드"
+        ]),
+        new("v1.8.0", "2025-02-20", [
+            "E2E 통합 테스트 프로젝트 (15개 WebSocket 테스트)",
+            "대화 삭제 기능",
+            "Settings 네비게이션 버그 수정"
+        ]),
+        new("v1.7.0", "2025-02-10", [
+            "100개 문서 참조 테스트 추가",
+            "RAG 파이프라인 토글 UI (Query Rewriting, LLM Reranking 등)",
+            "Query Rewriting 기본 활성화"
+        ]),
+        new("v1.6.0", "2025-02-01", [
+            "멀티클라이언트 WebSocket 라우팅 수정",
+            "스트리밍 안정화 (truncation, stale stream 감지)",
+            "크로스 브라우저 LaTeX 렌더링 수정"
+        ]),
+        new("v1.5.0", "2025-01-28", [
+            "LaTeX/KaTeX 수학 수식 렌더링",
+            "코드 블록 구문 강조 (highlight.js)",
+            "Erlang 구문 강조 지원",
+            "코드 폰트 설정 (Cascadia Code 등)"
+        ]),
+        new("v1.4.0", "2025-01-25", [
+            "Graph RAG: 지식 그래프 양방향 탐색",
+            "배치 엔티티 추출 및 그래프 관리 API",
+            "그래프 컨텍스트 Advanced 파이프라인 통합"
+        ]),
+        new("v1.3.0", "2025-01-22", [
+            "HuggingFace TGI Chat Provider 전환 (Ollama ↔ TGI)",
+            "인용 텍스트 마크다운 렌더링",
+            "PDF 인용 뷰어 패널"
+        ]),
+        new("v1.2.0", "2025-01-20", [
+            "설정 페이지 분리 (클라이언트/서버)",
+            "Tailscale VPN 외부 접속 스크립트",
+            "Gate C (Safety), Gate B (Faithfulness) 강화",
+            "Intent Routing 및 폴더 태그"
+        ]),
+        new("v1.1.0", "2025-01-18", [
+            "Embedding Provider 전환 (Ollama/TEI)",
+            "설정 모달 UI",
+            "snowflake-arctic-embed2 임베딩 모델"
+        ]),
+        new("v1.0.0", "2025-01-15", [
+            "초기 릴리스",
+            "WebSocket 실시간 채팅 (NATS 메시지 브로커)",
+            "RAG 파이프라인 (Qdrant 벡터 검색)",
+            "Ollama LLM 스트리밍 응답",
+            "Redis 대화 기록 저장",
+            "Blazor Server 웹 클라이언트"
+        ])
+    ];
 
     // ─── Server settings ─────────────────────────────────────────
     private string _selectedModelId = string.Empty;

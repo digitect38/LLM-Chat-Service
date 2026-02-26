@@ -401,7 +401,10 @@
                 if (window.audioRecorder) window.audioRecorder.setEngine(v);
             },
             getRenderMode: function() {
-                return localStorage.getItem('renderMode') || 'jit';
+                var v = localStorage.getItem('renderMode');
+                // Migrate old values
+                if (v === 'stream') { localStorage.setItem('renderMode', 'jit'); return 'jit'; }
+                return v || 'jit';
             },
             setRenderMode: function(v) {
                 localStorage.setItem('renderMode', v);

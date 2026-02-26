@@ -91,7 +91,14 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
             }
-            <span class="render-mode-badge" title="렌더링 모드 (설정에서 변경)">@(_renderMode switch { "jit" => "JIT", "fade" => "Fade", _ => "Batch" })</span>
+            <div class="render-mode-toggle">
+                <button class="toggle-btn @(_renderMode == "jit" ? "toggle-active" : "")"
+                        @onclick='() => SetRenderMode("jit")'>JIT</button>
+                <button class="toggle-btn @(_renderMode == "fade" ? "toggle-active" : "")"
+                        @onclick='() => SetRenderMode("fade")'>Fade</button>
+                <button class="toggle-btn @(_renderMode == "batch" ? "toggle-active" : "")"
+                        @onclick='() => SetRenderMode("batch")'>Batch</button>
+            </div>
             <div class="topbar-spacer"></div>
             <button class="topbar-icon-btn @(_citationPaneOpen ? "topbar-icon-active" : "")"
                     @onclick="ToggleCitationPane"

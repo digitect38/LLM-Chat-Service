@@ -1766,6 +1766,74 @@ html, body {
     margin-bottom: 3px;
 }
 
+/* Changelog Modal */
+.changelog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeInRender 0.2s ease;
+}
+
+.changelog-modal {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    width: 90%;
+    max-width: 540px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.changelog-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid #e5e5e5;
+    flex-shrink: 0;
+}
+
+.changelog-modal-title {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+    color: #1a1a1a;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.changelog-modal-close {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #888;
+    transition: background 0.15s;
+}
+
+.changelog-modal-close:hover {
+    background: #f0f0f0;
+    color: #1a1a1a;
+}
+
+.changelog-modal-body {
+    padding: 20px 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
 .spin-icon {
     animation: spin 1s linear infinite;
 }
@@ -1968,6 +2036,8 @@ html, body {
 
 .settings-body {
     padding: 24px;
+    max-height: 60vh;
+    overflow-y: auto;
 }
 
 .settings-footer {
