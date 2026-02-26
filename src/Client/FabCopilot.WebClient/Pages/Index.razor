@@ -304,7 +304,7 @@
                     <span class="recording-timer">@TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
                 }
                 <InputFile OnChange="HandleFileUpload" style="display:none" id="fileUploadInput" accept=".pdf,.md,.txt,.png,.jpg,.jpeg" />
-                <div style="position:relative; flex:1; min-width:0;">
+                <div class="chat-textarea-wrapper">
                     <textarea id="chatInput"
                               class="chat-textarea"
                               @bind="UserMessage"
