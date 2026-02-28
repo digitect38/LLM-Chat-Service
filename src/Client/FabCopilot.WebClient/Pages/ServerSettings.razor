@@ -344,7 +344,11 @@
 
     // ─── Server settings ─────────────────────────────────────────
     private string _selectedModelId = string.Empty;
+    private string _selectedModelIdOriginal = string.Empty;
+    private bool _modelChanged => _selectedModelId != _selectedModelIdOriginal;
     private string _searchMode = "hybrid";
+    private string _searchModeOriginal = "hybrid";
+    private bool _searchModeChanged => _searchMode != _searchModeOriginal;
     private string _llmProvider = "Ollama";
     private string _llmProviderOriginal = "Ollama";
     private bool _llmProviderChanged => _llmProvider != _llmProviderOriginal;
@@ -380,7 +384,16 @@
     {
         var opts = ModelOptionsAccessor.Value;
         _availableModels = opts.Available;
-        _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
+
+        // Load persisted model (from LlmService config), fall back to WebClient default
+        var persistedModel = EmbeddingConfigService.GetCurrentLlmModel();
+        _selectedModelId = !string.IsNullOrEmpty(persistedModel)
+            ? persistedModel
+            : (!string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "");
+        _selectedModelIdOriginal = _selectedModelId;
+
+        _searchMode = EmbeddingConfigService.GetCurrentSearchMode();
+        _searchModeOriginal = _searchMode;
 
         _llmProvider = EmbeddingConfigService.GetCurrentLlmProvider();
         _llmProviderOriginal = _llmProvider;
@@ -433,6 +446,18 @@
     {
         try
         {
+            if (_modelChanged)
+            {
+                EmbeddingConfigService.SetLlmModel(_selectedModelId);
+                _selectedModelIdOriginal = _selectedModelId;
+            }
+
+            if (_searchModeChanged)
+            {
+                EmbeddingConfigService.SetSearchMode(_searchMode);
+                _searchModeOriginal = _searchMode;
+            }
+
             if (_llmProviderChanged)
             {
                 EmbeddingConfigService.SetLlmProvider(_llmProvider);
@@ -464,7 +489,10 @@
                 _ragCacheOrig = _ragCache;
             }
 
-            _serverStatus = "서버 설정이 적용되었습니다.";
+            var restartNeeded = _llmProviderChanged || _embeddingProviderChanged || _modelChanged;
+            _serverStatus = restartNeeded
+                ? "서버 설정이 적용되었습니다. Provider/모델 변경은 서비스 재시작 후 반영됩니다."
+                : "서버 설정이 적용되었습니다.";
             _serverStatusIsError = false;
         }
         catch (Exception ex)

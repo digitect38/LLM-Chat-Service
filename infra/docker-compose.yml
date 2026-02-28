@@ -43,8 +43,87 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
 
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    profiles: ["hf"]
+    ports:
+      - "8080:80"
+    volumes:
+      - tei-data:/data
+    environment:
+      - HF_HUB_ENABLE_HF_TRANSFER=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["--model-id", "BAAI/bge-m3"]
+    restart: unless-stopped
+
+  tgi:
+    image: ghcr.io/huggingface/text-generation-inference:2.4.1
+    profiles: ["hf"]
+    ports:
+      - "8000:80"
+    volumes:
+      - tgi-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["--model-id", "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "--max-input-tokens", "2048", "--max-total-tokens", "4096"]
+    restart: unless-stopped
+
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cuda
+    # CPU 전용: image: fedirz/faster-whisper-server:latest-cpu
+    profiles: ["whisper"]
+    container_name: fab-whisper
+    ports:
+      - "8300:8000"
+    environment:
+      - WHISPER__MODEL=Systran/faster-whisper-large-v3
+    volumes:
+      - whisper-data:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  tts:
+    image: ghcr.io/coqui-ai/xtts-streaming-server:latest
+    profiles: ["tts"]
+    container_name: fab-tts
+    ports:
+      - "8400:80"
+    environment:
+      - COQUI_TOS_AGREED=1
+    volumes:
+      - tts-data:/root/.local/share/tts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
 volumes:
   nats-data:
   redis-data:
   qdrant-data:
   ollama-data:
+  tei-data:
+  tgi-data:
+  whisper-data:
+  tts-data:

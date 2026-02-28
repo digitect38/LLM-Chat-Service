@@ -1,0 +1,55 @@
+{
+  "mode": "Advanced+Graph",
+  "timestamp": "2026-02-24T07:02:30.160Z",
+  "avgTotalMs": 31397,
+  "avgResponseChars": 1388,
+  "avgCitations": 3,
+  "avgMaxScore": 0.778,
+  "queries": [
+    {
+      "id": "Q1",
+      "category": "Procedure",
+      "totalMs": 39692,
+      "ttftMs": 25498,
+      "chars": 1508,
+      "cites": 3,
+      "maxScore": 0.817
+    },
+    {
+      "id": "Q2",
+      "category": "Troubleshooting",
+      "totalMs": 29942,
+      "ttftMs": 19425,
+      "chars": 1129,
+      "cites": 2,
+      "maxScore": 0.771
+    },
+    {
+      "id": "Q3",
+      "category": "Troubleshooting",
+      "totalMs": 35727,
+      "ttftMs": 17471,
+      "chars": 1880,
+      "cites": 2,
+      "maxScore": 0.791
+    },
+    {
+      "id": "Q4",
+      "category": "Procedure",
+      "totalMs": 25733,
+      "ttftMs": 15717,
+      "chars": 1103,
+      "cites": 3,
+      "maxScore": 0.804
+    },
+    {
+      "id": "Q5",
+      "category": "Troubleshooting",
+      "totalMs": 25889,
+      "ttftMs": 17131,
+      "chars": 1320,
+      "cites": 5,
+      "maxScore": 0.708
+    }
+  ]
+}

@@ -264,6 +264,6 @@ public class CmpCalibrationProceduresContentTests
     {
         var prompt = BuildPromptWith("Head Zone 압력 캘리브레이션: 1.0~5.0 psi, 허용 편차 ± 0.1 psi");
         prompt.Should().Contain("± 0.1 psi");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 }

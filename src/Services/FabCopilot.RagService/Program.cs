@@ -8,6 +8,8 @@ using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services;
 using FabCopilot.RagService.Services.Bm25;
+using FabCopilot.RagService.Services.Evaluation;
+using FabCopilot.RagService.Services.ImageOcr;
 using Microsoft.Extensions.Options;
 
 Host.CreateDefaultBuilder(args)
@@ -44,12 +46,28 @@ Host.CreateDefaultBuilder(args)
         // RAG cache
         services.AddSingleton<IRagCache, RedisRagCache>();
 
+        // Query Intelligence Pipeline (3-Stage)
+        services.AddSingleton<QueryIntelligencePipeline>();
+
+        // A/B Testing Framework
+        services.AddSingleton<AbTestManager>();
+
         // RAG pipeline services
         services.AddSingleton<IQueryRewriter, LlmQueryRewriter>();
         services.AddSingleton<ILlmReranker, LlmReranker>();
         services.AddSingleton<IKnowledgeGraphStore, RedisKnowledgeGraphStore>();
         services.AddSingleton<IEntityExtractor, LlmEntityExtractor>();
         services.AddSingleton<IAgenticRagOrchestrator, AgenticRagOrchestrator>();
+
+        // Image OCR (optional, requires external OCR service)
+        services.AddHttpClient("OCR", (sp, client) =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = config["Ocr:BaseUrl"] ?? "http://localhost:8500";
+            client.BaseAddress = new Uri(baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(config.GetValue("Ocr:TimeoutSeconds", 30));
+        });
+        services.AddSingleton<IImageOcrExtractor, HttpImageOcrExtractor>();
 
         // Document ingestion
         services.AddSingleton<DocumentIngestor>();

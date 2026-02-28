@@ -38,7 +38,7 @@ public class BuildSystemPromptRagWarningTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("MANDATORY USE");
+        prompt.Should().Contain("REFERENCE CONTEXT");
         prompt.Should().NotContain("NO REFERENCE DOCUMENTS AVAILABLE");
     }
 

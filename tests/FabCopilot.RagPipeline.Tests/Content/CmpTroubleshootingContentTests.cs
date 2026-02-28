@@ -265,9 +265,10 @@ public class CmpTroubleshootingContentTests
     }
 
     [Fact]
-    public void Prompt_Contains_SourceFileName()
+    public void Prompt_Contains_ChunkText_NotFileName()
     {
         var prompt = BuildPromptWith("CMP 트러블슈팅 내용");
-        prompt.Should().Contain("cmp-general-troubleshooting.md");
+        prompt.Should().NotContain("cmp-general-troubleshooting.md");
+        prompt.Should().Contain("CMP 트러블슈팅 내용");
     }
 }

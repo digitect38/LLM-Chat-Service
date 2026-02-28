@@ -15,7 +15,7 @@ public class SourceCitationEdgeCaseTests
     }
 
     [Fact]
-    public void BuildSourceCitations_FallbackToFilePath()
+    public void BuildSourceCitations_InternalFilePath_IncludedWithoutExtension()
     {
         var results = new List<RetrievalResult>
         {
@@ -29,11 +29,32 @@ public class SourceCitationEdgeCaseTests
         };
 
         var citations = LlmWorker.BuildSourceCitations(results);
-        citations.Should().Contain("/docs/guide.md");
+
+        citations.Should().Contain("참고 문서");
+        citations.Should().NotContain(".md");
     }
 
     [Fact]
-    public void BuildSourceCitations_FallbackToDocumentId()
+    public void BuildSourceCitations_PdfFilePath_IncludedWithoutExtension()
+    {
+        var results = new List<RetrievalResult>
+        {
+            new()
+            {
+                DocumentId = "doc-1",
+                ChunkText = "some text",
+                Score = 0.8f,
+                Metadata = new Dictionary<string, object> { ["file_path"] = "/docs/guide.pdf" }
+            }
+        };
+
+        var citations = LlmWorker.BuildSourceCitations(results);
+        citations.Should().Contain("guide");
+        citations.Should().NotContain(".pdf");
+    }
+
+    [Fact]
+    public void BuildSourceCitations_DocumentIdWithoutExtension_Included()
     {
         var results = new List<RetrievalResult>
         {
@@ -47,25 +68,30 @@ public class SourceCitationEdgeCaseTests
         };
 
         var citations = LlmWorker.BuildSourceCitations(results);
+
         citations.Should().Contain("my-special-doc");
     }
 
     [Fact]
-    public void BuildSourceCitations_FallbackToResultDocumentId()
+    public void BuildSourceCitations_WithUrlMetadata_Included()
     {
         var results = new List<RetrievalResult>
         {
             new()
             {
-                DocumentId = "result-doc-id-fallback",
+                DocumentId = "doc-1",
                 ChunkText = "some text",
                 Score = 0.8f,
-                Metadata = new Dictionary<string, object>()
+                Metadata = new Dictionary<string, object>
+                {
+                    ["document_id"] = "my-special-doc",
+                    ["url"] = "https://example.com/doc"
+                }
             }
         };
 
         var citations = LlmWorker.BuildSourceCitations(results);
-        citations.Should().Contain("result-doc-id-fallback");
+        citations.Should().Contain("참고 문서");
     }
 
     [Fact]
@@ -79,9 +105,9 @@ public class SourceCitationEdgeCaseTests
         };
 
         var citations = LlmWorker.BuildSourceCitations(results);
-        citations.Should().Contain("file-a.md");
-        citations.Should().Contain("file-b.md");
-        citations.Should().Contain("file-c.md");
+        citations.Should().Contain("file-a");
+        citations.Should().Contain("file-b");
+        citations.Should().Contain("file-c");
     }
 
     [Fact]
@@ -98,11 +124,11 @@ public class SourceCitationEdgeCaseTests
     }
 
     [Fact]
-    public void BuildSourceCitations_ContainsMarkdownSeparator()
+    public void BuildSourceCitations_PdfContainsMarkdownSeparator()
     {
         var results = new List<RetrievalResult>
         {
-            new() { ChunkText = "text", Score = 0.9f, Metadata = new Dictionary<string, object> { ["file_name"] = "test.md" } }
+            new() { ChunkText = "text", Score = 0.9f, Metadata = new Dictionary<string, object> { ["file_name"] = "test.pdf" } }
         };
 
         var citations = LlmWorker.BuildSourceCitations(results);
@@ -120,8 +146,26 @@ public class SourceCitationEdgeCaseTests
         };
 
         var citations = LlmWorker.BuildSourceCitations(results);
-        // Should appear exactly once in the citation list
-        var count = citations.Split("same-file.md").Length - 1;
+        var count = citations.Split("same-file").Length - 1;
         count.Should().Be(1);
+    }
+
+    [Fact]
+    public void BuildSourceCitations_AllFileTypes_ShownWithoutExtension()
+    {
+        var results = new List<RetrievalResult>
+        {
+            new() { ChunkText = "a", Score = 0.9f, Metadata = new Dictionary<string, object> { ["file_name"] = "file-a.md" } },
+            new() { ChunkText = "b", Score = 0.8f, Metadata = new Dictionary<string, object> { ["file_name"] = "file-b.pdf" } },
+            new() { ChunkText = "c", Score = 0.7f, Metadata = new Dictionary<string, object> { ["file_name"] = "file-c.txt" } }
+        };
+
+        var citations = LlmWorker.BuildSourceCitations(results);
+        citations.Should().Contain("file-a");
+        citations.Should().Contain("file-b");
+        citations.Should().Contain("file-c");
+        citations.Should().NotContain(".md");
+        citations.Should().NotContain(".pdf");
+        citations.Should().NotContain(".txt");
     }
 }

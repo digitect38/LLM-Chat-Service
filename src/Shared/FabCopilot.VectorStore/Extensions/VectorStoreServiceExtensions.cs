@@ -19,6 +19,7 @@ public static class VectorStoreServiceExtensions
         });
 
         services.AddSingleton<IVectorStore, QdrantVectorStore>();
+        services.AddSingleton<DualIndexManager>();
 
         return services;
     }

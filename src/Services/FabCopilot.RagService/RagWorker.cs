@@ -132,6 +132,10 @@ public sealed class RagWorker : BackgroundService
         var conversationId = request.ConversationId ?? Guid.NewGuid().ToString();
         var responseSubject = NatsSubjects.RagResponse(conversationId);
 
+        _logger.LogInformation(
+            "Processing RAG request. ConversationId={ConversationId}, Query={Query}, EquipmentId={EquipmentId}, TopK={TopK}, Pipeline={Pipeline}",
+            conversationId, request.Query, request.EquipmentId, request.TopK, request.PipelineMode);
+
         try
         {
             var pipelineMode = request.PipelineMode;
@@ -425,7 +429,8 @@ public sealed class RagWorker : BackgroundService
     private async Task<RagResponse> RunGraphPipelineAsync(
         RagRequest request, string conversationId, CancellationToken ct)
     {
-        _logger.LogDebug("Running Graph pipeline. ConversationId={ConversationId}", conversationId);
+        _logger.LogDebug("Running Graph pipeline. ConversationId={ConversationId}, Query={Query}, TopK={TopK}",
+            conversationId, request.Query, request.TopK);
 
         // 1. Rewrite query (reuse Advanced rewriter)
         var rewrittenQuery = request.Query;

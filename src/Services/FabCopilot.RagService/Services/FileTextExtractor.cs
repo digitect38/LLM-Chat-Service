@@ -11,14 +11,22 @@ public sealed class FileTextExtractor
         ".md", ".txt", ".pdf"
     };
 
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"
+    };
+
     public static bool IsSupported(string filePath)
     {
         var ext = Path.GetExtension(filePath);
-        return SupportedExtensions.Contains(ext);
+        return SupportedExtensions.Contains(ext) || ImageExtensions.Contains(ext);
     }
 
     public static bool IsPdf(string filePath)
         => Path.GetExtension(filePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsImage(string filePath)
+        => ImageExtensions.Contains(Path.GetExtension(filePath));
 
     public string ExtractText(string filePath)
     {

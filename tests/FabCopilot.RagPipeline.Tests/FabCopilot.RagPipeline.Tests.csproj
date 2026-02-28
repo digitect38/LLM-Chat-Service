@@ -19,6 +19,9 @@
     <ProjectReference Include="..\..\src\Services\FabCopilot.LlmService\FabCopilot.LlmService.csproj" />
     <ProjectReference Include="..\..\src\Shared\FabCopilot.VectorStore\FabCopilot.VectorStore.csproj" />
     <ProjectReference Include="..\..\src\Shared\FabCopilot.Llm\FabCopilot.Llm.csproj" />
+    <ProjectReference Include="..\..\src\Client\FabCopilot.WebClient\FabCopilot.WebClient.csproj" />
+    <ProjectReference Include="..\..\src\Services\FabCopilot.McpLogServer\FabCopilot.McpLogServer.csproj" />
+    <ProjectReference Include="..\..\src\Shared\FabCopilot.Observability\FabCopilot.Observability.csproj" />
   </ItemGroup>
 
 </Project>

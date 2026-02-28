@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fab Copilot — Product Brochure</title>
+<style>
+@font-face { font-family: 'Outfit'; font-weight: 300; src: local('Noto Sans CJK KR Light'); }
+@font-face { font-family: 'Outfit'; font-weight: 400; src: local('Noto Sans CJK KR'); }
+@font-face { font-family: 'Outfit'; font-weight: 600; src: local('Noto Sans CJK KR Medium'); }
+@font-face { font-family: 'Outfit'; font-weight: 700; src: local('Noto Sans CJK KR Bold'); }
+@font-face { font-family: 'Outfit'; font-weight: 800; src: local('Noto Sans CJK KR Bold'); }
+@font-face { font-family: 'Outfit'; font-weight: 900; src: local('Noto Sans CJK KR Black'); }
+@font-face { font-family: 'Noto Sans KR'; src: local('Noto Sans CJK KR'); }
+
+:root {
+  --navy: #0A1628;
+  --deep-blue: #12264F;
+  --accent-blue: #3B82F6;
+  --accent-cyan: #06B6D4;
+  --accent-gold: #F59E0B;
+  --light-bg: #F8FAFC;
+  --card-bg: #FFFFFF;
+  --text: #1E293B;
+  --text-light: #64748B;
+  --gradient-1: linear-gradient(135deg, #0A1628 0%, #1E3A5F 50%, #0F4C75 100%);
+  --gradient-accent: linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%);
+  --gradient-warm: linear-gradient(135deg, #F59E0B 0%, #EF4444 100%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Outfit', 'Noto Sans KR', sans-serif;
+  color: var(--text);
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ─── PAGE 1: HERO ─── */
+.hero {
+  width: 100%; height: 100vh; min-height: 1100px;
+  background: var(--gradient-1);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  page-break-after: always;
+}
+.hero::before {
+  content: '';
+  position: absolute; top: -20%; right: -10%;
+  width: 800px; height: 800px;
+  background: radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%);
+  border-radius: 50%;
+}
+.hero::after {
+  content: '';
+  position: absolute; bottom: -15%; left: -5%;
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(6,182,212,0.1) 0%, transparent 70%);
+  border-radius: 50%;
+}
+.hero-grid {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+.hero-content {
+  position: relative; z-index: 2;
+  text-align: center;
+  padding: 0 60px;
+}
+.hero-badge {
+  display: inline-block;
+  background: rgba(59,130,246,0.2);
+  border: 1px solid rgba(59,130,246,0.4);
+  color: #93C5FD;
+  font-size: 14px; font-weight: 600;
+  padding: 8px 24px;
+  border-radius: 100px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 40px;
+}
+.hero h1 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 82px; font-weight: 900;
+  color: #FFFFFF;
+  letter-spacing: -2px;
+  line-height: 1.05;
+  margin-bottom: 20px;
+}
+.hero h1 span {
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  font-size: 26px; font-weight: 300;
+  color: #94A3B8;
+  line-height: 1.5;
+  max-width: 700px;
+  margin: 0 auto 50px;
+}
+.hero-tagline {
+  font-size: 18px; font-weight: 500;
+  color: #CBD5E1;
+  letter-spacing: 1px;
+  margin-bottom: 60px;
+}
+.hero-stats {
+  display: flex; gap: 60px; justify-content: center;
+  margin-top: 30px;
+}
+.hero-stat {
+  text-align: center;
+}
+.hero-stat-num {
+  font-size: 48px; font-weight: 800;
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-stat-label {
+  font-size: 14px; color: #94A3B8;
+  margin-top: 4px; letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.hero-bottom {
+  position: absolute;
+  bottom: 50px; left: 0; right: 0;
+  text-align: center;
+  z-index: 2;
+}
+.hero-bottom-text {
+  font-size: 13px; color: #64748B;
+  letter-spacing: 3px; text-transform: uppercase;
+}
+
+/* ─── PAGE 2: VALUE PROPOSITION ─── */
+.page { width: 100%; min-height: 100vh; page-break-after: always; }
+
+.value-page {
+  background: var(--light-bg);
+  padding: 80px 60px;
+}
+.section-label {
+  font-size: 13px; font-weight: 700;
+  color: var(--accent-blue);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.section-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 42px; font-weight: 800;
+  color: var(--navy);
+  line-height: 1.15;
+  margin-bottom: 16px;
+}
+.section-desc {
+  font-size: 18px; color: var(--text-light);
+  line-height: 1.7;
+  max-width: 660px;
+  margin-bottom: 50px;
+}
+
+.value-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+.value-card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 36px;
+  border: 1px solid #E2E8F0;
+  position: relative;
+  overflow: hidden;
+}
+.value-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0;
+  width: 4px; height: 100%;
+}
+.value-card:nth-child(1)::before { background: var(--gradient-accent); }
+.value-card:nth-child(2)::before { background: linear-gradient(135deg, #06B6D4, #10B981); }
+.value-card:nth-child(3)::before { background: linear-gradient(135deg, #F59E0B, #EF4444); }
+.value-card:nth-child(4)::before { background: linear-gradient(135deg, #8B5CF6, #EC4899); }
+
+.value-icon {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  margin-bottom: 20px;
+}
+.vi-1 { background: rgba(59,130,246,0.1); }
+.vi-2 { background: rgba(6,182,212,0.1); }
+.vi-3 { background: rgba(245,158,11,0.1); }
+.vi-4 { background: rgba(139,92,246,0.1); }
+
+.value-card h3 {
+  font-size: 20px; font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 12px;
+}
+.value-card p {
+  font-size: 15px; color: var(--text-light);
+  line-height: 1.65;
+}
+.value-card .highlight {
+  font-size: 28px; font-weight: 800;
+  color: var(--accent-blue);
+  margin-top: 16px;
+  display: block;
+}
+
+/* ─── PAGE 3: ARCHITECTURE ─── */
+.arch-page {
+  background: var(--navy);
+  padding: 80px 60px;
+  color: #fff;
+}
+.arch-page .section-label { color: var(--accent-cyan); }
+.arch-page .section-title { color: #fff; }
+.arch-page .section-desc { color: #94A3B8; }
+
+.arch-diagram {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px;
+  padding: 40px;
+  margin-bottom: 40px;
+}
+.arch-layers {
+  display: flex; gap: 24px; margin-bottom: 28px;
+}
+.arch-layer {
+  flex: 1;
+  border-radius: 14px;
+  padding: 28px;
+}
+.layer1-box {
+  background: rgba(59,130,246,0.12);
+  border: 1px solid rgba(59,130,246,0.3);
+}
+.layer2-box {
+  background: rgba(245,158,11,0.1);
+  border: 1px solid rgba(245,158,11,0.3);
+}
+.arch-layer h4 {
+  font-size: 17px; font-weight: 700;
+  margin-bottom: 4px;
+}
+.layer1-box h4 { color: #93C5FD; }
+.layer2-box h4 { color: #FCD34D; }
+.arch-layer .sub { font-size: 12px; color: #94A3B8; margin-bottom: 16px; }
+.arch-layer ul { list-style: none; }
+.arch-layer li {
+  font-size: 14px; color: #CBD5E1;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.arch-layer li:last-child { border-bottom: none; }
+.arch-layer li::before {
+  content: '→ ';
+  color: #64748B;
+}
+.crosslayer-bar {
+  background: rgba(6,182,212,0.1);
+  border: 1px solid rgba(6,182,212,0.3);
+  border-radius: 10px;
+  padding: 14px 24px;
+  text-align: center;
+  font-size: 14px;
+  color: #67E8F9;
+}
+
+.domain-packs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.domain-pack {
+  border-radius: 12px;
+  padding: 24px 16px;
+  text-align: center;
+}
+.dp-semi { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.25); }
+.dp-disp { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+.dp-batt { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); }
+.dp-gen  { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); }
+
+.domain-pack h5 {
+  font-size: 15px; font-weight: 700;
+  margin-bottom: 10px;
+}
+.dp-semi h5 { color: #93C5FD; }
+.dp-disp h5 { color: #FCD34D; }
+.dp-batt h5 { color: #6EE7B7; }
+.dp-gen h5  { color: #C4B5FD; }
+
+.domain-pack p {
+  font-size: 12px; color: #94A3B8;
+  line-height: 1.5;
+}
+
+/* ─── PAGE 4: 3-TIER DIAGNOSTICS ─── */
+.diag-page {
+  background: #fff;
+  padding: 80px 60px;
+}
+.tier-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-bottom: 40px;
+}
+.tier-card {
+  border-radius: 16px;
+  padding: 32px;
+  position: relative;
+}
+.tier-1 {
+  background: linear-gradient(180deg, #EFF6FF 0%, #DBEAFE 100%);
+  border: 1px solid #BFDBFE;
+}
+.tier-2 {
+  background: linear-gradient(180deg, #FFFBEB 0%, #FEF3C7 100%);
+  border: 1px solid #FDE68A;
+}
+.tier-3 {
+  background: linear-gradient(180deg, #F0FDF4 0%, #DCFCE7 100%);
+  border: 1px solid #BBF7D0;
+}
+.tier-badge {
+  display: inline-block;
+  font-size: 11px; font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 100px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.tier-1 .tier-badge { background: #3B82F6; color: #fff; }
+.tier-2 .tier-badge { background: #F59E0B; color: #fff; }
+.tier-3 .tier-badge { background: #10B981; color: #fff; }
+.tier-card h3 {
+  font-size: 19px; font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 12px;
+}
+.tier-card p {
+  font-size: 14px; color: var(--text-light);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+.tier-feature {
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 0;
+  border-top: 1px solid rgba(0,0,0,0.06);
+}
+.tier-feature strong { color: var(--navy); }
+
+.fusion-bar {
+  background: var(--gradient-1);
+  border-radius: 14px;
+  padding: 32px 40px;
+  display: flex;
+  align-items: center;
+  gap: 40px;
+}
+.fusion-icon {
+  font-size: 48px;
+  flex-shrink: 0;
+}
+.fusion-text h3 {
+  font-size: 22px; font-weight: 700;
+  color: #fff;
+  margin-bottom: 8px;
+}
+.fusion-text p {
+  font-size: 15px; color: #94A3B8;
+  line-height: 1.6;
+}
+
+/* ─── PAGE 5: USE CASES ─── */
+.use-page {
+  background: var(--light-bg);
+  padding: 80px 60px;
+}
+.use-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+.use-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px;
+  border: 1px solid #E2E8F0;
+}
+.use-scenario {
+  font-size: 12px; font-weight: 700;
+  color: var(--accent-blue);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.use-card h3 {
+  font-size: 20px; font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 12px;
+}
+.use-card p {
+  font-size: 14.5px; color: var(--text-light);
+  line-height: 1.65;
+  margin-bottom: 16px;
+}
+.use-result {
+  background: rgba(59,130,246,0.06);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 14px; font-weight: 600;
+  color: var(--accent-blue);
+}
+
+/* ─── PAGE 6: SPECS + CTA ─── */
+.spec-page {
+  background: #fff;
+  padding: 80px 60px;
+}
+.spec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  margin-bottom: 60px;
+}
+.spec-col h3 {
+  font-size: 18px; font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--accent-blue);
+}
+.spec-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #F1F5F9;
+  font-size: 14px;
+}
+.spec-item .label { color: var(--text-light); }
+.spec-item .value { font-weight: 600; color: var(--navy); }
+
+.cta-section {
+  background: var(--gradient-1);
+  border-radius: 20px;
+  padding: 60px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.cta-section::before {
+  content: '';
+  position: absolute; top: -30%; right: -10%;
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(59,130,246,0.2) 0%, transparent 70%);
+  border-radius: 50%;
+}
+.cta-section h2 {
+  font-size: 36px; font-weight: 800;
+  color: #fff;
+  margin-bottom: 16px;
+  position: relative; z-index: 1;
+}
+.cta-section p {
+  font-size: 18px; color: #94A3B8;
+  margin-bottom: 30px;
+  position: relative; z-index: 1;
+}
+.cta-contact {
+  position: relative; z-index: 1;
+  display: inline-flex; gap: 40px;
+}
+.cta-contact-item {
+  text-align: center;
+}
+.cta-contact-item .cta-label {
+  font-size: 12px; color: #64748B;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.cta-contact-item .cta-value {
+  font-size: 18px; font-weight: 600;
+  color: #fff;
+}
+
+@media print {
+  .page { page-break-after: always; }
+  body { -webkit-print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ PAGE 1: HERO ═══ -->
+<div class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-content">
+    <div class="hero-badge">AI-Powered Equipment Intelligence Platform</div>
+    <h1>Fab <span>Copilot</span></h1>
+    <p class="hero-sub">
+      문서가 있는 곳이라면 어디든.<br>
+      센서가 있는 장비라면 무엇이든.<br>
+      인터넷이 없는 환경에서 더욱 빛나는 AI.
+    </p>
+    <p class="hero-tagline">On-Premise AI Platform for Manufacturing Equipment Support</p>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="hero-stat-num">100%</div>
+        <div class="hero-stat-label">On-Premise</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num">3-Tier</div>
+        <div class="hero-stat-label">Hybrid Knowledge</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num">Day 1</div>
+        <div class="hero-stat-label">Operational</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num">4+</div>
+        <div class="hero-stat-label">Domain Packs</div>
+      </div>
+    </div>
+  </div>
+  <div class="hero-bottom">
+    <div class="hero-bottom-text">Platform + Domain Pack Architecture</div>
+  </div>
+</div>
+
+<!-- ═══ PAGE 2: VALUE PROPOSITION ═══ -->
+<div class="page value-page">
+  <div class="section-label">Why Fab Copilot</div>
+  <div class="section-title">제조 현장의 지식 격차를<br>AI로 해소합니다</div>
+  <p class="section-desc">
+    숙련 엔지니어의 퇴직, 수천 페이지의 매뉴얼, 24/7 가동되는 장비.
+    Fab Copilot은 문서 지식과 현장 경험, 센서 데이터를 하나로 통합하여
+    즉각적인 장비 지원을 제공합니다.
+  </p>
+
+  <div class="value-grid">
+    <div class="value-card">
+      <div class="value-icon vi-1">📄</div>
+      <h3>Layer 1: Document RAG</h3>
+      <p>매뉴얼, Troubleshooting 가이드, 산업 표준 문서를 AI가 즉시 검색하고 정확한 근거와 함께 답변합니다. 인용 클릭 시 원본 PDF 해당 위치를 자동 표시합니다.</p>
+      <span class="highlight">P95 &lt; 15초</span>
+    </div>
+    <div class="value-card">
+      <div class="value-icon vi-2">📊</div>
+      <h3>Layer 2: Equipment Diagnostics</h3>
+      <p>장비별 센서 데이터를 실시간 수집 · 분석하고, 이상 감지 및 예지 정비(RUL) 예측을 통해 다운타임을 사전에 방지합니다.</p>
+      <span class="highlight">3-Tier 융합 진단</span>
+    </div>
+    <div class="value-card">
+      <div class="value-icon vi-3">🔒</div>
+      <h3>Air-Gapped 완전 대응</h3>
+      <p>모든 컴포넌트가 On-Premise 배포됩니다. 인터넷 연결 없이 동작하며, 반도체 Fab · 국방 · 제약 등 보안이 최우선인 환경에서 가장 큰 가치를 발휘합니다.</p>
+      <span class="highlight">100% On-Prem</span>
+    </div>
+    <div class="value-card">
+      <div class="value-icon vi-4">🔌</div>
+      <h3>Platform + Domain Pack</h3>
+      <p>도메인에 무관한 공통 플랫폼 위에 산업별 Domain Pack을 플러그인으로 결합합니다. 반도체, 디스플레이, 배터리, 일반 제조까지 하나의 플랫폼으로 확장됩니다.</p>
+      <span class="highlight">1 Platform, N Domains</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PAGE 3: ARCHITECTURE ═══ -->
+<div class="page arch-page">
+  <div class="section-label">Architecture</div>
+  <div class="section-title">Dual-Layer + Domain Pack</div>
+  <p class="section-desc">도메인 무관 플랫폼과 산업 특화 팩의 분리로, 한 번의 플랫폼 투자가 모든 제조 도메인으로 확장됩니다.</p>
+
+  <div class="arch-diagram">
+    <div style="font-size:12px; color:#64748B; letter-spacing:2px; text-transform:uppercase; margin-bottom:20px;">Platform — Domain-Agnostic Core</div>
+    <div class="arch-layers">
+      <div class="arch-layer layer1-box">
+        <h4>Layer 1: Document RAG Engine</h4>
+        <div class="sub">Any document, any domain</div>
+        <ul>
+          <li>Query Parser + 3-Level Scope Filter</li>
+          <li>Hybrid Search (Vector + BM25)</li>
+          <li>Re-ranking + MMR Diversity</li>
+          <li>LLM Generation (Configurable)</li>
+          <li>Citation + PDF Highlight</li>
+          <li>Ghost Citation Prevention</li>
+        </ul>
+      </div>
+      <div class="arch-layer layer2-box">
+        <h4>Layer 2: Diagnostics Framework</h4>
+        <div class="sub">Any equipment with sensors</div>
+        <ul>
+          <li>Protocol Adapter Interface</li>
+          <li>Time-series DB (Per-Equipment)</li>
+          <li>Anomaly Detection (ML + Rule)</li>
+          <li>3-Tier Predictive Diagnostics</li>
+          <li>Expert Knowledge Base</li>
+          <li>Fusion Engine + Alert System</li>
+        </ul>
+      </div>
+    </div>
+    <div class="crosslayer-bar">
+      ⟷ Cross-Layer Linking: 이상 감지 시 자동으로 매뉴얼 근거 검색 · 통합 제시
+    </div>
+  </div>
+
+  <div style="font-size:12px; color:#64748B; letter-spacing:2px; text-transform:uppercase; margin-bottom:20px;">Domain Packs — Pluggable Industry Modules</div>
+  <div class="domain-packs">
+    <div class="domain-pack dp-semi">
+      <h5>Semiconductor</h5>
+      <p>SECS/GEM 통신<br>SEMI E10/E58/E79 표준<br>CMP · Etch · CVD · Litho<br>EPD · FDC 연동</p>
+    </div>
+    <div class="domain-pack dp-disp">
+      <h5>Display</h5>
+      <p>OPC-UA 통신<br>VESA / IEC 표준<br>OLED Deposition<br>Array · CF · Bonding</p>
+    </div>
+    <div class="domain-pack dp-batt">
+      <h5>Battery</h5>
+      <p>OPC-UA / MQTT 통신<br>IEC 62660 표준<br>Cell · Formation<br>Module · Pack Assembly</p>
+    </div>
+    <div class="domain-pack dp-gen">
+      <h5>General Mfg</h5>
+      <p>MQTT / Modbus 통신<br>ISO 9001 / IATF 표준<br>Custom Protocol Adapter<br>모든 제조 장비 대응</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PAGE 4: 3-TIER DIAGNOSTICS ═══ -->
+<div class="page diag-page">
+  <div class="section-label">Predictive Diagnostics</div>
+  <div class="section-title">3-Tier Hybrid Knowledge Engine</div>
+  <p class="section-desc">
+    단일 지식원에 의존하지 않습니다. 데이터 · 경험 · 문서 세 가지 지식 계층을
+    융합하여 배포 첫날부터 동작하고, 시간이 지날수록 정확해지는 진단을 제공합니다.
+  </p>
+
+  <div class="tier-grid">
+    <div class="tier-card tier-1">
+      <span class="tier-badge">Tier 1</span>
+      <h3>Data-Driven</h3>
+      <p>센서 데이터로부터 자동 학습되는 ML 모델. 사람이 놓치는 다변량 패턴을 대규모로 감지합니다.</p>
+      <div class="tier-feature"><strong>모델:</strong> Isolation Forest, AutoEncoder, LSTM</div>
+      <div class="tier-feature"><strong>출력:</strong> RUL 예측, 고장 확률, 성능 저하 트렌드</div>
+      <div class="tier-feature"><strong>강점:</strong> 편향 없음, 대규모 확장 가능</div>
+      <div class="tier-feature"><strong>한계:</strong> Cold Start 30일+, 해석 어려움</div>
+    </div>
+    <div class="tier-card tier-2">
+      <span class="tier-badge">Tier 2</span>
+      <h3>Expert Knowledge</h3>
+      <p>현장 엔지니어가 축적한 조건부 인과 관계. 매뉴얼에 없는, 경험에서만 나오는 지식입니다.</p>
+      <div class="tier-feature"><strong>입력:</strong> 구조화 템플릿 + 대화 마이닝 + 조치 이력</div>
+      <div class="tier-feature"><strong>검증:</strong> Tier 1 데이터 기반 자동 사후 검증</div>
+      <div class="tier-feature"><strong>스코프:</strong> 모델별(기본) 또는 인스턴스별</div>
+      <div class="tier-feature"><strong>강점:</strong> 조건부 인과, False Alarm 감소</div>
+    </div>
+    <div class="tier-card tier-3">
+      <span class="tier-badge">Tier 3</span>
+      <h3>Document-Grounded</h3>
+      <p>매뉴얼 · 표준 문서에서 자동 추출된 진단 지식. 배포 첫날부터 Cold Start 없이 즉시 동작합니다.</p>
+      <div class="tier-feature"><strong>추출:</strong> Troubleshooting 섹션, 에러코드, PM 절차</div>
+      <div class="tier-feature"><strong>표준:</strong> SEMI · IEC · ISO 등 산업 표준 자동 추출</div>
+      <div class="tier-feature"><strong>강점:</strong> Day 1 가용, 공식 절차 기반</div>
+      <div class="tier-feature"><strong>한계:</strong> 인스턴스 특화 불가, 문서화된 범위만</div>
+    </div>
+  </div>
+
+  <div class="fusion-bar">
+    <div class="fusion-icon">⚡</div>
+    <div class="fusion-text">
+      <h3>Fusion Engine — 다중 순위 진단</h3>
+      <p>세 Tier의 증거를 가중 결합하여 순위화된 진단 결과를 생성합니다. 각 진단에 신뢰도 · 근거 Tier · 매뉴얼 인용이 첨부되어 엔지니어가 최종 판단을 내릴 수 있는 완전한 증거 패키지를 제공합니다.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PAGE 5: USE CASES ═══ -->
+<div class="page use-page">
+  <div class="section-label">Use Cases</div>
+  <div class="section-title">현장 시나리오</div>
+  <p class="section-desc">
+    Fab Copilot이 실제 제조 현장에서 어떻게 활용되는지 살펴봅니다.
+  </p>
+
+  <div class="use-grid">
+    <div class="use-card">
+      <div class="use-scenario">시나리오 1 — 즉각 대응</div>
+      <h3>야간 근무 중 알 수 없는 에러 발생</h3>
+      <p>비숙련 오퍼레이터가 처음 보는 에러코드를 마주합니다. Chat에 에러코드를 입력하면 매뉴얼 근거와 함께 단계별 조치 방안이 즉시 제공됩니다. 인용 클릭 시 원본 PDF의 해당 위치가 하이라이트됩니다.</p>
+      <div class="use-result">📄 Layer 1 RAG → 에러코드 즉시 조회 + 원본 인용</div>
+    </div>
+    <div class="use-card">
+      <div class="use-scenario">시나리오 2 — 예지 정비</div>
+      <h3>소모품 교체 시점을 놓칠 뻔한 상황</h3>
+      <p>Dashboard에서 Membrane RUL 15% 경고 확인. 3-Tier 진단이 과거 유사 패턴 3건 + 매뉴얼 교체 주기 + 센서 트렌드를 종합하여 "72시간 내 교체 권장"과 함께 부품 번호 및 절차를 제시합니다.</p>
+      <div class="use-result">⚡ 3-Tier Fusion → 부품번호 + 절차 + 매뉴얼 인용 통합</div>
+    </div>
+    <div class="use-card">
+      <div class="use-scenario">시나리오 3 — 지식 축적</div>
+      <h3>베테랑 엔지니어의 노하우 체계화</h3>
+      <p>숙련 엔지니어가 이상 감지 Dashboard에서 "이 원인을 알고 있어요" 클릭. 구조화된 폼에 증상-원인-조치를 입력하면, 시스템이 과거 데이터로 자동 검증(Precision 81%)한 뒤 동일 모델 전체에 규칙을 배포합니다.</p>
+      <div class="use-result">🧠 Expert KB → 모델별 자동 배포 + 데이터 검증</div>
+    </div>
+    <div class="use-card">
+      <div class="use-scenario">시나리오 4 — 다중 도메인 확장</div>
+      <h3>배터리 신규 라인에 동일 플랫폼 적용</h3>
+      <p>반도체 Fab에서 검증된 Fab Copilot 플랫폼에 Battery Domain Pack을 추가합니다. OPC-UA 어댑터 교체, IEC 표준 문서 인덱싱, 배터리 센서 레지스트리 설정만으로 새 라인이 가동됩니다.</p>
+      <div class="use-result">🔌 Domain Pack 교체 → 동일 플랫폼, 새로운 도메인</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PAGE 6: WHY US + CTA ═══ -->
+<div class="page spec-page">
+  <div class="section-label">Why Fab Copilot</div>
+  <div class="section-title">선택해야 하는 이유</div>
+  <p class="section-desc">기존 솔루션과의 차별점을 확인하세요.</p>
+
+  <div class="spec-grid">
+    <div class="spec-col">
+      <h3>핵심 차별점</h3>
+      <div class="spec-item"><span class="label">배포 방식</span><span class="value">100% On-Premise (Air-Gap)</span></div>
+      <div class="spec-item"><span class="label">지식 융합</span><span class="value">3-Tier (Data + Expert + Document)</span></div>
+      <div class="spec-item"><span class="label">도메인 확장</span><span class="value">Platform + Domain Pack</span></div>
+      <div class="spec-item"><span class="label">Cold Start</span><span class="value">Day 1 부터 즉시 운용</span></div>
+      <div class="spec-item"><span class="label">근거 추적</span><span class="value">모든 답변에 원본 인용 첨부</span></div>
+      <div class="spec-item"><span class="label">지식 축적</span><span class="value">현장 경험 → 자동 검증 → 모델별 배포</span></div>
+    </div>
+    <div class="spec-col">
+      <h3>엔터프라이즈 대응</h3>
+      <div class="spec-item"><span class="label">보안</span><span class="value">DLP · 암호화 · RBAC · SSO</span></div>
+      <div class="spec-item"><span class="label">가용성</span><span class="value">LLM 이중화 + SLM Failover</span></div>
+      <div class="spec-item"><span class="label">확장성</span><span class="value">장비 수 무관 수평 확장</span></div>
+      <div class="spec-item"><span class="label">모니터링</span><span class="value">실시간 성능 · 품질 대시보드</span></div>
+      <div class="spec-item"><span class="label">표준 연동</span><span class="value">SEMI · IEC · ISO 표준 자동 인덱싱</span></div>
+      <div class="spec-item"><span class="label">프로토콜</span><span class="value">SECS/GEM · OPC-UA · MQTT 등</span></div>
+    </div>
+  </div>
+
+  <div class="cta-section">
+    <h2>장비가 말을 걸기 시작합니다</h2>
+    <p>Fab Copilot으로 제조 현장의 지식 격차를 해소하고, 다운타임을 예방하세요.</p>
+    <div class="cta-contact">
+      <div class="cta-contact-item">
+        <div class="cta-label">Email</div>
+        <div class="cta-value">contact@fabcopilot.ai</div>
+      </div>
+      <div class="cta-contact-item">
+        <div class="cta-label">Demo Request</div>
+        <div class="cta-value">fabcopilot.ai/demo</div>
+      </div>
+      <div class="cta-contact-item">
+        <div class="cta-label">Documentation</div>
+        <div class="cta-value">docs.fabcopilot.ai</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

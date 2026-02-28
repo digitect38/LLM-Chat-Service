@@ -251,10 +251,11 @@ public class CmpMaintenanceGuideContentTests
     }
 
     [Fact]
-    public void Prompt_Contains_SourceFileName()
+    public void Prompt_Contains_ChunkText_NotFileName()
     {
         var prompt = BuildPromptWith("유지보수 내용");
-        prompt.Should().Contain("cmp-maintenance-guide.md");
+        prompt.Should().NotContain("cmp-maintenance-guide.md");
+        prompt.Should().Contain("유지보수 내용");
     }
 
     [Fact]

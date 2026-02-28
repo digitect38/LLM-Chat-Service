@@ -423,7 +423,7 @@ public class CmpAlarmCodeReferenceContentTests
     {
         var prompt = BuildPromptWith("A100 Emergency Stop 비상 정지, 즉시 장비 정지 및 안전 확보");
         prompt.Should().Contain("Emergency Stop");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 
     [Fact]

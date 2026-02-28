@@ -12,21 +12,13 @@ namespace FabCopilot.Llm;
 
 public sealed class OllamaLlmClient : ILlmClient
 {
-    private readonly OllamaApiClient _ollama;
-    private readonly OllamaOptions _options;
+    private readonly IOptionsMonitor<OllamaOptions> _optionsMonitor;
     private readonly IEmbeddingClient _embeddingClient;
 
-    public OllamaLlmClient(IOptions<OllamaOptions> options, IEmbeddingClient embeddingClient)
+    public OllamaLlmClient(IOptionsMonitor<OllamaOptions> optionsMonitor, IEmbeddingClient embeddingClient)
     {
-        _options = options.Value;
+        _optionsMonitor = optionsMonitor;
         _embeddingClient = embeddingClient;
-        var httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(_options.BaseUrl),
-            Timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds)
-        };
-        _ollama = new OllamaApiClient(httpClient);
-        _ollama.SelectedModel = _options.ChatModel;
     }
 
     public async IAsyncEnumerable<string> StreamChatAsync(
@@ -34,17 +26,26 @@ public sealed class OllamaLlmClient : ILlmClient
         LlmOptions? options = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var model = options?.Model ?? _options.ChatModel;
+        var currentOptions = _optionsMonitor.CurrentValue;
+        var model = options?.Model ?? currentOptions.ChatModel;
+
+        var httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(currentOptions.BaseUrl),
+            Timeout = TimeSpan.FromSeconds(currentOptions.TimeoutSeconds)
+        };
+        var ollama = new OllamaApiClient(httpClient);
+        ollama.SelectedModel = model;
 
         var chatRequest = new ChatRequest
         {
             Model = model,
             Messages = ConvertMessages(messages),
             Stream = true,
-            Options = BuildRequestOptions(options, _options.MaxTokens)
+            Options = BuildRequestOptions(options, currentOptions.MaxTokens)
         };
 
-        await foreach (var response in _ollama.ChatAsync(chatRequest, ct))
+        await foreach (var response in ollama.ChatAsync(chatRequest, ct))
         {
             if (response?.Message?.Content is { } content)
             {

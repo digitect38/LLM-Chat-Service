@@ -206,6 +206,6 @@ public class CmpEquipmentOverviewContentTests
     {
         var prompt = BuildPromptWith("CMP 장비: Polishing Module, Cleaning Module, Wafer Handling System");
         prompt.Should().Contain("Polishing Module");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 }

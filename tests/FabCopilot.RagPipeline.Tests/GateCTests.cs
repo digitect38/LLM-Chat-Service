@@ -71,28 +71,17 @@ public class GateCTests
     }
 
     // ──────────────────────────────────────────────────────────────
-    // RAG 있는데 참조 없음 → 경고
+    // RAG 있어도 citation 체크 안 함 (서비스가 자동 처리)
     // ──────────────────────────────────────────────────────────────
 
     [Fact]
-    public void EvaluateGateC_RagPresentButNoCitation_WarnsStructure()
+    public void EvaluateGateC_RagPresentButNoCitation_NoStructureWarning()
     {
+        // Citation section check removed — service generates citations post-LLM
         var ragResults = MakeRagResults();
         var textWithoutRef = "이 답변은 패드 교체에 대한 설명입니다. 디스크를 제거하고 새 패드를 장착하세요. 추가 정보가 필요하면 문의하세요.";
 
         var result = LlmWorker.EvaluateGateC(textWithoutRef, ragResults);
-
-        result.Passed.Should().BeFalse();
-        result.Warnings.Should().Contain(w => w.Contains("참조 섹션"));
-    }
-
-    [Fact]
-    public void EvaluateGateC_RagPresentWithCitation_NoStructureWarning()
-    {
-        var ragResults = MakeRagResults();
-        var textWithRef = "이 답변은 패드 교체에 대한 설명입니다. 디스크를 제거하고 새 패드를 장착하세요.\n\n## 참조\n📄 test.md";
-
-        var result = LlmWorker.EvaluateGateC(textWithRef, ragResults);
 
         result.Warnings.Should().NotContain(w => w.Contains("참조 섹션"));
     }

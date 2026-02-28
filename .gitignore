@@ -48,6 +48,20 @@ logs/
 ## Test results
 scripts/test-result*.txt
 
+## Node.js
+node_modules/
+
+## TLS certificates
+infra/tls/
+
+## Test results
+**/TestResults/
+
+## Temporary files
+nul
+_v481_*.txt
+Captures/
+
 ## Runtime data (infrastructure)
 storage/
 appendonlydir/

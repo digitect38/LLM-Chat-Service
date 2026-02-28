@@ -54,6 +54,12 @@ public sealed class RagOptions
     public int QueryRewriteTimeoutMs { get; set; } = 10000;
     public int TotalPipelineTimeoutMs { get; set; } = 55000;
 
+    // Multi-tier Chunking
+    public bool EnableSemanticChunking { get; set; } = true;
+    public float SemanticBoundaryThreshold { get; set; } = 0.65f;
+    public int MinChunkTokens { get; set; } = 64;
+    public int MaxChunkTokens { get; set; } = 512;
+
     // Default pipeline
     public RagPipelineMode DefaultPipelineMode { get; set; } = RagPipelineMode.Naive;
 }

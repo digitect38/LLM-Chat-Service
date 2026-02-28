@@ -108,7 +108,7 @@ public class IntentRoutingTests
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults, isConfident: true, QueryIntent.Error);
 
         prompt.Should().Contain("RESPONSE STYLE - ERROR/ALARM");
-        prompt.Should().Contain("REFERENCE DOCUMENTS - MANDATORY USE");
+        prompt.Should().Contain("REFERENCE CONTEXT");
     }
 
     [Fact]

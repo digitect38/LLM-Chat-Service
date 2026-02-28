@@ -1,4 +1,5 @@
 using FabCopilot.Observability.Configuration;
+using FabCopilot.Observability.Enrichers;
 using FabCopilot.Observability.Metrics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,6 +8,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+using Serilog.Formatting.Compact;
 
 namespace FabCopilot.Observability.Extensions;
 
@@ -23,11 +25,32 @@ public static class ObservabilityServiceExtensions
             loggerConfig
                 .ReadFrom.Configuration(context.Configuration)
                 .Enrich.FromLogContext()
-                .Enrich.WithProperty("ServiceName", options.ServiceName)
-                .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{ServiceName}] {Message:lj}{NewLine}{Exception}")
-                .WriteTo.File(options.LogFilePath,
+                .Enrich.WithProperty("ServiceName", options.ServiceName);
+
+            // Sensitive data masking enricher (INFO+ level)
+            if (options.EnableSensitiveDataMasking)
+            {
+                loggerConfig.Enrich.With<SensitiveDataMaskingEnricher>();
+            }
+
+            // Console sink (human-readable)
+            loggerConfig.WriteTo.Console(
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{ServiceName}] {Message:lj}{NewLine}{Exception}");
+
+            // Text file sink (daily rolling)
+            loggerConfig.WriteTo.File(options.LogFilePath,
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 30);
+
+            // JSON file sink (for ELK/Loki ingestion)
+            if (options.EnableJsonLog)
+            {
+                loggerConfig.WriteTo.File(
+                    new CompactJsonFormatter(),
+                    options.JsonLogFilePath,
                     rollingInterval: RollingInterval.Day,
-                    retainedFileCountLimit: 30);
+                    retainedFileCountLimit: 14);
+            }
         });
 
         return hostBuilder;

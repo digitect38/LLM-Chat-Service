@@ -27,6 +27,13 @@ builder.Services.AddHttpClient("Whisper", (sp, client) =>
     client.BaseAddress = new Uri(baseUrl);
     client.Timeout = TimeSpan.FromSeconds(config.GetValue("Whisper:TimeoutSeconds", 60));
 });
+builder.Services.AddHttpClient("TTS", (sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var baseUrl = config["Tts:BaseUrl"] ?? "http://localhost:8400";
+    client.BaseAddress = new Uri(baseUrl);
+    client.Timeout = TimeSpan.FromSeconds(config.GetValue("Tts:TimeoutSeconds", 30));
+});
 
 var app = builder.Build();
 
@@ -155,18 +162,97 @@ app.MapPost("/api/transcribe/{equipmentId}", async (
     if (!string.IsNullOrEmpty(prompt))
         content.Add(new StringContent(prompt), "prompt");
 
-    var response = await client.PostAsync("/v1/audio/transcriptions", content);
+    HttpResponseMessage response;
+    try
+    {
+        response = await client.PostAsync("/v1/audio/transcriptions", content);
+    }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+    {
+        logger.LogWarning(ex, "Whisper server unreachable");
+        return Results.Json(new { error = "Whisper 서버에 연결할 수 없습니다. --profile whisper 로 컨테이너를 시작하세요." },
+            statusCode: 503);
+    }
+
     if (!response.IsSuccessStatusCode)
     {
         var err = await response.Content.ReadAsStringAsync();
         logger.LogWarning("Whisper transcription failed: {Status} {Error}", response.StatusCode, err);
-        return Results.StatusCode((int)response.StatusCode);
+        return Results.Json(new { error = $"Whisper 변환 실패 ({(int)response.StatusCode}): {err}" },
+            statusCode: (int)response.StatusCode);
     }
 
     var json = await response.Content.ReadAsStringAsync();
     logger.LogInformation("Transcription for {EquipmentId}: {Length} chars", equipmentId, json.Length);
     return Results.Content(json, "application/json");
 }).DisableAntiforgery();
+
+// TTS health check endpoint
+app.MapGet("/api/tts/health", async (IHttpClientFactory httpFactory) =>
+{
+    try
+    {
+        using var client = httpFactory.CreateClient("TTS");
+        client.Timeout = TimeSpan.FromSeconds(3);
+        var resp = await client.GetAsync("/health");
+        return resp.IsSuccessStatusCode
+            ? Results.Ok(new { status = "ok" })
+            : Results.StatusCode(503);
+    }
+    catch
+    {
+        return Results.StatusCode(503);
+    }
+});
+
+// TTS synthesis endpoint — converts text to speech audio
+app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory httpFactory, ILogger<Program> logger) =>
+{
+    var body = await req.ReadFromJsonAsync<TtsSynthesizeRequest>();
+    if (body is null || string.IsNullOrWhiteSpace(body.Text))
+        return Results.BadRequest(new { error = "No text provided" });
+
+    // Strip citation markers for voice output
+    var voiceText = System.Text.RegularExpressions.Regex.Replace(
+        body.Text, @"\[MNL-[^\]]*\]|\[cite-\d+\]|\[출처[^\]]*\]", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    // Generate voice summary (first 3 sentences) if requested
+    if (body.SummaryOnly)
+    {
+        var sentences = voiceText.Split(new[] { ". ", ".\n", "! ", "? " }, StringSplitOptions.RemoveEmptyEntries);
+        voiceText = string.Join(". ", sentences.Take(3));
+        if (!voiceText.EndsWith('.')) voiceText += ".";
+    }
+
+    try
+    {
+        using var client = httpFactory.CreateClient("TTS");
+        var ttsPayload = new
+        {
+            text = voiceText,
+            language = body.Language ?? "ko",
+            speaker_wav = body.SpeakerWav
+        };
+
+        var response = await client.PostAsJsonAsync("/api/tts", ttsPayload);
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync();
+            logger.LogWarning("TTS synthesis failed: {Status} {Error}", response.StatusCode, err);
+            return Results.Json(new { error = $"TTS 합성 실패: {err}" }, statusCode: (int)response.StatusCode);
+        }
+
+        var audioBytes = await response.Content.ReadAsByteArrayAsync();
+        return Results.File(audioBytes, "audio/wav", "speech.wav");
+    }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+    {
+        logger.LogWarning(ex, "TTS server unreachable");
+        return Results.Json(
+            new { error = "TTS 서버에 연결할 수 없습니다. --profile tts 로 컨테이너를 시작하세요." },
+            statusCode: 503);
+    }
+});
 
 // Feedback endpoint — logs user feedback to the audit trail
 app.MapPost("/api/feedback", async (FeedbackMessage feedback, IAuditTrail auditTrail, ILogger<Program> logger) =>
@@ -245,3 +331,5 @@ app.MapDelete("/api/conversations/{equipmentId}/{conversationId}", async (string
 });
 
 app.Run();
+
+record TtsSynthesizeRequest(string Text, string? Language = "ko", bool SummaryOnly = false, string? SpeakerWav = null);

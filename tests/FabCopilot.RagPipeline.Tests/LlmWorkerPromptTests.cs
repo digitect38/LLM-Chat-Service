@@ -11,7 +11,7 @@ namespace FabCopilot.RagPipeline.Tests;
 public class LlmWorkerPromptTests
 {
     [Fact]
-    public void BuildSystemPrompt_WithRagResults_ContainsMandatoryUse()
+    public void BuildSystemPrompt_WithRagResults_ContainsReferenceContext()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -20,7 +20,7 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("MANDATORY USE");
+        prompt.Should().Contain("REFERENCE CONTEXT");
     }
 
     [Fact]
@@ -33,13 +33,12 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        // The old permissive prompt allowed ignoring RAG context
         prompt.Should().NotContain("you may ignore it");
         prompt.Should().NotContain("무시해도 됩니다");
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithRagResults_ContainsPrecisionCitationFormat()
+    public void BuildSystemPrompt_WithRagResults_UsesAnonymizedContext()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -48,12 +47,14 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("[DOC_ID-Chapter-Section-{Line:FromLine-ToLine}]");
-        prompt.Should().Contain("[MNL-2025-001-Ch3-S3.2.1-{Line:142-158}]");
+        // No document numbers or citation format references — uses <context> tags
+        prompt.Should().Contain("<context>");
+        prompt.Should().Contain("Document content here.");
+        prompt.Should().NotContain("Document 1");
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithRagResults_ContainsDocumentNumbers()
+    public void BuildSystemPrompt_WithRagResults_NoDocumentNumbers()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -63,8 +64,10 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("Document 1");
-        prompt.Should().Contain("Document 2");
+        prompt.Should().NotContain("Document 1");
+        prompt.Should().NotContain("Document 2");
+        prompt.Should().Contain("First document.");
+        prompt.Should().Contain("Second document.");
     }
 
     [Fact]
@@ -77,11 +80,11 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("참고 문서에 관련 정보가 없어");
+        prompt.Should().Contain("관련 정보가 없어");
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithRagResults_ContainsNeverContradictRule()
+    public void BuildSystemPrompt_WithRagResults_ContainsAntiContradictionRule()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -90,7 +93,7 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("NEVER contradict");
+        prompt.Should().Contain("모순");
     }
 
     [Fact]
@@ -98,8 +101,7 @@ public class LlmWorkerPromptTests
     {
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, new List<RetrievalResult>());
 
-        prompt.Should().NotContain("REFERENCE DOCUMENTS - MANDATORY USE");
-        prompt.Should().NotContain("MANDATORY USE");
+        prompt.Should().NotContain("REFERENCE CONTEXT");
     }
 
     [Fact]
@@ -127,7 +129,7 @@ public class LlmWorkerPromptTests
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithJsonElementMetadata_ExtractsFileName()
+    public void BuildSystemPrompt_WithJsonElementMetadata_ContentIncludedNotFileName()
     {
         // Simulate NATS JSON deserialization: metadata values arrive as JsonElement, not string
         var json = JsonSerializer.Deserialize<JsonElement>("\"cmp-troubleshooting.md\"");
@@ -143,11 +145,13 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("cmp-troubleshooting.md");
+        // Filename should NOT appear (anonymized), but chunk text should
+        prompt.Should().NotContain("cmp-troubleshooting.md");
+        prompt.Should().Contain("CMP pad lifetime guide.");
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithStringMetadata_ExtractsFileName()
+    public void BuildSystemPrompt_WithStringMetadata_ContentIncludedNotFileName()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -161,11 +165,12 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("my-doc.txt");
+        prompt.Should().NotContain("my-doc.txt");
+        prompt.Should().Contain("Some content.");
     }
 
     [Fact]
-    public void BuildSystemPrompt_WithChapterSectionMetadata_IncludesInDocumentListing()
+    public void BuildSystemPrompt_WithChapterSectionMetadata_NotExposedInPrompt()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -186,9 +191,10 @@ public class LlmWorkerPromptTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, ragResults);
 
-        prompt.Should().Contain("chapter: Ch3");
-        prompt.Should().Contain("section: 3.2.1");
-        prompt.Should().Contain("lines: 142-158");
+        // Metadata should not appear in prompt (anonymized context)
+        prompt.Should().NotContain("chapter: Ch3");
+        prompt.Should().NotContain("manual.pdf");
+        prompt.Should().Contain("Vacuum seal replacement.");
     }
 
     [Fact]

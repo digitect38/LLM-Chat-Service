@@ -168,8 +168,8 @@ public class CrossDocumentContentTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, results);
 
-        prompt.Should().Contain("cmp-slurry-pad-replacement.md");
-        prompt.Should().Contain("cmp-maintenance-guide.md");
+        prompt.Should().NotContain("cmp-slurry-pad-replacement.md");
+        prompt.Should().NotContain("cmp-maintenance-guide.md");
         prompt.Should().Contain("500시간");
         prompt.Should().Contain("Daily PM");
     }
@@ -201,9 +201,11 @@ public class CrossDocumentContentTests
 
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, results);
 
-        prompt.Should().Contain("Document 1");
-        prompt.Should().Contain("Document 2");
-        prompt.Should().Contain("Document 3");
+        prompt.Should().NotContain("Document 1");
+        prompt.Should().Contain("<context>");
+        prompt.Should().Contain("Zone 1~5 Pressure 3.0 psi");
+        prompt.Should().Contain("알람 A123: Head Pressure");
+        prompt.Should().Contain("WIWNU 목표 < 3%");
     }
 
     [Fact]

@@ -271,9 +271,10 @@ public class CmpSlurryPadReplacementContentTests
     }
 
     [Fact]
-    public void Prompt_Contains_SourceFileName()
+    public void Prompt_Contains_ChunkText_NotFileName()
     {
         var prompt = BuildPromptWith("슬러리 패드 교체");
-        prompt.Should().Contain("cmp-slurry-pad-replacement.md");
+        prompt.Should().NotContain("cmp-slurry-pad-replacement.md");
+        prompt.Should().Contain("슬러리 패드 교체");
     }
 }

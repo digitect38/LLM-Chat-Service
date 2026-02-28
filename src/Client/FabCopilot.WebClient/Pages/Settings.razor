@@ -62,6 +62,18 @@
                     </select>
                     <span class="config-hint">JIT: 스트리밍 중 마크다운/코드 포맷 실시간 표시, 수식은 완료 후 렌더링</span>
                 </div>
+
+                <!-- Response Timeout -->
+                <div class="config-section">
+                    <label class="config-label">응답 타임아웃</label>
+                    <select class="config-select" @bind="_timeoutBudget">
+                        <option value="30">30초</option>
+                        <option value="60">1분</option>
+                        <option value="180">3분 (기본)</option>
+                        <option value="300">5분</option>
+                    </select>
+                    <span class="config-hint">응답 생성 시간이 설정값에 도달하면 경고를 표시합니다</span>
+                </div>
             </div>
 
             <div class="settings-footer">
@@ -89,6 +101,7 @@
     private string _codeFont = "Cascadia Code";
     private string _sttEngine = "auto";
     private string _renderMode = "jit";
+    private string _timeoutBudget = "180";
     private string? _clientStatus;
     private bool _clientStatusIsError;
 
@@ -110,6 +123,10 @@
                 if (!string.IsNullOrEmpty(savedRender))
                     _renderMode = savedRender;
 
+                var savedTimeout = await JS.InvokeAsync<string>("clientSettings.getTimeoutBudget");
+                if (!string.IsNullOrEmpty(savedTimeout))
+                    _timeoutBudget = savedTimeout;
+
                 StateHasChanged();
             }
             catch { }
@@ -123,6 +140,7 @@
             await JS.InvokeVoidAsync("clientSettings.setCodeFont", _codeFont);
             await JS.InvokeVoidAsync("clientSettings.setSttEngine", _sttEngine);
             await JS.InvokeVoidAsync("clientSettings.setRenderMode", _renderMode);
+            await JS.InvokeVoidAsync("clientSettings.setTimeoutBudget", _timeoutBudget);
             _clientStatus = "클라이언트 설정이 적용되었습니다.";
             _clientStatusIsError = false;
         }

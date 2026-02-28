@@ -327,9 +327,10 @@ public class CmpParameterOptimizationContentTests
     }
 
     [Fact]
-    public void Prompt_Contains_SourceFileName()
+    public void Prompt_Contains_ChunkText_NotFileName()
     {
         var prompt = BuildPromptWith("파라미터 최적화");
-        prompt.Should().Contain("cmp-parameter-optimization.md");
+        prompt.Should().NotContain("cmp-parameter-optimization.md");
+        prompt.Should().Contain("파라미터 최적화");
     }
 }

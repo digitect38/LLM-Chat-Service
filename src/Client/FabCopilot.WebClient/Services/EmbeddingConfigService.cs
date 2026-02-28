@@ -7,6 +7,7 @@ public class EmbeddingConfigService
 {
     private readonly string[] _appsettingsPaths;
     private readonly string _llmServicePath;
+    private readonly string _webClientPath;
 
     public EmbeddingConfigService(IWebHostEnvironment env)
     {
@@ -16,6 +17,7 @@ public class EmbeddingConfigService
         var srcRoot = Path.GetFullPath(Path.Combine(clientRoot, "..", "..", ".."));
 
         _llmServicePath = Path.Combine(srcRoot, "src", "Services", "FabCopilot.LlmService", "appsettings.json");
+        _webClientPath = Path.Combine(clientRoot, "appsettings.json");
 
         _appsettingsPaths = new[]
         {
@@ -23,6 +25,14 @@ public class EmbeddingConfigService
             Path.Combine(srcRoot, "src", "Services", "FabCopilot.KnowledgeService", "appsettings.json"),
             _llmServicePath,
         };
+    }
+
+    // ─── For unit testing ───────────────────────────────────────
+    internal EmbeddingConfigService(string[] appsettingsPaths, string llmServicePath, string webClientPath)
+    {
+        _appsettingsPaths = appsettingsPaths;
+        _llmServicePath = llmServicePath;
+        _webClientPath = webClientPath;
     }
 
     public string GetCurrentProvider()
@@ -162,5 +172,82 @@ public class EmbeddingConfigService
         }
 
         File.WriteAllText(ragPath, node.ToJsonString(options));
+    }
+
+    // ─── LLM Model ─────────────────────────────────────────────
+
+    public string GetCurrentLlmModel()
+    {
+        if (!File.Exists(_llmServicePath)) return string.Empty;
+
+        var json = File.ReadAllText(_llmServicePath);
+        var node = JsonNode.Parse(json);
+        return node?["Ollama"]?["ChatModel"]?.GetValue<string>() ?? string.Empty;
+    }
+
+    public void SetLlmModel(string modelId)
+    {
+        if (string.IsNullOrEmpty(modelId)) return;
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+
+        // Update LlmService Ollama.ChatModel
+        if (File.Exists(_llmServicePath))
+        {
+            var json = File.ReadAllText(_llmServicePath);
+            var node = JsonNode.Parse(json);
+            if (node is not null)
+            {
+                if (node["Ollama"] is not JsonObject ollamaSection)
+                {
+                    ollamaSection = new JsonObject();
+                    node["Ollama"] = ollamaSection;
+                }
+                ollamaSection["ChatModel"] = modelId;
+                File.WriteAllText(_llmServicePath, node.ToJsonString(options));
+            }
+        }
+
+        // Update WebClient Models.Default
+        if (File.Exists(_webClientPath))
+        {
+            var json = File.ReadAllText(_webClientPath);
+            var node = JsonNode.Parse(json);
+            if (node is not null)
+            {
+                if (node["Models"] is not JsonObject modelsSection)
+                {
+                    modelsSection = new JsonObject();
+                    node["Models"] = modelsSection;
+                }
+                modelsSection["Default"] = modelId;
+                File.WriteAllText(_webClientPath, node.ToJsonString(options));
+            }
+        }
+    }
+
+    // ─── Search Mode ────────────────────────────────────────────
+
+    public string GetCurrentSearchMode()
+    {
+        if (!File.Exists(_webClientPath)) return "hybrid";
+
+        var json = File.ReadAllText(_webClientPath);
+        var node = JsonNode.Parse(json);
+        return node?["SearchMode"]?.GetValue<string>() ?? "hybrid";
+    }
+
+    public void SetSearchMode(string mode)
+    {
+        if (string.IsNullOrEmpty(mode)) return;
+        if (!File.Exists(_webClientPath)) return;
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        var json = File.ReadAllText(_webClientPath);
+        var node = JsonNode.Parse(json);
+        if (node is null) return;
+
+        node["SearchMode"] = mode;
+        File.WriteAllText(_webClientPath, node.ToJsonString(options));
     }
 }

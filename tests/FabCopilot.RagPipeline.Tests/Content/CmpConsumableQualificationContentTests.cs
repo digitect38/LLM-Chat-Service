@@ -234,6 +234,6 @@ public class CmpConsumableQualificationContentTests
     {
         var prompt = BuildPromptWith("Pad Qualification: MRR ± 10%, WIWNU < 5%, Scratch 0개");
         prompt.Should().Contain("± 10%");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 }

@@ -1,0 +1,678 @@
+{
+  "version": "1.0",
+  "equipment_type": "CMP",
+  "entries": [
+    {
+      "id": "err-ko-01", "query": "알람 A100 비상 정지", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["A100", "비상 정지", "Emergency Stop"],
+      "expected_answer": "A100 알람은 비상 정지 상황에서 발생합니다."
+    },
+    {
+      "id": "err-ko-02", "query": "Emergency Stop 비상 정지 원인", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["Emergency Stop", "비상 정지"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-ko-03", "query": "인터록 위반 알람 Interlock", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["Interlock", "인터록"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-ko-04", "query": "압력 센서 이상 에러", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["압력", "센서"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-ko-05", "query": "슬러리 공급 에러 알람 코드", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["슬러리", "공급"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-ko-06", "query": "모터 과부하 알람", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["모터", "과부하"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-ko-07", "query": "온도 이상 경고 알람", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["온도"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-ko-08", "query": "웨이퍼 감지 실패 오류", "language": "ko", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["웨이퍼"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-en-01", "query": "alarm code A100 emergency stop", "language": "en", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["A100", "Emergency Stop"],
+      "expected_answer": ""
+    },
+    {
+      "id": "err-en-02", "query": "interlock violation alarm causes", "language": "en", "intent": "Error",
+      "expected_docs": ["cmp-alarm-code-reference.md"],
+      "expected_keywords": ["Interlock"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-01", "query": "패드 교체 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["패드", "교체"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-02", "query": "패드 break-in 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["break-in"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-03", "query": "슬러리 교체 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["슬러리", "교체"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-04", "query": "슬러리 라인 플러시 방법", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["플러시", "라인"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-05", "query": "Retaining Ring 교체 방법", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Retaining Ring"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-06", "query": "컨디셔너 디스크 교체 순서", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["컨디셔너", "디스크"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-07", "query": "Membrane Pressure Hold Test 방법", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Membrane", "Pressure"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-08", "query": "Daily PM 점검 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["Daily", "PM", "점검"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-09", "query": "Weekly PM 유지보수 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["Weekly", "PM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-10", "query": "Monthly PM 점검 항목", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["Monthly", "PM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-11", "query": "압력 센서 교정 calibration 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-calibration-procedures.md"],
+      "expected_keywords": ["압력", "교정", "calibration"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-12", "query": "온도 센서 교정 방법", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-calibration-procedures.md"],
+      "expected_keywords": ["온도", "교정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-13", "query": "화학물질 누출 비상 대응 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-safety-procedures.md"],
+      "expected_keywords": ["화학물질", "누출", "비상"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-14", "query": "슬러리 타입 변경 Cross-Contamination 방지 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Cross-Contamination", "슬러리"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-ko-15", "query": "패드 교체 Qualification 검증 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Qualification"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-en-01", "query": "pad replacement procedure step by step", "language": "en", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["pad", "replacement"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-en-02", "query": "slurry line flush procedure", "language": "en", "intent": "Procedure",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["flush"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-en-03", "query": "daily PM checklist procedure", "language": "en", "intent": "Procedure",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["Daily", "PM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "proc-en-04", "query": "pressure sensor calibration procedure", "language": "en", "intent": "Procedure",
+      "expected_docs": ["cmp-calibration-procedures.md"],
+      "expected_keywords": ["pressure", "calibration"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-01", "query": "패드 교체 판단 기준", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["500시간", "패드"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-02", "query": "패드 사용 시간 500시간 초과", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["500시간"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-03", "query": "소모품 Qualification 검증", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-consumable-qualification.md"],
+      "expected_keywords": ["Qualification", "소모품"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-04", "query": "컨디셔너 수명 교환 주기", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-consumable-qualification.md"],
+      "expected_keywords": ["컨디셔너"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-05", "query": "리테이너 링 교환 시기", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Retaining Ring"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-06", "query": "슬러리 필터 수명 관리", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-consumable-qualification.md"],
+      "expected_keywords": ["슬러리", "필터"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-ko-07", "query": "멤브레인 부품 교환", "language": "ko", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Membrane"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-en-01", "query": "pad lifetime replacement criteria hours", "language": "en", "intent": "Part",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["500"],
+      "expected_answer": ""
+    },
+    {
+      "id": "part-en-02", "query": "consumable qualification testing", "language": "en", "intent": "Part",
+      "expected_docs": ["cmp-consumable-qualification.md"],
+      "expected_keywords": ["Qualification"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-01", "query": "CMP 공정이란 무엇인가", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-process-manual.md", "cmp-equipment-overview.md"],
+      "expected_keywords": ["CMP", "공정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-02", "query": "MRR 정의", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-process-manual.md", "cmp-parameter-optimization.md"],
+      "expected_keywords": ["MRR"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-03", "query": "WIWNU 의미 뜻", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-process-manual.md", "cmp-metrology-inspection.md"],
+      "expected_keywords": ["WIWNU"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-04", "query": "EPD 개념 정의", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-process-manual.md", "cmp-equipment-overview.md"],
+      "expected_keywords": ["EPD"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-05", "query": "Dishing 이란 무엇", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["Dishing"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-06", "query": "Erosion 침식 결함 정의", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["Erosion"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-07", "query": "Retaining Ring 무엇", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-equipment-overview.md"],
+      "expected_keywords": ["Retaining Ring"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-ko-08", "query": "플래튼이란 무엇인가요", "language": "ko", "intent": "Definition",
+      "expected_docs": ["cmp-equipment-overview.md"],
+      "expected_keywords": ["플래튼"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-en-01", "query": "what is CMP process", "language": "en", "intent": "Definition",
+      "expected_docs": ["cmp-process-manual.md", "cmp-equipment-overview.md"],
+      "expected_keywords": ["CMP"],
+      "expected_answer": ""
+    },
+    {
+      "id": "def-en-02", "query": "what is dishing defect in CMP", "language": "en", "intent": "Definition",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["Dishing"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-01", "query": "Downforce 압력 최적화 파라미터", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["Downforce", "압력"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-02", "query": "플래튼 RPM 회전 속도 설정값", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["RPM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-03", "query": "슬러리 유량 flow rate 규격", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["유량", "flow rate"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-04", "query": "연마 시간 파라미터 범위", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["연마", "시간"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-05", "query": "Back Pressure 설정 사양", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["Back Pressure"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-06", "query": "온도 허용 범위 스펙", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md", "cmp-calibration-procedures.md"],
+      "expected_keywords": ["온도"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-ko-07", "query": "슬러리 pH 범위 파라미터", "language": "ko", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md", "cmp-consumable-qualification.md"],
+      "expected_keywords": ["pH"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-en-01", "query": "downforce pressure parameter specification", "language": "en", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["Downforce"],
+      "expected_answer": ""
+    },
+    {
+      "id": "spec-en-02", "query": "platen RPM speed range", "language": "en", "intent": "Spec",
+      "expected_docs": ["cmp-parameter-optimization.md"],
+      "expected_keywords": ["RPM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "comp-ko-01", "query": "IC1000 패드와 IC1010 패드 비교", "language": "ko", "intent": "Comparison",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-consumable-qualification.md"],
+      "expected_keywords": ["IC1000", "IC1010"],
+      "expected_answer": ""
+    },
+    {
+      "id": "comp-ko-02", "query": "텅스텐 CMP vs 구리 CMP 차이", "language": "ko", "intent": "Comparison",
+      "expected_docs": ["cmp-process-manual.md"],
+      "expected_keywords": ["텅스텐", "구리"],
+      "expected_answer": ""
+    },
+    {
+      "id": "comp-ko-03", "query": "Daily PM과 Weekly PM 비교 차이점", "language": "ko", "intent": "Comparison",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["Daily", "Weekly", "PM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "comp-en-01", "query": "compare tungsten vs copper CMP process", "language": "en", "intent": "Comparison",
+      "expected_docs": ["cmp-process-manual.md"],
+      "expected_keywords": ["tungsten", "copper"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-01", "query": "CMP 장비 구조 구성 요소", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-equipment-overview.md"],
+      "expected_keywords": ["구조", "장비"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-02", "query": "CMP 공정 개요 연마 원리", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-process-manual.md"],
+      "expected_keywords": ["공정", "연마"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-03", "query": "스크래치 결함 분석", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["스크래치"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-04", "query": "Dishing 결함 원인 분석", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["Dishing"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-05", "query": "Erosion 침식 결함 원인", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["Erosion"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-06", "query": "MRR 저하 원인 트러블슈팅", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-general-troubleshooting.md"],
+      "expected_keywords": ["MRR", "저하"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-07", "query": "WIWNU 균일도 악화 원인", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-general-troubleshooting.md"],
+      "expected_keywords": ["WIWNU", "균일도"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-08", "query": "두께 측정 metrology 방법", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-metrology-inspection.md"],
+      "expected_keywords": ["두께", "측정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-09", "query": "PPE 착용 보호 장비", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-safety-procedures.md"],
+      "expected_keywords": ["PPE", "보호"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-10", "query": "슬러리 농도 관리", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-parameter-optimization.md"],
+      "expected_keywords": ["슬러리"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-11", "query": "컨디셔닝 방법 패드 표면", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-maintenance-guide.md"],
+      "expected_keywords": ["컨디셔닝"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-12", "query": "엔드포인트 디텍션 방법", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-process-manual.md", "cmp-equipment-overview.md"],
+      "expected_keywords": ["엔드포인트", "디텍션"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-13", "query": "연마 헤드 구조", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-equipment-overview.md"],
+      "expected_keywords": ["연마", "헤드"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-14", "query": "DI water 린스 공정", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-process-manual.md", "cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["DI", "린스"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-ko-15", "query": "Post-CMP 세정 공정", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-process-manual.md"],
+      "expected_keywords": ["Post-CMP", "세정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-en-01", "query": "CMP equipment structure overview", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-equipment-overview.md"],
+      "expected_keywords": ["equipment", "structure"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-en-02", "query": "scratch defect root cause analysis", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-defect-analysis.md"],
+      "expected_keywords": ["scratch"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-en-03", "query": "MRR drop troubleshooting", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-general-troubleshooting.md"],
+      "expected_keywords": ["MRR"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-en-04", "query": "thickness measurement metrology", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-metrology-inspection.md"],
+      "expected_keywords": ["thickness", "measurement"],
+      "expected_answer": ""
+    },
+    {
+      "id": "gen-en-05", "query": "PPE personal protective equipment safety", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-safety-procedures.md"],
+      "expected_keywords": ["PPE"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-01", "query": "연마 후 스크래치 발생 시 트러블슈팅", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-defect-analysis.md", "cmp-general-troubleshooting.md"],
+      "expected_keywords": ["스크래치"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-02", "query": "패드 교체 후 MRR 저하", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-general-troubleshooting.md"],
+      "expected_keywords": ["패드", "MRR"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-03", "query": "PM 후 균일도 이상", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-maintenance-guide.md", "cmp-general-troubleshooting.md"],
+      "expected_keywords": ["PM", "균일도"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-04", "query": "교정 후 파라미터 이상", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-calibration-procedures.md", "cmp-parameter-optimization.md"],
+      "expected_keywords": ["교정", "파라미터"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-05", "query": "슬러리 문제로 결함 발생 원인", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-defect-analysis.md"],
+      "expected_keywords": ["슬러리", "결함"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-06", "query": "안전 장비 착용 후 교체 작업", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-safety-procedures.md", "cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["안전", "교체"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-07", "query": "소모품 교체 후 Qualification 검증 절차", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-consumable-qualification.md", "cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["Qualification", "교체"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-ko-08", "query": "메트롤로지 측정 장비 교정", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-metrology-inspection.md", "cmp-calibration-procedures.md"],
+      "expected_keywords": ["측정", "교정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-en-01", "query": "scratch defect after pad replacement", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-defect-analysis.md", "cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["scratch", "pad"],
+      "expected_answer": ""
+    },
+    {
+      "id": "cross-en-02", "query": "MRR drop after consumable change", "language": "en", "intent": "General",
+      "expected_docs": ["cmp-general-troubleshooting.md", "cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["MRR"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-ko-01", "query": "슬러리 펌프 교체 후 유량 불안정 시 점검 항목", "language": "ko", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-slurry-pad-replacement.md", "cmp-general-troubleshooting.md"],
+      "expected_keywords": ["슬러리", "유량"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-ko-02", "query": "구리 배선 CMP에서 Dishing 최소화 방안", "language": "ko", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-defect-analysis.md", "cmp-parameter-optimization.md"],
+      "expected_keywords": ["Dishing", "구리"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-ko-03", "query": "200mm 웨이퍼 edge exclusion 균일도 개선", "language": "ko", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-parameter-optimization.md", "cmp-metrology-inspection.md"],
+      "expected_keywords": ["edge", "균일도"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-ko-04", "query": "3개월 누적 MTBF 데이터로 PM 주기 최적화", "language": "ko", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["MTBF", "PM"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-ko-05", "query": "신규 슬러리 도입 시 Qualification 테스트 항목과 합격 기준", "language": "ko", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-consumable-qualification.md"],
+      "expected_keywords": ["Qualification", "합격"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-en-01", "query": "copper CMP dishing minimization strategy", "language": "en", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-defect-analysis.md", "cmp-parameter-optimization.md"],
+      "expected_keywords": ["dishing", "copper"],
+      "expected_answer": ""
+    },
+    {
+      "id": "hard-en-02", "query": "MTBF based preventive maintenance optimization", "language": "en", "intent": "General", "difficulty": "hard",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["MTBF"],
+      "expected_answer": ""
+    },
+    {
+      "id": "typo-ko-01", "query": "슬러이 교체 절차", "language": "ko", "intent": "Procedure", "difficulty": "hard",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["슬러리", "교체"],
+      "expected_answer": "Typo test: 슬러이 → 슬러리"
+    },
+    {
+      "id": "typo-ko-02", "query": "패트 교환 시기", "language": "ko", "intent": "Part", "difficulty": "hard",
+      "expected_docs": ["cmp-slurry-pad-replacement.md"],
+      "expected_keywords": ["패드"],
+      "expected_answer": "Typo test: 패트 → 패드"
+    },
+    {
+      "id": "abbr-ko-01", "query": "CMP MRR 떨어졌을 때", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-general-troubleshooting.md"],
+      "expected_keywords": ["MRR"],
+      "expected_answer": "Abbreviation test"
+    },
+    {
+      "id": "abbr-ko-02", "query": "WIWNU 값 높을 때 조치", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-general-troubleshooting.md"],
+      "expected_keywords": ["WIWNU"],
+      "expected_answer": ""
+    },
+    {
+      "id": "maint-ko-01", "query": "전기 안전 점검 사항", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-safety-procedures.md"],
+      "expected_keywords": ["전기", "안전"],
+      "expected_answer": ""
+    },
+    {
+      "id": "maint-ko-02", "query": "LOTO 잠금 태그 아웃 절차", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-safety-procedures.md"],
+      "expected_keywords": ["LOTO"],
+      "expected_answer": ""
+    },
+    {
+      "id": "maint-ko-03", "query": "연마 후 세정 공정 이상 원인", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-process-manual.md", "cmp-general-troubleshooting.md"],
+      "expected_keywords": ["세정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "maint-ko-04", "query": "진공 척 점검 방법", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-maintenance-guide.md", "cmp-equipment-overview.md"],
+      "expected_keywords": ["진공"],
+      "expected_answer": ""
+    },
+    {
+      "id": "maint-ko-05", "query": "배기 시스템 정비", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-maintenance-guide.md"],
+      "expected_keywords": ["배기"],
+      "expected_answer": ""
+    },
+    {
+      "id": "calib-ko-01", "query": "유량 센서 교정 주기", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-calibration-procedures.md"],
+      "expected_keywords": ["유량", "교정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "calib-ko-02", "query": "토크 센서 교정 방법", "language": "ko", "intent": "Procedure",
+      "expected_docs": ["cmp-calibration-procedures.md"],
+      "expected_keywords": ["토크", "교정"],
+      "expected_answer": ""
+    },
+    {
+      "id": "metro-ko-01", "query": "XRF 두께 측정 방법", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-metrology-inspection.md"],
+      "expected_keywords": ["XRF", "두께"],
+      "expected_answer": ""
+    },
+    {
+      "id": "metro-ko-02", "query": "결함 검사 장비 종류", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-metrology-inspection.md"],
+      "expected_keywords": ["검사"],
+      "expected_answer": ""
+    },
+    {
+      "id": "metro-ko-03", "query": "표면 조도 측정 방법", "language": "ko", "intent": "General",
+      "expected_docs": ["cmp-metrology-inspection.md"],
+      "expected_keywords": ["조도", "표면"],
+      "expected_answer": ""
+    }
+  ]
+}

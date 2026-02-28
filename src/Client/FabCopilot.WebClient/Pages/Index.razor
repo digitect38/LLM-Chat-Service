@@ -10,6 +10,7 @@
 @inject IOptions<EquipmentOptions> EquipmentOptionsAccessor
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
+@inject EmbeddingConfigService EmbeddingConfigService
 @implements IAsyncDisposable
 
 <div class="chat-app">
@@ -266,13 +267,19 @@
             <div class="timeout-label">@_currentStage (@(_elapsedSeconds)초)</div>
         }
 
-        @if (_showTimeoutWarning)
+        @if (_showTimeoutNotification)
         {
-            <div class="timeout-warning-popup">
-                <p>응답 시간이 예상보다 길어지고 있습니다 (@(_elapsedSeconds)초)</p>
-                <button @onclick="ExtendTimeout">시간 연장 (2x)</button>
-                <button @onclick="CancelTimeout">취소</button>
-                <button @onclick="SimplifyQuery">간단한 답변 요청</button>
+            <div class="timeout-warning-popup timeout-level-@_timeoutLevel">
+                <p>@_timeoutNotificationMessage</p>
+                <div class="timeout-actions">
+                    <button @onclick="ExtendTimeout">⏱ 시간 연장 (2x)</button>
+                    <button @onclick="SimplifyQuery">💬 간단한 답변 요청</button>
+                    @if (_hasPartialResponse)
+                    {
+                        <button @onclick="ShowPartialAndContinue">📄 부분 응답 표시</button>
+                    }
+                    <button @onclick="CancelTimeout" class="btn-cancel">✕ 취소 & 재시도</button>
+                </div>
             </div>
         }
 
@@ -417,13 +424,16 @@
     // Latency tracking
     private System.Diagnostics.Stopwatch? _latencyStopwatch;
 
-    // Timeout progress (v3.2 §5.3)
+    // Timeout progress (v4.83 enhanced)
     private Timer? _timeoutTimer;
     private int _elapsedSeconds;
     private string _currentStage = "";
-    private bool _showTimeoutWarning;
+    private bool _showTimeoutNotification;
     private string _timeoutSeverity = "normal";
     private int _timeoutBudgetSeconds = 180;
+    private int _timeoutLevel; // 1=10s, 2=30s, 3=60s, 4=180s
+    private string _timeoutNotificationMessage = "";
+    private bool _hasPartialResponse;
 
     // Citation interop
     private DotNetObjectReference<Index>? _dotNetRef;
@@ -439,7 +449,14 @@
 
         var opts = ModelOptionsAccessor.Value;
         _availableModels = opts.Available;
-        _selectedModelId = !string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "";
+
+        // Load persisted model from LlmService config, fall back to WebClient default
+        var persistedModel = EmbeddingConfigService.GetCurrentLlmModel();
+        _selectedModelId = !string.IsNullOrEmpty(persistedModel)
+            ? persistedModel
+            : (!string.IsNullOrEmpty(opts.Default) ? opts.Default : _availableModels.FirstOrDefault()?.Id ?? "");
+
+        _searchMode = EmbeddingConfigService.GetCurrentSearchMode();
 
         var eqOpts = EquipmentOptionsAccessor.Value;
         _availableEquipment = eqOpts.Available;
@@ -858,8 +875,15 @@
             if (!string.IsNullOrEmpty(savedRenderMode))
             {
                 _renderMode = savedRenderMode;
-                StateHasChanged();
             }
+
+            var savedTimeout = await JS.InvokeAsync<string>("clientSettings.getTimeoutBudget");
+            if (!string.IsNullOrEmpty(savedTimeout) && int.TryParse(savedTimeout, out var budget))
+            {
+                _timeoutBudgetSeconds = budget;
+            }
+
+            StateHasChanged();
         }
     }
 
@@ -1213,10 +1237,12 @@
     private void StartTimeoutTimer()
     {
         _elapsedSeconds = 0;
-        _showTimeoutWarning = false;
+        _showTimeoutNotification = false;
         _timeoutSeverity = "normal";
-        _timeoutBudgetSeconds = 180;
+        // _timeoutBudgetSeconds is kept from Settings (default 180)
         _currentStage = "검색 중...";
+        _timeoutLevel = 0;
+        _hasPartialResponse = false;
 
         _timeoutTimer?.Dispose();
         _timeoutTimer = new Timer(_ =>
@@ -1227,6 +1253,10 @@
 
                 _elapsedSeconds++;
 
+                // Check if we have partial response content
+                var lastMsg = _messages.LastOrDefault(m => !m.IsUser);
+                _hasPartialResponse = lastMsg != null && !string.IsNullOrEmpty(lastMsg.Text) && lastMsg.Text.Length > 20;
+
                 // Infer stage from elapsed time
                 _currentStage = _elapsedSeconds switch
                 {
@@ -1236,13 +1266,53 @@
                     _ => "응답 대기 중..."
                 };
 
-                // Severity logic
+                // Progressive notification at 10s/30s/60s/180s
+                var newLevel = _elapsedSeconds switch
+                {
+                    >= 180 => 4,
+                    >= 60 => 3,
+                    >= 30 => 2,
+                    >= 10 => 1,
+                    _ => 0
+                };
+
+                // Show notification when level changes
+                if (newLevel > _timeoutLevel)
+                {
+                    _timeoutLevel = newLevel;
+                    _timeoutNotificationMessage = _timeoutLevel switch
+                    {
+                        1 => $"응답 생성 중입니다... ({_elapsedSeconds}초 경과)",
+                        2 => $"응답 시간이 길어지고 있습니다. ({_elapsedSeconds}초 경과) 복잡한 쿼리일 수 있습니다.",
+                        3 => $"예상보다 응답이 지연되고 있습니다. ({_elapsedSeconds}초 경과) 쿼리를 간소화하시겠습니까?",
+                        4 => $"응답 시간이 매우 길어지고 있습니다. ({_elapsedSeconds}초 경과) 서버 상태를 확인해 주세요.",
+                        _ => ""
+                    };
+
+                    if (_timeoutLevel >= 2)
+                    {
+                        _showTimeoutNotification = true;
+                    }
+                }
+                else if (_showTimeoutNotification)
+                {
+                    // Update message with current elapsed time
+                    _timeoutNotificationMessage = _timeoutLevel switch
+                    {
+                        2 => $"응답 시간이 길어지고 있습니다. ({_elapsedSeconds}초 경과) 복잡한 쿼리일 수 있습니다.",
+                        3 => $"예상보다 응답이 지연되고 있습니다. ({_elapsedSeconds}초 경과) 쿼리를 간소화하시겠습니까?",
+                        4 => $"응답 시간이 매우 길어지고 있습니다. ({_elapsedSeconds}초 경과) 서버 상태를 확인해 주세요.",
+                        _ => _timeoutNotificationMessage
+                    };
+                }
+
+                // Severity for progress bar color
                 if (_elapsedSeconds >= _timeoutBudgetSeconds * 0.9)
                 {
                     if (_timeoutSeverity != "exceeded")
                         FabMetrics.TimeoutOccurrenceCount.Add(1);
                     _timeoutSeverity = "exceeded";
-                    _showTimeoutWarning = true;
+                    _showTimeoutNotification = true;
                 }
                 else if (_elapsedSeconds >= _timeoutBudgetSeconds * 0.6)
                     _timeoutSeverity = "critical";
@@ -1260,15 +1330,16 @@
     {
         _timeoutTimer?.Dispose();
         _timeoutTimer = null;
-        _showTimeoutWarning = false;
+        _showTimeoutNotification = false;
         _elapsedSeconds = 0;
+        _timeoutLevel = 0;
     }
 
     private void ExtendTimeout()
     {
         FabMetrics.TimeoutExtendCount.Add(1);
         _timeoutBudgetSeconds = Math.Min(_timeoutBudgetSeconds * 2, 600);
-        _showTimeoutWarning = false;
+        _showTimeoutNotification = false;
         _timeoutSeverity = "warning";
         StateHasChanged();
     }
@@ -1276,7 +1347,7 @@
     private async Task CancelTimeout()
     {
         FabMetrics.TimeoutCancelCount.Add(1);
-        _showTimeoutWarning = false;
+        _showTimeoutNotification = false;
         StopTimeoutTimer();
         await StopResponseAsync();
     }
@@ -1284,7 +1355,7 @@
     private async Task SimplifyQuery()
     {
         FabMetrics.TimeoutSimplifyCount.Add(1);
-        _showTimeoutWarning = false;
+        _showTimeoutNotification = false;
         StopTimeoutTimer();
 
         // Find the last user message
@@ -1299,6 +1370,19 @@
             StateHasChanged();
             await SendMessageAsync();
         }
+    }
+
+    private async Task ShowPartialAndContinue()
+    {
+        // Keep the partial response visible, dismiss the notification
+        _showTimeoutNotification = false;
+        var lastMsg = _messages.LastOrDefault(m => !m.IsUser);
+        if (lastMsg != null)
+        {
+            lastMsg.Text += "\n\n---\n⚠️ *응답이 지연되어 부분 응답을 표시합니다. 응답이 완료되면 자동으로 업데이트됩니다.*";
+            lastMsg.RenderedHtml = await RenderMarkdownAsync(lastMsg.Text);
+        }
+        StateHasChanged();
     }
 
     // ─── Render Mode ─────────────────────────────────────────────────────

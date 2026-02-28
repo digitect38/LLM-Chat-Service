@@ -1,0 +1,30 @@
+{
+  "_comment": "Domain-specific pronunciation rules for TTS (semiconductor/CMP equipment)",
+  "rules": [
+    { "pattern": "CMP", "pronunciation": "씨엠피" },
+    { "pattern": "MRR", "pronunciation": "엠알알" },
+    { "pattern": "WIWNU", "pronunciation": "위윈유" },
+    { "pattern": "EPD", "pronunciation": "이피디" },
+    { "pattern": "MTBF", "pronunciation": "엠티비에프" },
+    { "pattern": "MTTR", "pronunciation": "엠티티알" },
+    { "pattern": "RUL", "pronunciation": "알유엘" },
+    { "pattern": "PM", "pronunciation": "피엠" },
+    { "pattern": "BM", "pronunciation": "비엠" },
+    { "pattern": "RPM", "pronunciation": "알피엠" },
+    { "pattern": "PSI", "pronunciation": "피에스아이" },
+    { "pattern": "SCCM", "pronunciation": "에스씨씨엠" },
+    { "pattern": "SLM", "pronunciation": "에스엘엠" },
+    { "pattern": "CVD", "pronunciation": "씨브이디" },
+    { "pattern": "PVD", "pronunciation": "피브이디" },
+    { "pattern": "ALD", "pronunciation": "에이엘디" },
+    { "pattern": "PECVD", "pronunciation": "피이씨브이디" },
+    { "pattern": "DI", "pronunciation": "디아이" },
+    { "pattern": "μm", "pronunciation": "마이크로미터" },
+    { "pattern": "nm", "pronunciation": "나노미터" },
+    { "pattern": "Å", "pronunciation": "옹스트롬" },
+    { "pattern": "N₂", "pronunciation": "질소" },
+    { "pattern": "O₂", "pronunciation": "산소" },
+    { "pattern": "SiO₂", "pronunciation": "실리콘 다이옥사이드" },
+    { "pattern": "W/Cu", "pronunciation": "텅스텐 구리" }
+  ]
+}

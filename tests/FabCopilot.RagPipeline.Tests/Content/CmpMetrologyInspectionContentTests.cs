@@ -243,6 +243,6 @@ public class CmpMetrologyInspectionContentTests
     {
         var prompt = BuildPromptWith("WIWNU(%) = (σ / Mean) × 100, 목표 < 3%, 양산 경고 > 5%");
         prompt.Should().Contain("WIWNU");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 }

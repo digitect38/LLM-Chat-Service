@@ -8,7 +8,29 @@ namespace FabCopilot.RagPipeline.Tests;
 public class SourceCitationTests
 {
     [Fact]
-    public void BuildSourceCitations_WithFileNameMetadata_GeneratesCitationSection()
+    public void BuildSourceCitations_WithPdfFile_GeneratesCitationSection()
+    {
+        var ragResults = new List<RetrievalResult>
+        {
+            new()
+            {
+                DocumentId = "doc-1",
+                ChunkText = "CMP pad replacement guide.",
+                Score = 0.85f,
+                Metadata = new Dictionary<string, object> { ["file_name"] = "cmp-maintenance.pdf" }
+            }
+        };
+
+        var citations = LlmWorker.BuildSourceCitations(ragResults);
+
+        citations.Should().Contain("참고 문서:");
+        citations.Should().Contain("cmp-maintenance");
+        citations.Should().NotContain(".pdf");
+        citations.Should().Contain("0.850");
+    }
+
+    [Fact]
+    public void BuildSourceCitations_WithMdFile_IncludedWithoutExtension()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -23,9 +45,8 @@ public class SourceCitationTests
 
         var citations = LlmWorker.BuildSourceCitations(ragResults);
 
-        citations.Should().Contain("참고 문서:");
-        citations.Should().Contain("cmp-maintenance.md");
-        citations.Should().Contain("0.850");
+        citations.Should().Contain("cmp-maintenance");
+        citations.Should().NotContain(".md");
     }
 
     [Fact]
@@ -39,7 +60,7 @@ public class SourceCitationTests
     }
 
     [Fact]
-    public void BuildSourceCitations_DuplicateDocumentNames_Deduplicated()
+    public void BuildSourceCitations_DuplicateNames_Deduplicated()
     {
         var ragResults = new List<RetrievalResult>
         {
@@ -61,8 +82,8 @@ public class SourceCitationTests
 
         var citations = LlmWorker.BuildSourceCitations(ragResults);
 
-        // "cmp-guide.md" should appear only once despite two results with same file_name
-        var occurrences = citations.Split("cmp-guide.md").Length - 1;
+        // "cmp-guide" should appear only once despite two results with same file_name
+        var occurrences = citations.Split("cmp-guide").Length - 1;
         occurrences.Should().Be(1);
     }
 

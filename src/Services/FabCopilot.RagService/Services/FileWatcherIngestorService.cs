@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services.Bm25;
+using FabCopilot.RagService.Services.ImageOcr;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -18,6 +19,7 @@ public sealed class FileWatcherIngestorService : BackgroundService
     private readonly IVectorStore _vectorStore;
     private readonly IBm25Index? _bm25Index;
     private readonly IRagCache? _ragCache;
+    private readonly IImageOcrExtractor? _ocrExtractor;
     private readonly QdrantOptions _qdrantOptions;
     private readonly RagOptions _ragOptions;
     private readonly ILogger<FileWatcherIngestorService> _logger;
@@ -35,13 +37,15 @@ public sealed class FileWatcherIngestorService : BackgroundService
         IOptions<RagOptions> ragOptions,
         ILogger<FileWatcherIngestorService> logger,
         IBm25Index? bm25Index = null,
-        IRagCache? ragCache = null)
+        IRagCache? ragCache = null,
+        IImageOcrExtractor? ocrExtractor = null)
     {
         _ingestor = ingestor;
         _extractor = extractor;
         _vectorStore = vectorStore;
         _bm25Index = bm25Index;
         _ragCache = ragCache;
+        _ocrExtractor = ocrExtractor;
         _qdrantOptions = qdrantOptions.Value;
         _ragOptions = ragOptions.Value;
         _logger = logger;
@@ -251,6 +255,28 @@ public sealed class FileWatcherIngestorService : BackgroundService
         {
             var pages = _extractor.ExtractPdfPagesWithTables(fullPath);
             await _ingestor.IngestPdfPagesAsync(documentId, pages, EquipmentId, metadata, ct);
+        }
+        else if (FileTextExtractor.IsImage(fullPath))
+        {
+            // Image files: extract text via OCR service (optional)
+            if (_ocrExtractor is not null)
+            {
+                var ocrText = await _ocrExtractor.ExtractTextAsync(fullPath, ct);
+                if (!string.IsNullOrWhiteSpace(ocrText))
+                {
+                    metadata["content_type"] = "image_ocr";
+                    metadata["original_format"] = Path.GetExtension(fullPath).ToLowerInvariant();
+                    await _ingestor.IngestTextAsync(documentId, ocrText, EquipmentId, metadata, ct);
+                }
+                else
+                {
+                    _logger.LogInformation("OCR returned empty text for image {FilePath}, skipping", fullPath);
+                }
+            }
+            else
+            {
+                _logger.LogDebug("No OCR extractor configured, skipping image {FilePath}", fullPath);
+            }
         }
         else
         {

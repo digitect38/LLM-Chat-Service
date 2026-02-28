@@ -304,9 +304,10 @@ public class CmpProcessManualContentTests
     }
 
     [Fact]
-    public void Prompt_Contains_SourceFileName()
+    public void Prompt_Contains_ChunkText_NotFileName()
     {
         var prompt = BuildPromptWith("CMP 공정 매뉴얼 내용");
-        prompt.Should().Contain("cmp-process-manual.md");
+        prompt.Should().NotContain("cmp-process-manual.md");
+        prompt.Should().Contain("CMP 공정 매뉴얼 내용");
     }
 }

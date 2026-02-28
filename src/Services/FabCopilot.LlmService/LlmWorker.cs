@@ -21,6 +21,7 @@ public sealed class LlmWorker : BackgroundService
     private readonly IConversationStore _conversationStore;
     private readonly IAuditTrail _auditTrail;
     private readonly ILlmClient _llmClient;
+    private readonly DlpFilter _dlpFilter;
     private readonly RagPipelineMode _ragPipelineMode;
     private readonly int _ragTopK;
     private readonly float _gateAThreshold;
@@ -41,6 +42,11 @@ public sealed class LlmWorker : BackgroundService
         _auditTrail = auditTrail;
         _llmClient = llmClient;
         _logger = logger;
+
+        // DLP Filter
+        var dlpOptions = new DlpOptions();
+        configuration.GetSection(DlpOptions.SectionName).Bind(dlpOptions);
+        _dlpFilter = new DlpFilter(logger, dlpOptions);
 
         var modeStr = configuration.GetValue<string>("Rag:PipelineMode");
         _ragPipelineMode = Enum.TryParse<RagPipelineMode>(modeStr, ignoreCase: true, out var mode)
@@ -111,7 +117,11 @@ public sealed class LlmWorker : BackgroundService
                 _logger.LogInformation("Created new conversation {ConversationId}", request.ConversationId);
             }
 
-            // 2. Append the user message to the conversation
+            // 2. DLP Input Filter — mask sensitive data before processing
+            var dlpInputResult = _dlpFilter.FilterInput(request.UserMessage);
+            var sanitizedUserMessage = dlpInputResult.FilteredText;
+
+            // Append the (original) user message to the conversation
             var userMessage = new ChatMessage
             {
                 Role = MessageRole.User,
@@ -120,7 +130,7 @@ public sealed class LlmWorker : BackgroundService
             };
             await _conversationStore.AppendMessageAsync(request.ConversationId, userMessage, ct);
 
-            // 2.5. Retrieve RAG context from vector store
+            // 2.5. Retrieve RAG context from vector store (using sanitized message)
             var ragSw = FabMetrics.StartTimer();
             var ragResponse = await RetrieveRagContextAsync(
                 request.ConversationId, request.UserMessage, request.EquipmentId, ct);
@@ -223,11 +233,18 @@ public sealed class LlmWorker : BackgroundService
                     responseText.Length, strippedResponse.Length, request.ConversationId);
             }
 
+            // DLP Output Filter — redact sensitive patterns before sending to user
+            var dlpOutputResult = _dlpFilter.FilterOutput(strippedResponse);
+            strippedResponse = dlpOutputResult.FilteredText;
+
             // Always rebuild fullResponse: stripped body + service-generated verified citations
             fullResponse.Clear();
             fullResponse.Append(strippedResponse);
 
-            var sourceSuffix = BuildSourceCitations(ragResults, _gateAThreshold);
+            // Cite ALL retrieved documents (RagService already filtered by MinScore).
+            // Using _gateAThreshold here would silently drop results in the 0.45–0.55 range
+            // that were shown to the LLM in the system prompt.
+            var sourceSuffix = BuildSourceCitations(ragResults);
             if (!string.IsNullOrEmpty(sourceSuffix))
             {
                 fullResponse.Append(sourceSuffix);

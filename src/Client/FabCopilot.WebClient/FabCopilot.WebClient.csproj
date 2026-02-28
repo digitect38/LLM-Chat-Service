@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <InternalsVisibleTo Include="FabCopilot.RagPipeline.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\Shared\FabCopilot.Contracts\FabCopilot.Contracts.csproj" />
     <ProjectReference Include="..\..\Shared\FabCopilot.Observability\FabCopilot.Observability.csproj" />
   </ItemGroup>

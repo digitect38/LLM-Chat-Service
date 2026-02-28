@@ -409,6 +409,12 @@
             setRenderMode: function(v) {
                 localStorage.setItem('renderMode', v);
             },
+            getTimeoutBudget: function() {
+                return localStorage.getItem('timeoutBudget') || '180';
+            },
+            setTimeoutBudget: function(v) {
+                localStorage.setItem('timeoutBudget', v);
+            },
             init: function() {
                 this.setCodeFont(this.getCodeFont());
             }
@@ -456,10 +462,17 @@
                 this._equipmentId = equipmentId;
             },
 
-            setEngine: function(engine) {
+            setEngine: async function(engine) {
                 this._engineSetting = engine;
                 if (engine === 'auto') {
-                    this.autoDetectEngine();
+                    await this.autoDetectEngine();
+                } else if (engine === 'whisper') {
+                    var ok = await this._checkWhisperAvailable();
+                    this._engine = 'whisper';
+                    this._disabled = !ok;
+                    if (!ok && this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError',
+                            'Whisper 서버에 연결할 수 없습니다. --profile whisper 로 컨테이너를 시작하세요.');
                 } else {
                     this._engine = engine;
                     this._disabled = false;
@@ -620,16 +633,20 @@
                         this._gatewayUrl + '/api/transcribe/' + encodeURIComponent(this._equipmentId),
                         { method: 'POST', body: form });
                     if (!resp.ok) {
-                        var errText = await resp.text();
-                        throw new Error(errText || 'HTTP ' + resp.status);
+                        var errBody = await resp.text();
+                        var errMsg = 'HTTP ' + resp.status;
+                        try { errMsg = JSON.parse(errBody).error || errMsg; } catch {}
+                        throw new Error(errMsg);
                     }
                     var data = await resp.json();
                     if (this._dotNetRef)
                         this._dotNetRef.invokeMethodAsync('OnTranscriptionComplete', data.text || '');
                 } catch (err) {
+                    var msg = err.message || '음성 변환 실패';
+                    if (err.name === 'TypeError' && msg.indexOf('fetch') !== -1)
+                        msg = 'Gateway 서버에 연결할 수 없습니다 (port 5000)';
                     if (this._dotNetRef)
-                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError',
-                            err.message || '음성 변환 실패');
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionError', msg);
                 }
             },
 

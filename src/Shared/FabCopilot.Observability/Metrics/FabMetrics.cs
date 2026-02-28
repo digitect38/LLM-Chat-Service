@@ -65,6 +65,17 @@ public static class FabMetrics
     public static readonly Counter<long> LlmGateCTriggeredCount =
         Meter.CreateCounter<long>("llm.gate_c.triggered", "triggers", "Gate C (response quality) trigger count");
 
+    // ─── LLM Fallback Metrics ────────────────────────────────────────
+
+    public static readonly Counter<long> LlmFallbackTriggeredCount =
+        Meter.CreateCounter<long>("llm.fallback.triggered", "triggers", "Fallback to secondary LLM server");
+
+    public static readonly Counter<long> LlmSlmFallbackTriggeredCount =
+        Meter.CreateCounter<long>("llm.slm_fallback.triggered", "triggers", "Fallback to SLM mode (both servers down)");
+
+    public static readonly Histogram<double> LlmHealthCheckLatency =
+        Meter.CreateHistogram<double>("llm.health_check.ms", "ms", "LLM server health check latency");
+
     // ─── Timeout Telemetry (v3.3 §11.1) ─────────────────────────────
 
     public static readonly Counter<long> TimeoutOccurrenceCount =

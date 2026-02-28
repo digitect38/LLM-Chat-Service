@@ -1,0 +1,543 @@
+@page "/dashboard"
+@page "/dashboard/{EquipmentId}"
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IConfiguration Config
+
+<div class="dashboard-page">
+    <div class="dashboard-container">
+
+        <!-- ===== Header Bar ===== -->
+        <div class="dashboard-header">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <h1 class="dashboard-title">장비 대시보드</h1>
+                <span class="dashboard-equip-id">@(EquipmentId ?? "ALL")</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <select class="dashboard-select" @bind="_selectedTimeRange">
+                    <option value="1h">최근 1시간</option>
+                    <option value="6h">최근 6시간</option>
+                    <option value="24h">최근 24시간</option>
+                    <option value="7d">최근 7일</option>
+                    <option value="30d">최근 30일</option>
+                </select>
+                <button class="btn-secondary-sm" @onclick="RefreshDashboard" title="새로고침">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                </button>
+                <button class="btn-secondary-sm" @onclick='() => Navigation.NavigateTo("/")'>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    채팅
+                </button>
+            </div>
+        </div>
+
+        <!-- ===== Status Summary Cards ===== -->
+        <div class="dashboard-status-grid">
+            @foreach (var sensor in _sensorStatus)
+            {
+                <div class="status-card @GetStatusClass(sensor.Status)">
+                    <div class="status-card-header">
+                        <span class="status-card-name">@sensor.Name</span>
+                        <span class="status-badge @GetStatusBadgeClass(sensor.Status)">@sensor.Status</span>
+                    </div>
+                    <div class="status-card-value">@sensor.Value.ToString("F1") <span class="status-card-unit">@sensor.Unit</span></div>
+                    <div class="status-card-range">정상: @sensor.NormalRange</div>
+                </div>
+            }
+        </div>
+
+        <!-- ===== Sensor Trend Chart (placeholder — JS chart library integration point) ===== -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    센서 트렌드
+                </h2>
+                <div class="panel-controls">
+                    @foreach (var sensor in _availableSensors)
+                    {
+                        <label class="sensor-toggle">
+                            <input type="checkbox" checked="@sensor.Enabled" @onchange="(e) => ToggleSensor(sensor.Id, e)" />
+                            <span>@sensor.Name</span>
+                        </label>
+                    }
+                </div>
+            </div>
+            <div class="panel-body">
+                <div id="sensorTrendChart" class="chart-container" style="height:300px; display:flex; align-items:center; justify-content:center; color:#888;">
+                    센서 데이터 로딩 중... (차트 라이브러리 연동 필요)
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== Alarm Timeline ===== -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    알람 타임라인
+                </h2>
+                <span class="panel-count">@_recentAlarms.Count 건</span>
+            </div>
+            <div class="panel-body">
+                @if (_recentAlarms.Count == 0)
+                {
+                    <div class="empty-state">최근 알람 없음</div>
+                }
+                else
+                {
+                    <div class="alarm-timeline">
+                        @foreach (var alarm in _recentAlarms)
+                        {
+                            <div class="alarm-item @GetAlarmSeverityClass(alarm.Severity)">
+                                <div class="alarm-time">@alarm.Timestamp.ToLocalTime().ToString("MM/dd HH:mm")</div>
+                                <div class="alarm-code">@alarm.AlarmCode</div>
+                                <div class="alarm-desc">@alarm.Description</div>
+                                <div class="alarm-severity-badge">@alarm.Severity</div>
+                                @if (alarm.ClearedAt.HasValue)
+                                {
+                                    <div class="alarm-cleared" title="해제됨">
+                                        @((alarm.ClearedAt.Value - alarm.Timestamp).TotalMinutes.ToString("F0"))분 후 해제
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ===== Anomaly Detection Status ===== -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    이상 탐지 상태
+                </h2>
+            </div>
+            <div class="panel-body">
+                <div class="anomaly-grid">
+                    @foreach (var sensor in _sensorStatus)
+                    {
+                        <div class="anomaly-card @GetStatusClass(sensor.Status)">
+                            <div class="anomaly-sensor">@sensor.Name</div>
+                            <div class="anomaly-status">@sensor.Status</div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== Predictive Summary Panel ===== -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    예측 진단 요약
+                </h2>
+                <span class="panel-count health-status @GetHealthStatusClass(_healthStatus)">@_healthStatus</span>
+            </div>
+            <div class="panel-body">
+                @if (_predictiveAlerts.Count == 0)
+                {
+                    <div class="empty-state">활성 예측 알림 없음 — 장비 정상 운전 중</div>
+                }
+                else
+                {
+                    <div class="predictive-list">
+                        @foreach (var alert in _predictiveAlerts)
+                        {
+                            <div class="predictive-item @GetAlertSeverityClass(alert.Severity)">
+                                <div class="predictive-severity-icon">
+                                    @if (alert.Severity == "Critical")
+                                    {
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                                    }
+                                    else
+                                    {
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                    }
+                                </div>
+                                <div class="predictive-content">
+                                    <div class="predictive-title">@alert.Title</div>
+                                    <div class="predictive-detail">신뢰도: @alert.Confidence.ToString("P0")</div>
+                                </div>
+                                <div class="predictive-actions">
+                                    @foreach (var action in alert.Actions.Take(2))
+                                    {
+                                        <span class="action-chip">@action</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- RUL Gauges -->
+                @if (_rulGauges.Count > 0)
+                {
+                    <div class="rul-gauge-grid">
+                        @foreach (var rul in _rulGauges)
+                        {
+                            <div class="rul-gauge-card">
+                                <div class="rul-gauge-label">@rul.ComponentName</div>
+                                <div class="rul-gauge-bar-bg">
+                                    <div class="rul-gauge-bar @GetRulBarClass(rul.RemainingPercent)"
+                                         style="width: @(rul.RemainingPercent)%"></div>
+                                </div>
+                                <div class="rul-gauge-detail">
+                                    잔여: @rul.RemainingHours.ToString("F0")h / @rul.TotalHours.ToString("F0")h
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ===== Knowledge Base Browser ===== -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                    전문가 지식 베이스
+                </h2>
+                <span class="panel-count">@_expertRules.Count 규칙</span>
+            </div>
+            <div class="panel-body">
+                @if (_expertRules.Count == 0)
+                {
+                    <div class="empty-state">등록된 전문가 규칙 없음</div>
+                }
+                else
+                {
+                    <div class="kb-table">
+                        <div class="kb-header-row">
+                            <span>규칙명</span>
+                            <span>신뢰도</span>
+                            <span>적중률</span>
+                            <span>상태</span>
+                        </div>
+                        @foreach (var rule in _expertRules)
+                        {
+                            <div class="kb-row">
+                                <span class="kb-rule-name">@rule.Name</span>
+                                <span class="kb-confidence">@rule.Confidence.ToString("P0")</span>
+                                <span class="kb-hitrate">@rule.HitCount hits / @rule.ConfirmCount confirmed</span>
+                                <span class="kb-status @(rule.IsActive ? "active" : "inactive")">
+                                    @(rule.IsActive ? "Active" : "Inactive")
+                                </span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+    .dashboard-page { padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .dashboard-container { display: flex; flex-direction: column; gap: 16px; }
+
+    .dashboard-header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 16px; background: var(--bg-card, #1e1e2e); border-radius: 8px;
+    }
+    .dashboard-title { font-size: 1.2rem; font-weight: 600; margin: 0; color: var(--text-primary, #e0e0e0); }
+    .dashboard-equip-id {
+        font-size: 0.85rem; padding: 2px 8px; border-radius: 4px;
+        background: var(--accent-dim, #333); color: var(--accent, #7c8aff);
+    }
+    .dashboard-select {
+        padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border, #444);
+        background: var(--bg-input, #2a2a3a); color: var(--text-primary, #e0e0e0); font-size: 0.85rem;
+    }
+
+    .dashboard-status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+
+    .status-card {
+        padding: 12px 16px; border-radius: 8px; border-left: 4px solid transparent;
+        background: var(--bg-card, #1e1e2e);
+    }
+    .status-card.normal { border-left-color: #4ade80; }
+    .status-card.caution { border-left-color: #fbbf24; }
+    .status-card.anomaly { border-left-color: #ef4444; }
+    .status-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .status-card-name { font-size: 0.85rem; color: var(--text-secondary, #aaa); }
+    .status-card-value { font-size: 1.5rem; font-weight: 700; color: var(--text-primary, #e0e0e0); }
+    .status-card-unit { font-size: 0.75rem; font-weight: 400; color: var(--text-secondary, #aaa); }
+    .status-card-range { font-size: 0.75rem; color: var(--text-secondary, #888); margin-top: 4px; }
+
+    .status-badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+    .status-badge.badge-normal { background: #064e3b; color: #4ade80; }
+    .status-badge.badge-caution { background: #78350f; color: #fbbf24; }
+    .status-badge.badge-anomaly { background: #7f1d1d; color: #ef4444; }
+
+    .dashboard-panel { background: var(--bg-card, #1e1e2e); border-radius: 8px; overflow: hidden; }
+    .panel-header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 16px; border-bottom: 1px solid var(--border, #333);
+    }
+    .panel-title { font-size: 0.95rem; font-weight: 600; margin: 0; color: var(--text-primary, #e0e0e0); display: flex; align-items: center; gap: 8px; }
+    .panel-count { font-size: 0.8rem; color: var(--text-secondary, #aaa); }
+    .panel-body { padding: 16px; }
+    .panel-controls { display: flex; gap: 12px; flex-wrap: wrap; }
+
+    .sensor-toggle { display: flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--text-secondary, #aaa); cursor: pointer; }
+    .sensor-toggle input { cursor: pointer; }
+
+    .chart-container { border: 1px dashed var(--border, #444); border-radius: 4px; }
+
+    .empty-state { text-align: center; padding: 24px; color: var(--text-secondary, #888); font-size: 0.9rem; }
+
+    .alarm-timeline { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; }
+    .alarm-item {
+        display: grid; grid-template-columns: 100px 80px 1fr auto auto;
+        gap: 8px; align-items: center; padding: 8px 12px; border-radius: 4px;
+        background: var(--bg-input, #2a2a3a); font-size: 0.85rem;
+    }
+    .alarm-item.severity-critical { border-left: 3px solid #ef4444; }
+    .alarm-item.severity-warning { border-left: 3px solid #fbbf24; }
+    .alarm-item.severity-info { border-left: 3px solid #60a5fa; }
+    .alarm-time { color: var(--text-secondary, #aaa); font-size: 0.8rem; }
+    .alarm-code { font-weight: 600; color: var(--accent, #7c8aff); }
+    .alarm-desc { color: var(--text-primary, #e0e0e0); }
+    .alarm-severity-badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 3px; }
+    .alarm-cleared { font-size: 0.75rem; color: #4ade80; }
+
+    .anomaly-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .anomaly-card {
+        padding: 12px; border-radius: 6px; text-align: center;
+        background: var(--bg-input, #2a2a3a);
+    }
+    .anomaly-sensor { font-size: 0.8rem; color: var(--text-secondary, #aaa); margin-bottom: 4px; }
+    .anomaly-status { font-size: 0.9rem; font-weight: 600; }
+    .anomaly-card.normal .anomaly-status { color: #4ade80; }
+    .anomaly-card.caution .anomaly-status { color: #fbbf24; }
+    .anomaly-card.anomaly .anomaly-status { color: #ef4444; }
+
+    .btn-secondary-sm {
+        padding: 4px 10px; border: 1px solid var(--border, #444); border-radius: 4px;
+        background: transparent; color: var(--text-primary, #e0e0e0);
+        cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 4px;
+    }
+    .btn-secondary-sm:hover { background: var(--bg-hover, #333); }
+
+    /* ── Predictive Summary ─────────────────────────────────────── */
+    .health-status { font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+    .health-status.health-normal { background: #064e3b; color: #4ade80; }
+    .health-status.health-caution { background: #78350f; color: #fbbf24; }
+    .health-status.health-warning { background: #78350f; color: #fbbf24; }
+    .health-status.health-critical { background: #7f1d1d; color: #ef4444; }
+
+    .predictive-list { display: flex; flex-direction: column; gap: 8px; }
+    .predictive-item {
+        display: flex; align-items: center; gap: 12px;
+        padding: 10px 14px; border-radius: 6px; background: var(--bg-input, #2a2a3a);
+    }
+    .predictive-item.severity-critical { border-left: 3px solid #ef4444; }
+    .predictive-item.severity-warning { border-left: 3px solid #fbbf24; }
+    .predictive-content { flex: 1; }
+    .predictive-title { font-size: 0.9rem; font-weight: 600; color: var(--text-primary, #e0e0e0); }
+    .predictive-detail { font-size: 0.8rem; color: var(--text-secondary, #aaa); margin-top: 2px; }
+    .predictive-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+    .action-chip {
+        font-size: 0.7rem; padding: 2px 6px; border-radius: 3px;
+        background: var(--accent-dim, #333); color: var(--accent, #7c8aff);
+    }
+
+    .rul-gauge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 16px; }
+    .rul-gauge-card { padding: 10px; border-radius: 6px; background: var(--bg-input, #2a2a3a); }
+    .rul-gauge-label { font-size: 0.8rem; color: var(--text-secondary, #aaa); margin-bottom: 6px; }
+    .rul-gauge-bar-bg {
+        height: 8px; border-radius: 4px; background: var(--border, #444); overflow: hidden;
+    }
+    .rul-gauge-bar { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+    .rul-gauge-bar.rul-ok { background: #4ade80; }
+    .rul-gauge-bar.rul-caution { background: #fbbf24; }
+    .rul-gauge-bar.rul-danger { background: #ef4444; }
+    .rul-gauge-detail { font-size: 0.75rem; color: var(--text-secondary, #888); margin-top: 4px; }
+
+    /* ── Knowledge Base Browser ──────────────────────────────────── */
+    .kb-table { display: flex; flex-direction: column; gap: 4px; }
+    .kb-header-row {
+        display: grid; grid-template-columns: 1fr 80px 160px 70px; gap: 8px;
+        padding: 6px 12px; font-size: 0.75rem; color: var(--text-secondary, #888);
+        border-bottom: 1px solid var(--border, #333); font-weight: 600;
+    }
+    .kb-row {
+        display: grid; grid-template-columns: 1fr 80px 160px 70px; gap: 8px;
+        padding: 8px 12px; border-radius: 4px; font-size: 0.85rem;
+        background: var(--bg-input, #2a2a3a);
+    }
+    .kb-rule-name { color: var(--text-primary, #e0e0e0); font-weight: 500; }
+    .kb-confidence { color: var(--accent, #7c8aff); }
+    .kb-hitrate { color: var(--text-secondary, #aaa); font-size: 0.8rem; }
+    .kb-status { font-size: 0.75rem; font-weight: 600; }
+    .kb-status.active { color: #4ade80; }
+    .kb-status.inactive { color: #888; }
+</style>
+
+@code {
+    [Parameter] public string? EquipmentId { get; set; }
+
+    private string _selectedTimeRange = "24h";
+
+    // ── Sensor status data ───────────────────────────────────────────
+    private List<SensorStatusItem> _sensorStatus = [];
+    private List<SensorToggleItem> _availableSensors = [];
+    private List<AlarmDisplayItem> _recentAlarms = [];
+    private List<PredictiveAlertItem> _predictiveAlerts = [];
+    private List<RulGaugeItem> _rulGauges = [];
+    private List<ExpertRuleItem> _expertRules = [];
+    private string _healthStatus = "Normal";
+
+    protected override void OnInitialized()
+    {
+        // Initialize with mock data for Phase 2.0 development
+        _sensorStatus =
+        [
+            new("Platen RPM", 63.5, "rpm", "55-75", "Normal"),
+            new("Head Pressure", 3.2, "psi", "2.5-4.0", "Normal"),
+            new("Slurry Flow", 165.0, "ml/min", "140-200", "Normal"),
+            new("Temperature", 28.3, "°C", "20-35", "Normal"),
+            new("Pad Life", 420.0, "hours", "0-500", "Caution"),
+            new("Conditioner Current", 1.8, "A", "1.0-2.0", "Normal")
+        ];
+
+        _availableSensors =
+        [
+            new("platen_rpm", "Platen RPM", true),
+            new("head_pressure", "Head Pressure", true),
+            new("slurry_flow", "Slurry Flow", true),
+            new("temperature", "Temperature", false),
+            new("pad_life", "Pad Life", false),
+            new("conditioner_current", "Conditioner", false)
+        ];
+
+        _recentAlarms =
+        [
+            new("A201", "슬러리 유량 하한 경고", "Warning", DateTimeOffset.Now.AddHours(-2), DateTimeOffset.Now.AddHours(-1.5)),
+            new("A305", "온도 센서 편차", "Warning", DateTimeOffset.Now.AddHours(-5), DateTimeOffset.Now.AddHours(-4.5)),
+            new("A100", "비상 정지 작동", "Critical", DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddDays(-1).AddMinutes(15))
+        ];
+
+        // v4.83 Phase 2.5: Predictive Summary
+        _predictiveAlerts =
+        [
+            new("슬러리 라인 퍼지 미완", "Warning", 0.78, ["슬러리 라인 점검", "퍼지 밸브 확인"]),
+            new("패드 수명 임박", "Warning", 0.65, ["패드 교체 준비", "PM 스케줄 확인"])
+        ];
+
+        _rulGauges =
+        [
+            new("Polishing Pad", 80, 420, 500),
+            new("Conditioner Disc", 55, 1100, 2000),
+            new("Slurry Filter", 30, 150, 500)
+        ];
+
+        _expertRules =
+        [
+            new("ER-0001", "슬러리 유량 저하 진단", 0.85, 42, 36, true),
+            new("ER-0002", "패드 교체 시기 판단", 0.92, 28, 26, true),
+            new("ER-0003", "Platen 진동 이상", 0.45, 15, 7, false)
+        ];
+
+        _healthStatus = _predictiveAlerts.Any(a => a.Severity == "Critical") ? "Critical"
+            : _predictiveAlerts.Count > 0 ? "Caution" : "Normal";
+    }
+
+    private void RefreshDashboard()
+    {
+        StateHasChanged();
+    }
+
+    private void ToggleSensor(string sensorId, ChangeEventArgs e)
+    {
+        var sensor = _availableSensors.FirstOrDefault(s => s.Id == sensorId);
+        if (sensor != null)
+        {
+            sensor.Enabled = e.Value is true;
+        }
+    }
+
+    private static string GetStatusClass(string status) =>
+        status.ToLowerInvariant() switch
+        {
+            "normal" => "normal",
+            "caution" => "caution",
+            "anomaly" => "anomaly",
+            _ => ""
+        };
+
+    private static string GetStatusBadgeClass(string status) =>
+        status.ToLowerInvariant() switch
+        {
+            "normal" => "badge-normal",
+            "caution" => "badge-caution",
+            "anomaly" => "badge-anomaly",
+            _ => ""
+        };
+
+    private static string GetAlarmSeverityClass(string severity) =>
+        severity.ToLowerInvariant() switch
+        {
+            "critical" or "emergency" => "severity-critical",
+            "warning" => "severity-warning",
+            "info" => "severity-info",
+            _ => ""
+        };
+
+    private static string GetHealthStatusClass(string status) =>
+        status.ToLowerInvariant() switch
+        {
+            "normal" => "health-normal",
+            "caution" => "health-caution",
+            "warning" => "health-warning",
+            "critical" => "health-critical",
+            _ => ""
+        };
+
+    private static string GetAlertSeverityClass(string severity) =>
+        severity.ToLowerInvariant() switch
+        {
+            "critical" => "severity-critical",
+            "warning" => "severity-warning",
+            _ => ""
+        };
+
+    private static string GetRulBarClass(double percent) =>
+        percent switch
+        {
+            > 50 => "rul-ok",
+            > 20 => "rul-caution",
+            _ => "rul-danger"
+        };
+
+    // ── View models ──────────────────────────────────────────────────
+
+    private sealed record SensorStatusItem(string Name, double Value, string Unit, string NormalRange, string Status);
+
+    private sealed class SensorToggleItem(string id, string name, bool enabled)
+    {
+        public string Id { get; } = id;
+        public string Name { get; } = name;
+        public bool Enabled { get; set; } = enabled;
+    }
+
+    private sealed record AlarmDisplayItem(
+        string AlarmCode, string Description, string Severity,
+        DateTimeOffset Timestamp, DateTimeOffset? ClearedAt);
+
+    private sealed record PredictiveAlertItem(
+        string Title, string Severity, double Confidence, List<string> Actions);
+
+    private sealed record RulGaugeItem(string ComponentName, double RemainingPercent,
+        double RemainingHours, double TotalHours);
+
+    private sealed record ExpertRuleItem(string Id, string Name, double Confidence,
+        int HitCount, int ConfirmCount, bool IsActive);
+}

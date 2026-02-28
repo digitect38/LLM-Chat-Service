@@ -217,6 +217,6 @@ public class CmpDefectAnalysisContentTests
     {
         var prompt = BuildPromptWith("방사형 패턴: 컨디셔너 디스크 다이아몬드 탈락 → 패드 스크래치");
         prompt.Should().Contain("방사형");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 }

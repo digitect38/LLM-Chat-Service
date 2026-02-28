@@ -222,7 +222,7 @@ public class CmpSafetyProceduresContentTests
     {
         var prompt = BuildPromptWith("PPE: 클린룸 방진복, 보안경, 내화학 장갑(니트릴)");
         prompt.Should().Contain("PPE");
-        prompt.Should().Contain(FileName);
+        prompt.Should().NotContain(FileName);
     }
 
     [Fact]

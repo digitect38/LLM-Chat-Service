@@ -3,6 +3,7 @@ using FabCopilot.Llm.Interfaces;
 using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services.Bm25;
+using FabCopilot.RagService.Services.ImageOcr;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -140,23 +141,31 @@ public sealed class DocumentIngestor
         // Ensure the collection exists
         await _vectorStore.EnsureCollectionAsync(collection, vectorSize, ct);
 
-        // Use markdown-aware chunking for .md files, plain chunking otherwise
+        // Multi-tier chunking: Structure-Based → Semantic → Sliding Window
         var isMarkdown = documentId.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
-        var chunks = isMarkdown
-            ? ChunkMarkdown(text, ChunkSize, ChunkOverlap)
-            : ChunkText(text, ChunkSize, ChunkOverlap);
+        var tieredChunks = await ChunkTextMultiTierAsync(text, isMarkdown, ChunkSize, ChunkOverlap, ct);
+        var chunks = tieredChunks.Select(tc => tc.Text).ToList();
+        var chunkStrategies = tieredChunks.Select(tc => tc.Strategy).ToList();
+
+        // Build figure/table caption map for cross-reference enrichment
+        var figureCaptionMap = FigureCrossReferenceParser.BuildCaptionMap(text);
 
         _logger.LogInformation(
-            "Ingesting document {DocumentId} for equipment {EquipmentId}. TextLength={TextLength}, ChunkCount={ChunkCount}",
-            documentId, equipmentId, text.Length, chunks.Count);
+            "Ingesting document {DocumentId} for equipment {EquipmentId}. TextLength={TextLength}, ChunkCount={ChunkCount}, Strategy={Strategy}, FigureCaptions={FigureCount}",
+            documentId, equipmentId, text.Length, chunks.Count,
+            chunkStrategies.Count > 0 ? chunkStrategies[0] : "unknown",
+            figureCaptionMap.Count);
 
         for (var i = 0; i < chunks.Count; i++)
         {
             var chunk = chunks[i];
             var chunkId = $"{documentId}:chunk:{i}";
 
+            // Enrich chunk with figure/table caption context for referenced figures
+            var enrichedChunk = FigureCrossReferenceParser.EnrichChunkWithFigureContext(chunk, figureCaptionMap);
+
             // Flatten markdown tables before embedding to avoid content dilution
-            var embeddingText = FlattenMarkdownTables(chunk);
+            var embeddingText = FlattenMarkdownTables(enrichedChunk);
 
             // Embed the chunk (using search_document prefix via isQuery: false)
             var vector = await _llmClient.GetEmbeddingAsync(embeddingText, isQuery: false, ct);
@@ -172,7 +181,8 @@ public sealed class DocumentIngestor
                 ["chunk_count"] = chunks.Count,
                 ["doc_type"] = InferDocType(documentId),
                 ["language"] = DetectLanguage(chunk),
-                ["highlight_type"] = InferHighlightType(chunk)
+                ["highlight_type"] = InferHighlightType(chunk),
+                ["chunk_strategy"] = i < chunkStrategies.Count ? chunkStrategies[i] : "unknown"
             };
 
             if (folderTags.Count > 0)
@@ -195,6 +205,14 @@ public sealed class DocumentIngestor
             // v3.2: Store full header hierarchy as parent_context
             var parentContext = ExtractParentContext(chunk);
             if (!string.IsNullOrEmpty(parentContext)) payload["parent_context"] = parentContext;
+
+            // v4.83: Store figure/table cross-references
+            var figureRefs = FigureCrossReferenceParser.FindReferences(chunk);
+            if (figureRefs.Count > 0)
+            {
+                payload["figure_references"] = string.Join(", ",
+                    figureRefs.Select(r => $"{r.ReferenceType}:{r.ReferenceId}"));
+            }
 
             // Merge user-supplied metadata
             foreach (var kvp in metadata)
@@ -252,6 +270,184 @@ public sealed class DocumentIngestor
                     documentId);
             }
         }
+    }
+
+    // ─── Multi-Tier Chunking ──────────────────────────────────────────
+
+    /// <summary>
+    /// 3-tier chunking fallback: Structure-Based → Semantic → Sliding Window.
+    /// Returns chunks with strategy metadata for traceability.
+    /// </summary>
+    internal async Task<List<(string Text, string Strategy)>> ChunkTextMultiTierAsync(
+        string text, bool isMarkdown, int chunkSize, int overlap, CancellationToken ct = default)
+    {
+        // Tier 1: Structure-based (for markdown)
+        if (isMarkdown)
+        {
+            var structureChunks = ChunkMarkdown(text, chunkSize, overlap);
+            if (structureChunks.Count > 0)
+            {
+                var validated = ValidateChunkSizes(structureChunks, _ragOptions.MinChunkTokens, _ragOptions.MaxChunkTokens);
+                _logger.LogDebug("Chunking Tier 1 (Structure-Based): {Count} chunks", validated.Count);
+                return validated.Select(c => (c, "structure")).ToList();
+            }
+        }
+
+        // Tier 2: Semantic boundary detection
+        if (_ragOptions.EnableSemanticChunking)
+        {
+            var semanticChunks = await ChunkTextSemanticAsync(text, chunkSize, _ragOptions.SemanticBoundaryThreshold, ct);
+            if (semanticChunks.Count > 0)
+            {
+                var validated = ValidateChunkSizes(semanticChunks, _ragOptions.MinChunkTokens, _ragOptions.MaxChunkTokens);
+                _logger.LogDebug("Chunking Tier 2 (Semantic): {Count} chunks", validated.Count);
+                return validated.Select(c => (c, "semantic")).ToList();
+            }
+        }
+
+        // Tier 3: Sliding window (fallback)
+        var slidingChunks = ChunkText(text, chunkSize, overlap);
+        var validatedSliding = ValidateChunkSizes(slidingChunks, _ragOptions.MinChunkTokens, _ragOptions.MaxChunkTokens);
+        _logger.LogDebug("Chunking Tier 3 (Sliding Window): {Count} chunks", validatedSliding.Count);
+        return validatedSliding.Select(c => (c, "sliding_window")).ToList();
+    }
+
+    /// <summary>
+    /// Semantic boundary detection: splits text into paragraphs and detects
+    /// topic transitions by computing cosine similarity between consecutive
+    /// paragraph embeddings. A drop below the threshold triggers a new chunk.
+    /// </summary>
+    internal async Task<List<string>> ChunkTextSemanticAsync(
+        string text, int maxChunkSize, float similarityThreshold, CancellationToken ct = default)
+    {
+        var paragraphs = SplitIntoParagraphs(text);
+        if (paragraphs.Count <= 1)
+            return [text.Trim()];
+
+        // Get embeddings for all paragraphs
+        var embeddings = new List<float[]>();
+        foreach (var para in paragraphs)
+        {
+            var embedding = await _llmClient.GetEmbeddingAsync(para, isQuery: false, ct);
+            embeddings.Add(embedding);
+        }
+
+        // Detect semantic boundaries
+        var chunks = new List<string>();
+        var currentChunk = new List<string> { paragraphs[0] };
+
+        for (var i = 1; i < paragraphs.Count; i++)
+        {
+            var similarity = CosineSimilarity(embeddings[i - 1], embeddings[i]);
+            var currentLength = string.Join("\n\n", currentChunk).Length;
+
+            // Start a new chunk if:
+            // 1. Semantic similarity drops below threshold (topic change), OR
+            // 2. Current chunk exceeds max size
+            if (similarity < similarityThreshold || currentLength + paragraphs[i].Length > maxChunkSize)
+            {
+                chunks.Add(string.Join("\n\n", currentChunk));
+                currentChunk = [paragraphs[i]];
+            }
+            else
+            {
+                currentChunk.Add(paragraphs[i]);
+            }
+        }
+
+        if (currentChunk.Count > 0)
+            chunks.Add(string.Join("\n\n", currentChunk));
+
+        return chunks;
+    }
+
+    /// <summary>
+    /// Splits text into paragraphs (separated by blank lines or 2+ newlines).
+    /// </summary>
+    internal static List<string> SplitIntoParagraphs(string text)
+    {
+        var paragraphs = Regex.Split(text, @"\n\s*\n")
+            .Select(p => p.Trim())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+        return paragraphs;
+    }
+
+    /// <summary>
+    /// Validates and adjusts chunk sizes: merges under-sized chunks, splits over-sized ones.
+    /// </summary>
+    internal static List<string> ValidateChunkSizes(List<string> chunks, int minTokens, int maxTokens)
+    {
+        if (chunks.Count == 0) return chunks;
+
+        // Approximate: 1 token ≈ 4 characters (rough estimate for mixed lang)
+        const int charsPerToken = 4;
+        var minChars = minTokens * charsPerToken;
+        var maxChars = maxTokens * charsPerToken;
+
+        var result = new List<string>();
+        var pendingMerge = "";
+
+        foreach (var chunk in chunks)
+        {
+            var current = string.IsNullOrEmpty(pendingMerge) ? chunk : pendingMerge + "\n\n" + chunk;
+
+            if (current.Length < minChars)
+            {
+                // Too small — accumulate for merge
+                pendingMerge = current;
+                continue;
+            }
+
+            if (current.Length > maxChars)
+            {
+                // Too large — split with sliding window
+                var subChunks = ChunkText(current, maxChars, minChars / 2);
+                result.AddRange(subChunks);
+                pendingMerge = "";
+            }
+            else
+            {
+                result.Add(current);
+                pendingMerge = "";
+            }
+        }
+
+        // Handle remaining pending merge
+        if (!string.IsNullOrEmpty(pendingMerge))
+        {
+            if (result.Count > 0)
+            {
+                // Merge with the last chunk
+                result[^1] = result[^1] + "\n\n" + pendingMerge;
+            }
+            else
+            {
+                result.Add(pendingMerge);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Computes cosine similarity between two vectors.
+    /// </summary>
+    internal static float CosineSimilarity(float[] a, float[] b)
+    {
+        if (a.Length == 0 || b.Length == 0 || a.Length != b.Length)
+            return 0f;
+
+        float dot = 0, normA = 0, normB = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+
+        var denominator = MathF.Sqrt(normA) * MathF.Sqrt(normB);
+        return denominator == 0 ? 0f : dot / denominator;
     }
 
     /// <summary>

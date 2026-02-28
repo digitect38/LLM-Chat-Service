@@ -18,11 +18,11 @@ public class BuildSystemPromptGateTests
         }];
 
     [Fact]
-    public void BuildSystemPrompt_LowConfidence_ContainsGateAWarning()
+    public void BuildSystemPrompt_LowConfidence_ContainsWarning()
     {
         var results = MakeRagResults(0.3f);
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, results, isConfident: false);
-        prompt.Should().Contain("GATE A WARNING");
+        prompt.Should().Contain("LOW CONFIDENCE WARNING");
     }
 
     [Fact]
@@ -75,11 +75,13 @@ public class BuildSystemPromptGateTests
     }
 
     [Fact]
-    public void BuildSystemPrompt_ScoreFormattedTo3Decimals()
+    public void BuildSystemPrompt_ScoreNotExposedInPrompt()
     {
         var results = MakeRagResults(0.8567f);
         var prompt = LlmWorker.BuildSystemPrompt("CMP-001", null, results, isConfident: true);
-        prompt.Should().Contain("0.857");
+        // Scores should NOT appear in the prompt (anonymized context)
+        prompt.Should().NotContain("0.857");
+        prompt.Should().NotContain("score:");
     }
 
     [Fact]
