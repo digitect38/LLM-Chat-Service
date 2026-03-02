@@ -231,6 +231,23 @@
                                             <button class="action-btn @(msg.Feedback == -1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, false)" title="싫어요">
                                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="@(msg.Feedback == -1 ? "currentColor" : "none")" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zm7-13h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>
                                             </button>
+                                            <button class="action-btn @(_ttsPlayingIdx == idx ? "action-active" : "")"
+                                                    @onclick="() => PlayTts(idx)"
+                                                    title="@(_ttsPlayingIdx == idx ? "TTS 중지" : "음성으로 듣기")"
+                                                    disabled="@(_ttsLoading && _ttsPlayingIdx != idx)">
+                                                @if (_ttsLoading && _ttsPlayingIdx == idx)
+                                                {
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                                                }
+                                                else if (_ttsPlayingIdx == idx)
+                                                {
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                                                }
+                                                else
+                                                {
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+                                                }
+                                            </button>
                                             @if (msg.Citations is { Count: > 0 })
                                             {
                                                 <button class="action-btn" @onclick="() => ShowCitations(idx)" title="참조 문서">
@@ -296,26 +313,47 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                     }
                 </button>
-                <button class="mic-btn @(_isRecording ? "mic-recording" : "") @(_isTranscribing ? "mic-transcribing" : "")"
-                        @onclick="ToggleRecording"
-                        disabled="@(_isSending || _isTranscribing || _isUploading)"
-                        title="@(_isRecording ? "녹음 중지" : "음성 입력")">
-                    @if (_isTranscribing)
+                <button class="voice-mode-btn @(_isVoiceMode ? "voice-mode-active " + VoicePhaseCssClass : "")"
+                        @onclick="ToggleVoiceMode"
+                        title="@(_isVoiceMode ? "음성 모드 종료" : "음성 모드")">
+                    @if (_isVoiceMode && (_voicePhase == VoicePhase.Transcribing || _voicePhase == VoicePhase.Waiting))
                     {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
                     }
-                    else if (_isRecording)
-                    {
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                    }
                     else
                     {
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        <svg width="18" height="16" viewBox="0 0 20 16" class="waveform-icon">
+                            <rect class="wf-bar" x="1"  y="5"  width="2" height="6"  rx="1" fill="currentColor"/>
+                            <rect class="wf-bar" x="5"  y="2"  width="2" height="12" rx="1" fill="currentColor"/>
+                            <rect class="wf-bar" x="9"  y="0"  width="2" height="16" rx="1" fill="currentColor"/>
+                            <rect class="wf-bar" x="13" y="3"  width="2" height="10" rx="1" fill="currentColor"/>
+                            <rect class="wf-bar" x="17" y="5"  width="2" height="6"  rx="1" fill="currentColor"/>
+                        </svg>
                     }
                 </button>
-                @if (_isRecording)
+                @if (!_isVoiceMode)
                 {
-                    <span class="recording-timer">@TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
+                    <button class="mic-btn @(_isRecording ? "mic-recording" : "") @(_isTranscribing ? "mic-transcribing" : "")"
+                            @onclick="ToggleRecording"
+                            disabled="@(_isSending || _isTranscribing || _isUploading)"
+                            title="@(_isRecording ? "녹음 중지" : "음성 입력")">
+                        @if (_isTranscribing)
+                        {
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                        }
+                        else if (_isRecording)
+                        {
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        }
+                        else
+                        {
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        }
+                    </button>
+                    @if (_isRecording)
+                    {
+                        <span class="recording-timer">@TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
+                    }
                 }
                 <InputFile OnChange="HandleFileUpload" style="display:none" id="fileUploadInput" accept=".pdf,.md,.txt,.png,.jpg,.jpeg" />
                 <div class="chat-textarea-wrapper">
@@ -349,6 +387,42 @@
                     </button>
                 }
             </div>
+            @if (_isVoiceMode && _voicePhase != VoicePhase.Idle)
+            {
+                <div class="voice-status-bar @VoicePhaseCssClass">
+                    @switch (_voicePhase)
+                    {
+                        case VoicePhase.Listening:
+                            <span class="waveform-bars-inline">
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                            </span>
+                            <span>듣는 중... @TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
+                            break;
+                        case VoicePhase.Transcribing:
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                            <span>변환 중...</span>
+                            break;
+                        case VoicePhase.Waiting:
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                            <span>응답 생성 중...</span>
+                            break;
+                        case VoicePhase.Speaking:
+                            <span class="waveform-bars-inline waveform-bars-speaking">
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                                <span class="wf-inline-bar"></span>
+                            </span>
+                            <span>음성 재생 중</span>
+                            break;
+                    }
+                </div>
+            }
             <div class="input-disclaimer">Fab Copilot은 장비 매뉴얼 기반으로 답변하며, 오류가 있을 수 있습니다.</div>
         </div>
     </main>
@@ -421,6 +495,20 @@
     private string _interimText = "";
     private int _recordingSeconds;
 
+    // Voice Mode (hands-free STT → LLM → TTS loop)
+    private bool _isVoiceMode;
+    private VoicePhase _voicePhase = VoicePhase.Idle;
+
+    private enum VoicePhase { Idle, Listening, Transcribing, Waiting, Speaking }
+
+    private string VoicePhaseCssClass => _voicePhase switch
+    {
+        VoicePhase.Listening => "voice-phase-listening",
+        VoicePhase.Speaking => "voice-phase-speaking",
+        VoicePhase.Transcribing or VoicePhase.Waiting => "voice-phase-processing",
+        _ => ""
+    };
+
     // Latency tracking
     private System.Diagnostics.Stopwatch? _latencyStopwatch;
 
@@ -472,6 +560,9 @@
 
     private async Task StartNewChat()
     {
+        // Exit voice mode if active
+        if (_isVoiceMode) await ExitVoiceModeAsync();
+
         // Save current conversation to history
         SaveCurrentToHistory();
 
@@ -494,6 +585,9 @@
     {
         var target = _conversationHistory.FirstOrDefault(c => c.Id == convId);
         if (target is null || target.Id == _conversationId) return;
+
+        // Exit voice mode if active
+        if (_isVoiceMode) await ExitVoiceModeAsync();
 
         SaveCurrentToHistory();
 
@@ -649,6 +743,10 @@
     {
         if (e.Key == "Enter" && !e.ShiftKey)
         {
+            // If recording in voice mode, exit voice mode first
+            if (_isVoiceMode && _isRecording)
+                await ExitVoiceModeAsync();
+
             await SendMessageAsync();
         }
     }
@@ -949,10 +1047,111 @@
         }
     }
 
+    // ─── TTS (Text-to-Speech) ───────────────────────────────────────────
+
+    private int _ttsPlayingIdx = -1;
+    private bool _ttsLoading;
+
+    private async Task PlayLastTts()
+    {
+        // Find last assistant message
+        var lastIdx = -1;
+        for (var i = _messages.Count - 1; i >= 0; i--)
+        {
+            if (!_messages[i].IsUser && !string.IsNullOrWhiteSpace(_messages[i].Text))
+            {
+                lastIdx = i;
+                break;
+            }
+        }
+        if (lastIdx < 0) return;
+        await PlayTts(lastIdx);
+    }
+
+    private async Task PlayTts(int idx)
+    {
+        // If already playing this message, stop it
+        if (_ttsPlayingIdx == idx)
+        {
+            await JS.InvokeVoidAsync("fabTts.stop");
+            _ttsPlayingIdx = -1;
+            return;
+        }
+
+        var msg = _messages[idx];
+        if (string.IsNullOrWhiteSpace(msg.Text)) return;
+
+        _ttsPlayingIdx = idx;
+        _ttsLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var gatewayBase = Configuration["Gateway:HttpUrl"] ?? "http://localhost:5000";
+            // Strip markdown for cleaner TTS input
+            var ttsText = System.Text.RegularExpressions.Regex.Replace(
+                msg.Text, @"\*\*|##|#+\s|`[^`]*`|\[([^\]]*)\]\([^\)]*\)", "$1").Trim();
+            if (string.IsNullOrWhiteSpace(ttsText)) ttsText = msg.Text;
+            await JS.InvokeVoidAsync("fabTts.play", gatewayBase, ttsText, _dotNetRef);
+        }
+        catch (Exception ex)
+        {
+            _connectionError = $"TTS 오류: {ex.Message}";
+            _ttsPlayingIdx = -1;
+        }
+        finally
+        {
+            _ttsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public void OnTtsEnded()
+    {
+        _ttsPlayingIdx = -1;
+
+        if (_isVoiceMode)
+        {
+            _ = InvokeAsync(async () =>
+            {
+                StateHasChanged();
+                await VoiceStartListeningAsync();
+            });
+            return;
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnTtsError(string error)
+    {
+        _connectionError = $"TTS 오류: {error}";
+        _ttsPlayingIdx = -1;
+        _ttsLoading = false;
+
+        if (_isVoiceMode)
+        {
+            // TTS failed but voice mode continues — skip to next listening cycle
+            _ = InvokeAsync(async () =>
+            {
+                StateHasChanged();
+                await Task.Delay(1000); // brief pause so user sees the error toast
+                if (_isVoiceMode) await VoiceStartListeningAsync();
+            });
+            return;
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
     // ─── Voice Recording (STT) ─────────────────────────────────────────
 
     private async Task ToggleRecording()
     {
+        if (_isVoiceMode) { await ToggleVoiceMode(); return; }
+
         if (_isRecording)
         {
             _isRecording = false;
@@ -979,6 +1178,16 @@
         _isRecording = false;
         _interimText = "";
         _recordingSeconds = 0;
+
+        if (_isVoiceMode)
+        {
+            _voicePhase = VoicePhase.Transcribing;
+            StateHasChanged();
+            // Auto-send in voice mode
+            _ = InvokeAsync(async () => await VoiceAutoSendAsync(text));
+            return Task.CompletedTask;
+        }
+
         if (!string.IsNullOrWhiteSpace(text))
             UserMessage = text;
         StateHasChanged();
@@ -993,6 +1202,10 @@
         _interimText = "";
         _recordingSeconds = 0;
         _connectionError = $"음성 변환 실패: {error}";
+
+        if (_isVoiceMode)
+            _ = InvokeAsync(async () => await ExitVoiceModeAsync());
+
         StateHasChanged();
         return Task.CompletedTask;
     }
@@ -1002,10 +1215,19 @@
     {
         if (isFinal)
         {
-            UserMessage = text;
             _interimText = "";
             _isRecording = false;
             _recordingSeconds = 0;
+
+            if (_isVoiceMode)
+            {
+                _voicePhase = VoicePhase.Transcribing;
+                StateHasChanged();
+                _ = InvokeAsync(async () => await VoiceAutoSendAsync(text));
+                return Task.CompletedTask;
+            }
+
+            UserMessage = text;
         }
         else
         {
@@ -1021,6 +1243,120 @@
         _recordingSeconds = seconds;
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    // ─── Voice Mode (hands-free loop) ────────────────────────────────────
+
+    private async Task ToggleVoiceMode()
+    {
+        if (_isVoiceMode)
+        {
+            await ExitVoiceModeAsync();
+        }
+        else
+        {
+            // User gesture context — acquire mic + unlock audio ONCE for entire session
+            try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
+            try { await JS.InvokeVoidAsync("audioRecorder.setVoiceMode", true); } catch { }
+
+            _isVoiceMode = true;
+            StateHasChanged();
+            await VoiceStartListeningAsync();
+        }
+    }
+
+    private async Task ExitVoiceModeAsync()
+    {
+        _isVoiceMode = false;
+        _voicePhase = VoicePhase.Idle;
+
+        // Disable silence auto-stop
+        try { await JS.InvokeVoidAsync("audioRecorder.setVoiceMode", false); } catch { }
+
+        // Stop recording if active
+        if (_isRecording)
+        {
+            _isRecording = false;
+            _recordingSeconds = 0;
+            try { await JS.InvokeVoidAsync("audioRecorder.stop"); } catch { }
+        }
+
+        // Stop TTS if playing
+        if (_ttsPlayingIdx >= 0)
+        {
+            try { await JS.InvokeVoidAsync("fabTts.stop"); } catch { }
+            _ttsPlayingIdx = -1;
+        }
+
+        _isTranscribing = false;
+        _ttsLoading = false;
+        _interimText = "";
+        StateHasChanged();
+    }
+
+    private async Task VoiceStartListeningAsync()
+    {
+        if (!_isVoiceMode) return;
+
+        _voicePhase = VoicePhase.Listening;
+        _interimText = "";
+        _recordingSeconds = 0;
+        StateHasChanged();
+
+        try
+        {
+            // setVoiceMode(true) already called in ToggleVoiceMode — mic is pre-acquired
+            var started = await JS.InvokeAsync<bool>("audioRecorder.start");
+            _isRecording = started;
+            if (!started)
+            {
+                await ExitVoiceModeAsync();
+                _connectionError = "마이크 시작 실패";
+            }
+        }
+        catch (Exception ex)
+        {
+            await ExitVoiceModeAsync();
+            _connectionError = $"마이크 오류: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private async Task VoiceAutoSendAsync(string text)
+    {
+        if (!_isVoiceMode || string.IsNullOrWhiteSpace(text)) return;
+
+        _voicePhase = VoicePhase.Waiting;
+        StateHasChanged();
+
+        UserMessage = text;
+        await SendMessageAsync();
+    }
+
+    private async Task VoiceAutoTtsAsync()
+    {
+        if (!_isVoiceMode) return;
+
+        // Find the last completed assistant message
+        var lastIdx = -1;
+        for (var i = _messages.Count - 1; i >= 0; i--)
+        {
+            if (!_messages[i].IsUser && !string.IsNullOrWhiteSpace(_messages[i].Text) && !_messages[i].IsStreaming)
+            {
+                lastIdx = i;
+                break;
+            }
+        }
+        if (lastIdx < 0)
+        {
+            // No message to speak — restart listening
+            await VoiceStartListeningAsync();
+            return;
+        }
+
+        _voicePhase = VoicePhase.Speaking;
+        StateHasChanged();
+        await PlayTts(lastIdx);
     }
 
     // ─── File Upload ─────────────────────────────────────────────────────
@@ -1111,6 +1447,11 @@
                 StopStaleStreamTimer();
                 StopTimeoutTimer();
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
+
+                // Voice mode: exit on error
+                if (_isVoiceMode)
+                    await ExitVoiceModeAsync();
+
                 StateHasChanged();
                 await ScrollToBottom();
             }
@@ -1143,6 +1484,10 @@
 
                 StateHasChanged();
                 await ScrollToBottom();
+
+                // Voice mode: auto-play TTS for the completed response
+                if (_isVoiceMode)
+                    await VoiceAutoTtsAsync();
             }
             else
             {
@@ -1414,6 +1759,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        if (_isVoiceMode) { try { await ExitVoiceModeAsync(); } catch { } }
         ChatService.OnMessageReceived -= HandleChunkReceived;
         ChatService.OnStateChanged -= HandleStateChanged;
         if (_renderTimer is not null) await _renderTimer.DisposeAsync();

@@ -3,6 +3,7 @@ using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services.Bm25;
 using FabCopilot.RagService.Services.ImageOcr;
+using FabCopilot.VectorStore;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,7 @@ public sealed class FileWatcherIngestorService : BackgroundService
     private readonly IBm25Index? _bm25Index;
     private readonly IRagCache? _ragCache;
     private readonly IImageOcrExtractor? _ocrExtractor;
+    private readonly DualIndexManager? _dualIndexManager;
     private readonly QdrantOptions _qdrantOptions;
     private readonly RagOptions _ragOptions;
     private readonly ILogger<FileWatcherIngestorService> _logger;
@@ -38,7 +40,8 @@ public sealed class FileWatcherIngestorService : BackgroundService
         ILogger<FileWatcherIngestorService> logger,
         IBm25Index? bm25Index = null,
         IRagCache? ragCache = null,
-        IImageOcrExtractor? ocrExtractor = null)
+        IImageOcrExtractor? ocrExtractor = null,
+        DualIndexManager? dualIndexManager = null)
     {
         _ingestor = ingestor;
         _extractor = extractor;
@@ -46,6 +49,7 @@ public sealed class FileWatcherIngestorService : BackgroundService
         _bm25Index = bm25Index;
         _ragCache = ragCache;
         _ocrExtractor = ocrExtractor;
+        _dualIndexManager = dualIndexManager;
         _qdrantOptions = qdrantOptions.Value;
         _ragOptions = ragOptions.Value;
         _logger = logger;
@@ -73,6 +77,15 @@ public sealed class FileWatcherIngestorService : BackgroundService
         // Ensure collection exists
         await _vectorStore.EnsureCollectionAsync(
             _qdrantOptions.DefaultCollection, _qdrantOptions.VectorSize, stoppingToken);
+
+        // Initialize DualIndexManager with the current embedding model
+        if (_dualIndexManager is not null)
+        {
+            var embeddingModel = _qdrantOptions.DefaultCollection == "knowledge"
+                ? "default"
+                : _qdrantOptions.DefaultCollection;
+            _dualIndexManager.Initialize(embeddingModel);
+        }
 
         // Scan existing files on startup (BM25 index is rebuilt during ingestion)
         if (_ragOptions.ScanOnStartup)

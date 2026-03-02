@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using FabCopilot.Contracts.Enums;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Messaging.Extensions;
@@ -187,14 +188,44 @@ app.MapPost("/api/transcribe/{equipmentId}", async (
     return Results.Content(json, "application/json");
 }).DisableAntiforgery();
 
+// TTS: cache studio speakers on first use
+JsonNode? _cachedStudioSpeakers = null;
+string _cachedSpeakerName = "";
+
+async Task<(JsonArray? Embedding, JsonArray? GptCondLatent)> GetSpeakerVoiceAsync(HttpClient client, string speakerName, Microsoft.Extensions.Logging.ILogger logger)
+{
+    if (_cachedStudioSpeakers is null || _cachedSpeakerName != speakerName)
+    {
+        var resp = await client.GetAsync("/studio_speakers");
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync();
+        _cachedStudioSpeakers = JsonNode.Parse(json);
+        _cachedSpeakerName = speakerName;
+    }
+
+    var speaker = _cachedStudioSpeakers?[speakerName];
+    if (speaker is null)
+    {
+        // Fallback: use first available speaker
+        var first = _cachedStudioSpeakers?.AsObject().FirstOrDefault();
+        if (first is { Value: not null })
+        {
+            speaker = first.Value.Value;
+            logger.LogInformation("TTS speaker '{Requested}' not found, using '{Fallback}'", speakerName, first.Value.Key);
+        }
+    }
+
+    return (speaker?["speaker_embedding"]?.AsArray(), speaker?["gpt_cond_latent"]?.AsArray());
+}
+
 // TTS health check endpoint
 app.MapGet("/api/tts/health", async (IHttpClientFactory httpFactory) =>
 {
     try
     {
         using var client = httpFactory.CreateClient("TTS");
-        client.Timeout = TimeSpan.FromSeconds(3);
-        var resp = await client.GetAsync("/health");
+        client.Timeout = TimeSpan.FromSeconds(5);
+        var resp = await client.GetAsync("/studio_speakers");
         return resp.IsSuccessStatusCode
             ? Results.Ok(new { status = "ok" })
             : Results.StatusCode(503);
@@ -205,7 +236,26 @@ app.MapGet("/api/tts/health", async (IHttpClientFactory httpFactory) =>
     }
 });
 
-// TTS synthesis endpoint — converts text to speech audio
+// TTS speakers list endpoint
+app.MapGet("/api/tts/speakers", async (IHttpClientFactory httpFactory) =>
+{
+    try
+    {
+        using var client = httpFactory.CreateClient("TTS");
+        var resp = await client.GetAsync("/studio_speakers");
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync();
+        var speakers = JsonNode.Parse(json)?.AsObject();
+        var names = speakers?.Select(s => s.Key).ToList() ?? [];
+        return Results.Ok(new { speakers = names });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: 503);
+    }
+});
+
+// TTS synthesis endpoint — converts text to speech audio via XTTS
 app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory httpFactory, ILogger<Program> logger) =>
 {
     var body = await req.ReadFromJsonAsync<TtsSynthesizeRequest>();
@@ -214,7 +264,7 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory ht
 
     // Strip citation markers for voice output
     var voiceText = System.Text.RegularExpressions.Regex.Replace(
-        body.Text, @"\[MNL-[^\]]*\]|\[cite-\d+\]|\[출처[^\]]*\]", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        body.Text, @"\[MNL-[^\]]*\]|\[cite-\d+\]|\[출처[^\]]*\]|\*\*|##|#+\s", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
 
     // Generate voice summary (first 3 sentences) if requested
     if (body.SummaryOnly)
@@ -224,17 +274,34 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory ht
         if (!voiceText.EndsWith('.')) voiceText += ".";
     }
 
+    // XTTS Korean character limit is 95; truncate to first ~2 sentences within limit
+    if (voiceText.Length > 90)
+    {
+        // Try to cut at a natural sentence boundary
+        var cut = voiceText.LastIndexOf('.', 89);
+        if (cut < 30) cut = voiceText.LastIndexOf(' ', 89);
+        if (cut < 30) cut = 90;
+        voiceText = voiceText[..(cut + 1)];
+    }
+
     try
     {
         using var client = httpFactory.CreateClient("TTS");
+        var speakerName = body.Speaker ?? "Claribel Dervla";
+        (JsonArray? embedding, JsonArray? gptCondLatent) = await GetSpeakerVoiceAsync(client, speakerName, logger);
+
+        if (embedding is null || gptCondLatent is null)
+            return Results.Json(new { error = "TTS 스피커 음성 데이터를 가져올 수 없습니다" }, statusCode: 500);
+
         var ttsPayload = new
         {
             text = voiceText,
             language = body.Language ?? "ko",
-            speaker_wav = body.SpeakerWav
+            speaker_embedding = embedding,
+            gpt_cond_latent = gptCondLatent
         };
 
-        var response = await client.PostAsJsonAsync("/api/tts", ttsPayload);
+        var response = await client.PostAsJsonAsync("/tts", ttsPayload);
         if (!response.IsSuccessStatusCode)
         {
             var err = await response.Content.ReadAsStringAsync();
@@ -242,7 +309,23 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory ht
             return Results.Json(new { error = $"TTS 합성 실패: {err}" }, statusCode: (int)response.StatusCode);
         }
 
-        var audioBytes = await response.Content.ReadAsByteArrayAsync();
+        // XTTS returns base64-encoded WAV wrapped in a JSON string (Content-Type: application/json)
+        // e.g. "UklGR..." — need to unwrap JSON quotes and decode base64
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        byte[] audioBytes;
+        if (contentType == "application/json" || contentType == "text/plain")
+        {
+            var raw = await response.Content.ReadAsStringAsync();
+            // Strip surrounding JSON quotes if present
+            if (raw.StartsWith('"') && raw.EndsWith('"'))
+                raw = raw[1..^1];
+            audioBytes = Convert.FromBase64String(raw);
+        }
+        else
+        {
+            // Already binary WAV
+            audioBytes = await response.Content.ReadAsByteArrayAsync();
+        }
         return Results.File(audioBytes, "audio/wav", "speech.wav");
     }
     catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
@@ -332,4 +415,4 @@ app.MapDelete("/api/conversations/{equipmentId}/{conversationId}", async (string
 
 app.Run();
 
-record TtsSynthesizeRequest(string Text, string? Language = "ko", bool SummaryOnly = false, string? SpeakerWav = null);
+record TtsSynthesizeRequest(string Text, string? Language = "ko", bool SummaryOnly = false, string? SpeakerWav = null, string? Speaker = null);

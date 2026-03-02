@@ -421,6 +421,271 @@
         };
         window.clientSettings.init();
 
+        // ─── TTS (Text-to-Speech) ────────────────────────────────────────
+        // ─── TTS Debug overlay (visible on screen for mobile debugging) ───
+        window._ttsDebug = {
+            _el: null,
+            _lines: [],
+            log: function(msg) {
+                console.log('[TTS] ' + msg);
+                this._lines.push(new Date().toLocaleTimeString() + ' ' + msg);
+                if (this._lines.length > 12) this._lines.shift();
+                if (!this._el) {
+                    this._el = document.createElement('div');
+                    this._el.id = 'tts-debug';
+                    this._el.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:rgba(0,0,0,0.85);color:#0f0;font:11px/1.4 monospace;padding:8px;z-index:99999;max-height:40vh;overflow-y:auto;pointer-events:auto;';
+                    this._el.onclick = function() { window._ttsDebug._el.style.display = 'none'; };
+                    document.body.appendChild(this._el);
+                }
+                this._el.style.display = 'block';
+                this._el.innerText = this._lines.join('\n');
+                this._el.scrollTop = this._el.scrollHeight;
+            }
+        };
+
+        window.fabTts = {
+            _dotNetRef: null,
+            _audioCtx: null,
+            _sourceNode: null,
+            _gainNode: null,
+            _playing: false,
+            _utterance: null,
+            _voicesReady: false,
+
+            _getGatewayUrl: function() {
+                // Use same origin — WebClient proxies TTS/STT to ChatGateway
+                return window.location.origin;
+            },
+
+            _ensureCtx: function() {
+                if (!this._audioCtx) {
+                    this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    this._gainNode = this._audioCtx.createGain();
+                    this._gainNode.gain.value = 1.0;
+                    this._gainNode.connect(this._audioCtx.destination);
+                }
+                return this._audioCtx;
+            },
+
+            unlockAudio: function() {
+                var D = window._ttsDebug;
+                try {
+                    // 1) Unlock Web Audio
+                    var ctx = this._ensureCtx();
+                    if (ctx.state === 'suspended') ctx.resume();
+                    var buf = ctx.createBuffer(1, 1, 22050);
+                    var src = ctx.createBufferSource();
+                    src.buffer = buf;
+                    src.connect(this._gainNode);
+                    src.start(0);
+
+                    // 2) Prime SpeechSynthesis in user gesture context (iOS REQUIRES this)
+                    if (window.speechSynthesis) {
+                        window.speechSynthesis.cancel();
+                        var primer = new SpeechSynthesisUtterance('\u200B');  // zero-width space
+                        primer.volume = 0.01;
+                        primer.rate = 10;
+                        primer.lang = 'ko-KR';
+                        window.speechSynthesis.speak(primer);
+                        this._ssPrimed = true;
+                        D.log('unlock: ctx=' + ctx.state + ' SS primed');
+                    } else {
+                        D.log('unlock: ctx=' + ctx.state + ' no SS');
+                    }
+
+                    // 3) Pre-load voices
+                    if (window.speechSynthesis && !this._voicesReady) {
+                        window.speechSynthesis.getVoices();
+                        var self = this;
+                        window.speechSynthesis.onvoiceschanged = function() {
+                            self._voicesReady = true;
+                            D.log('voices loaded: ' + window.speechSynthesis.getVoices().length);
+                        };
+                    }
+                } catch(e) {
+                    D.log('unlock FAIL: ' + e.message);
+                }
+            },
+
+            play: async function(gatewayBaseIgnored, text, dotNetRef) {
+                this._dotNetRef = dotNetRef;
+                this.stop();
+                this._playing = true;
+                var gatewayBase = this._getGatewayUrl();
+                var D = window._ttsDebug;
+                D.log('play: ' + text.length + ' chars, primed=' + !!this._ssPrimed);
+
+                // ── Step 1: Try XTTS via Web Audio (with 5s timeout) ──
+                var xttsOk = false;
+                try {
+                    var ctx = this._ensureCtx();
+                    if (ctx.state === 'suspended') {
+                        await ctx.resume();
+                        await new Promise(function(r) { setTimeout(r, 100); });
+                    }
+                    D.log('1. ctx=' + ctx.state);
+
+                    if (ctx.state !== 'running') {
+                        throw new Error('ctx ' + ctx.state);
+                    }
+
+                    D.log('2. fetching XTTS...');
+                    var ac = new AbortController();
+                    var timer = setTimeout(function() { ac.abort(); }, 30000);
+                    var resp = await fetch(gatewayBase + '/api/tts/synthesize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: text, language: 'ko' }),
+                        signal: ac.signal
+                    });
+                    clearTimeout(timer);
+                    if (!resp.ok) {
+                        var errText = '';
+                        try { errText = await resp.text(); } catch(e2) {}
+                        D.log('3. HTTP ' + resp.status + ': ' + errText.substring(0, 200));
+                        throw new Error('HTTP ' + resp.status);
+                    }
+                    D.log('3. HTTP 200');
+
+                    var arrayBuf = await resp.arrayBuffer();
+                    D.log('4. got ' + arrayBuf.byteLength + ' bytes');
+                    if (!this._playing || arrayBuf.byteLength < 100) throw new Error('empty');
+
+                    var audioBuf = await ctx.decodeAudioData(arrayBuf);
+                    D.log('5. decoded ' + audioBuf.duration.toFixed(1) + 's ' + audioBuf.sampleRate + 'Hz');
+                    if (!this._playing) return;
+
+                    var source = ctx.createBufferSource();
+                    source.buffer = audioBuf;
+                    source.connect(this._gainNode);
+                    this._sourceNode = source;
+
+                    var self = this;
+                    source.onended = function() {
+                        D.log('6. XTTS ended');
+                        self._sourceNode = null;
+                        self._playing = false;
+                        if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
+                    };
+                    source.start(0);
+                    xttsOk = true;
+                    D.log('6. XTTS PLAYING ✓ gain=' + this._gainNode.gain.value);
+                } catch(ex) {
+                    D.log('XTTS FAIL: ' + ex.message);
+                }
+
+                // ── Step 2: Fallback to SpeechSynthesis ──
+                if (!xttsOk && this._playing) {
+                    D.log('→ SpeechSynthesis fallback');
+                    this._playSpeechSynthesis(text, dotNetRef);
+                }
+            },
+
+            _playSpeechSynthesis: function(text, dotNetRef) {
+                var D = window._ttsDebug;
+                if (!window.speechSynthesis) {
+                    D.log('SS: not available!');
+                    this._playing = false;
+                    if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsError', 'TTS 불가');
+                    return;
+                }
+
+                window.speechSynthesis.cancel();
+
+                var spText = text.length > 3000 ? text.substring(0, 3000) + '...' : text;
+                var utt = new SpeechSynthesisUtterance(spText);
+                utt.lang = 'ko-KR';
+                utt.rate = 1.05;
+                utt.volume = 1.0;
+                utt.pitch = 1.0;
+
+                var voices = window.speechSynthesis.getVoices();
+                D.log('SS: voices=' + voices.length);
+                if (voices.length > 0) {
+                    var koVoice = voices.find(function(v) { return v.lang && v.lang.startsWith('ko'); });
+                    if (koVoice) {
+                        utt.voice = koVoice;
+                        D.log('SS: voice=' + koVoice.name + ' ' + koVoice.lang);
+                    } else {
+                        utt.voice = voices[0];
+                        D.log('SS: no ko, using ' + voices[0].name);
+                    }
+                } else {
+                    D.log('SS: no voices! default lang');
+                }
+
+                var self = this;
+                utt.onstart = function() { D.log('SS: started'); };
+                utt.onend = function() {
+                    D.log('SS: ended');
+                    self._playing = false;
+                    if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
+                    if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
+                };
+                utt.onerror = function(e) {
+                    D.log('SS: ERROR ' + (e.error || 'unknown'));
+                    self._playing = false;
+                    if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
+                    if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsError', e.error || 'TTS 오류');
+                };
+
+                this._utterance = utt;
+                window.speechSynthesis.speak(utt);
+                D.log('SS: speak() speaking=' + window.speechSynthesis.speaking);
+
+                // iOS bug: speechSynthesis pauses after ~15s. Keep poking it.
+                this._synthResumeTimer = setInterval(function() {
+                    if (!self._playing) {
+                        clearInterval(self._synthResumeTimer);
+                        return;
+                    }
+                    if (window.speechSynthesis.paused) {
+                        window.speechSynthesis.resume();
+                    }
+                }, 5000);
+
+                console.log('[TTS] SpeechSynthesis started, text:', spText.length, 'chars');
+            },
+
+            stop: function() {
+                this._playing = false;
+                if (this._sourceNode) {
+                    try { this._sourceNode.stop(); } catch(e) {}
+                    this._sourceNode = null;
+                }
+                if (window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
+                }
+                if (this._synthResumeTimer) {
+                    clearInterval(this._synthResumeTimer);
+                    this._synthResumeTimer = null;
+                }
+                this._utterance = null;
+            }
+        };
+
+        // ─── Auto-unlock AudioContext on first user gesture (iOS requirement) ───
+        // iOS WebKit requires AudioContext.resume() within a direct touch/click handler.
+        // Blazor Server's SignalR round-trip loses the user gesture context,
+        // so we hook the FIRST touch/click at document level to pre-unlock.
+        (function() {
+            var unlocked = false;
+            function autoUnlock() {
+                if (unlocked) return;
+                unlocked = true;
+                document.removeEventListener('touchstart', autoUnlock, true);
+                document.removeEventListener('touchend', autoUnlock, true);
+                document.removeEventListener('click', autoUnlock, true);
+                if (window.fabTts) {
+                    window.fabTts.unlockAudio();
+                    console.log('[TTS] Auto-unlocked AudioContext on first user gesture');
+                }
+            }
+            document.addEventListener('touchstart', autoUnlock, true);
+            document.addEventListener('touchend', autoUnlock, true);
+            document.addEventListener('click', autoUnlock, true);
+        })();
+
         // ─── Audio Recorder (STT) — Dual Engine ─────────────────────────
         window.audioRecorder = {
             _mediaRecorder: null,
@@ -445,8 +710,8 @@
 
             init: async function(dotNetRef, equipmentId) {
                 this._dotNetRef = dotNetRef;
-                var gwPort = window.location.protocol === 'https:' ? '5001' : '5000';
-                this._gatewayUrl = window.location.protocol + '//' + window.location.hostname + ':' + gwPort;
+                // Use same origin — WebClient proxies TTS/STT to ChatGateway
+                this._gatewayUrl = window.location.origin;
                 this._equipmentId = equipmentId || 'default';
 
                 // Load saved engine preference
@@ -560,6 +825,8 @@
 
                     this._recognition.onend = function() {
                         self._stopTimer();
+                        // In voice mode, WebSpeech auto-stops — notify Blazor recording ended
+                        // (OnInterimResult with isFinal=true already handles the text)
                     };
 
                     this._recognition.start();
@@ -573,13 +840,61 @@
             },
 
             // ── Whisper (MediaRecorder) mode ──
+            _silenceCtx: null,
+            _silenceAnalyser: null,
+            _silenceInterval: null,
+            _silenceStart: 0,
+            _speechDetected: false,
+            _voiceMode: false,          // set by Blazor before start()
+            _persistentStream: null,    // kept alive during voice mode
+
+            setVoiceMode: async function(on) {
+                this._voiceMode = !!on;
+                if (on) {
+                    // Pre-acquire mic on user gesture — single permission prompt for entire session
+                    if (!this._persistentStream) {
+                        try {
+                            this._persistentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                            console.log('[STT] Mic acquired for voice mode session');
+                        } catch(e) {
+                            console.error('[STT] Mic acquire failed:', e);
+                        }
+                    }
+                } else {
+                    this._releasePersistentStream();
+                }
+            },
+
+            _releasePersistentStream: function() {
+                if (this._persistentStream) {
+                    this._persistentStream.getTracks().forEach(function(t) { t.stop(); });
+                    this._persistentStream = null;
+                    console.log('[STT] Mic released');
+                }
+            },
+
             _startWhisper: async function() {
                 try {
                     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                         throw { name: 'NotSupportedError',
                                 message: 'HTTPS 연결이 필요합니다 (Tailscale HTTPS 또는 localhost만 지원)' };
                     }
-                    var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                    var stream;
+                    if (this._voiceMode && this._persistentStream &&
+                        this._persistentStream.active &&
+                        this._persistentStream.getTracks().some(function(t) { return t.readyState === 'live'; })) {
+                        // Reuse existing stream — no permission prompt
+                        stream = this._persistentStream;
+                        console.log('[STT] Reusing persistent mic stream');
+                    } else {
+                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        if (this._voiceMode) {
+                            this._persistentStream = stream;
+                            console.log('[STT] New mic stream acquired');
+                        }
+                    }
+
                     this._chunks = [];
                     var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
                         ? 'audio/webm;codecs=opus' : 'audio/webm';
@@ -589,12 +904,22 @@
                         if (e.data.size > 0) self._chunks.push(e.data);
                     };
                     this._mediaRecorder.onstop = function() {
-                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        // Only release stream if NOT in voice mode
+                        if (!self._voiceMode) {
+                            stream.getTracks().forEach(function(t) { t.stop(); });
+                        }
                         self._stopTimer();
+                        self._stopSilenceDetector();
                         self._sendAudio();
                     };
                     this._mediaRecorder.start();
                     this._startTimer();
+
+                    // Silence detection for auto-stop in voice mode
+                    if (this._voiceMode) {
+                        this._startSilenceDetector(stream);
+                    }
+
                     return true;
                 } catch (err) {
                     if (this._dotNetRef)
@@ -602,6 +927,60 @@
                             err.name === 'NotAllowedError' ? '마이크 권한이 거부되었습니다' : err.message);
                     return false;
                 }
+            },
+
+            _startSilenceDetector: function(stream) {
+                try {
+                    this._silenceCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    var source = this._silenceCtx.createMediaStreamSource(stream);
+                    this._silenceAnalyser = this._silenceCtx.createAnalyser();
+                    this._silenceAnalyser.fftSize = 512;
+                    source.connect(this._silenceAnalyser);
+
+                    var bufLen = this._silenceAnalyser.fftSize;
+                    var buf = new Float32Array(bufLen);
+                    this._speechDetected = false;
+                    this._silenceStart = 0;
+                    var self = this;
+                    var SPEECH_THRESHOLD = 0.015;   // RMS above this = speech
+                    var SILENCE_DURATION = 2000;    // ms of silence to auto-stop
+
+                    this._silenceInterval = setInterval(function() {
+                        if (!self._silenceAnalyser) return;
+                        self._silenceAnalyser.getFloatTimeDomainData(buf);
+                        // RMS level
+                        var sum = 0;
+                        for (var i = 0; i < bufLen; i++) sum += buf[i] * buf[i];
+                        var rms = Math.sqrt(sum / bufLen);
+
+                        if (rms > SPEECH_THRESHOLD) {
+                            self._speechDetected = true;
+                            self._silenceStart = 0;
+                        } else if (self._speechDetected) {
+                            // Speech was detected, now silence
+                            if (self._silenceStart === 0) {
+                                self._silenceStart = Date.now();
+                            } else if (Date.now() - self._silenceStart > SILENCE_DURATION) {
+                                console.log('[STT] Silence detected for', SILENCE_DURATION, 'ms — auto-stopping');
+                                self.stop();
+                            }
+                        }
+                    }, 100);
+                } catch(e) {
+                    console.warn('[STT] Silence detector init failed:', e);
+                }
+            },
+
+            _stopSilenceDetector: function() {
+                if (this._silenceInterval) {
+                    clearInterval(this._silenceInterval);
+                    this._silenceInterval = null;
+                }
+                if (this._silenceCtx) {
+                    try { this._silenceCtx.close(); } catch {}
+                    this._silenceCtx = null;
+                }
+                this._silenceAnalyser = null;
             },
 
             stop: function() {
@@ -670,6 +1049,8 @@
 
             dispose: function() {
                 this._stopTimer();
+                this._stopSilenceDetector();
+                this._releasePersistentStream();
                 if (this._recognition) { try { this._recognition.abort(); } catch {} this._recognition = null; }
                 if (this._mediaRecorder && this._mediaRecorder.state === 'recording')
                     this._mediaRecorder.stop();

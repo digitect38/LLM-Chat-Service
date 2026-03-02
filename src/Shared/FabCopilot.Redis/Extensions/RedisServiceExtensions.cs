@@ -1,3 +1,4 @@
+using FabCopilot.Contracts.Interfaces;
 using FabCopilot.Redis.Configuration;
 using FabCopilot.Redis.Interfaces;
 using Microsoft.Extensions.Configuration;
@@ -24,6 +25,7 @@ public static class RedisServiceExtensions
         services.AddSingleton<IConversationStore, RedisConversationStore>();
         services.AddSingleton<ISessionStore, RedisSessionStore>();
         services.AddSingleton<IAuditTrail, RedisAuditTrail>();
+        services.AddSingleton<IEquipmentRegistry, RedisEquipmentRegistry>();
 
         return services;
     }

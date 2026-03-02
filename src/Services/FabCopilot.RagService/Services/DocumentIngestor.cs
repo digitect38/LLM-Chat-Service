@@ -4,6 +4,7 @@ using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services.Bm25;
 using FabCopilot.RagService.Services.ImageOcr;
+using FabCopilot.VectorStore;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ public sealed class DocumentIngestor
     private readonly IBm25Index? _bm25Index;
     private readonly IEntityExtractor? _entityExtractor;
     private readonly IKnowledgeGraphStore? _graphStore;
+    private readonly DualIndexManager? _dualIndexManager;
     private readonly ILogger<DocumentIngestor> _logger;
 
     public DocumentIngestor(
@@ -32,7 +34,8 @@ public sealed class DocumentIngestor
         ILogger<DocumentIngestor> logger,
         IBm25Index? bm25Index = null,
         IEntityExtractor? entityExtractor = null,
-        IKnowledgeGraphStore? graphStore = null)
+        IKnowledgeGraphStore? graphStore = null,
+        DualIndexManager? dualIndexManager = null)
     {
         _llmClient = llmClient;
         _vectorStore = vectorStore;
@@ -41,7 +44,14 @@ public sealed class DocumentIngestor
         _bm25Index = bm25Index;
         _entityExtractor = entityExtractor;
         _graphStore = graphStore;
+        _dualIndexManager = dualIndexManager;
         _logger = logger;
+    }
+
+    private string GetTargetCollection()
+    {
+        return _dualIndexManager?.GetIndexCollection()
+            ?? _qdrantOptions.DefaultCollection;
     }
 
     /// <summary>
@@ -60,7 +70,7 @@ public sealed class DocumentIngestor
             return;
         }
 
-        var collection = _qdrantOptions.DefaultCollection;
+        var collection = GetTargetCollection();
         var vectorSize = _qdrantOptions.VectorSize;
         await _vectorStore.EnsureCollectionAsync(collection, vectorSize, ct);
 
@@ -135,7 +145,7 @@ public sealed class DocumentIngestor
             return;
         }
 
-        var collection = _qdrantOptions.DefaultCollection;
+        var collection = GetTargetCollection();
         var vectorSize = _qdrantOptions.VectorSize;
 
         // Ensure the collection exists

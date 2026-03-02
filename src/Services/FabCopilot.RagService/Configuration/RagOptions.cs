@@ -54,6 +54,9 @@ public sealed class RagOptions
     public int QueryRewriteTimeoutMs { get; set; } = 10000;
     public int TotalPipelineTimeoutMs { get; set; } = 55000;
 
+    // Query Intelligence
+    public bool EnableQueryIntelligence { get; set; } = true;
+
     // Multi-tier Chunking
     public bool EnableSemanticChunking { get; set; } = true;
     public float SemanticBoundaryThreshold { get; set; } = 0.65f;

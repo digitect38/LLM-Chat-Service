@@ -10,6 +10,7 @@ using FabCopilot.RagService.Configuration;
 using FabCopilot.RagService.Interfaces;
 using FabCopilot.RagService.Services;
 using FabCopilot.RagService.Services.Bm25;
+using FabCopilot.VectorStore;
 using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using FabCopilot.VectorStore.Models;
@@ -36,6 +37,8 @@ public sealed class RagWorker : BackgroundService
     private readonly ILlmReranker? _llmReranker;
     private readonly IKnowledgeGraphStore? _graphStore;
     private readonly IAgenticRagOrchestrator? _agenticOrchestrator;
+    private readonly QueryIntelligencePipeline? _queryIntelligencePipeline;
+    private readonly DualIndexManager? _dualIndexManager;
     private readonly ILogger<RagWorker> _logger;
 
     public RagWorker(
@@ -51,7 +54,9 @@ public sealed class RagWorker : BackgroundService
         IQueryRewriter? queryRewriter = null,
         ILlmReranker? llmReranker = null,
         IKnowledgeGraphStore? graphStore = null,
-        IAgenticRagOrchestrator? agenticOrchestrator = null)
+        IAgenticRagOrchestrator? agenticOrchestrator = null,
+        QueryIntelligencePipeline? queryIntelligencePipeline = null,
+        DualIndexManager? dualIndexManager = null)
     {
         _messageBus = messageBus;
         _llmClient = llmClient;
@@ -66,6 +71,8 @@ public sealed class RagWorker : BackgroundService
         _llmReranker = llmReranker;
         _graphStore = graphStore;
         _agenticOrchestrator = agenticOrchestrator;
+        _queryIntelligencePipeline = queryIntelligencePipeline;
+        _dualIndexManager = dualIndexManager;
 
         _logger.LogInformation(
             "RagWorker initialized. GraphStore={GraphStoreAvailable}, EnableGraphLookup={EnableGraphLookup}, ExtractEntitiesOnIngest={ExtractEntities}",
@@ -243,12 +250,15 @@ public sealed class RagWorker : BackgroundService
     {
         _logger.LogDebug("Running Naive pipeline. ConversationId={ConversationId}", conversationId);
 
+        // 0. Query Intelligence: correct typos/abbreviations before embedding
+        var correctedQuery = await ApplyQueryIntelligenceAsync(request.Query, ct);
+
         // 1. Embed the query text
-        var queryVector = await _llmClient.GetEmbeddingAsync(request.Query, isQuery: true, ct);
+        var queryVector = await _llmClient.GetEmbeddingAsync(correctedQuery, isQuery: true, ct);
 
         // 2. Over-fetch candidates from vector store
         var vectorSw = FabMetrics.StartTimer();
-        var collection = _qdrantOptions.DefaultCollection;
+        var collection = GetSearchCollection();
         var overFetchK = Math.Max(request.TopK * 10, 100);
         var searchResults = await _vectorStore.SearchAsync(
             collection, queryVector, overFetchK, filter: null, ct);
@@ -266,7 +276,7 @@ public sealed class RagWorker : BackgroundService
             conversationId, searchResults.Count, candidates.Count, _ragOptions.MinScore);
 
         // 2.6. Hybrid merge with BM25 via RRF
-        candidates = HybridMerge(candidates, request.Query, request.TopK);
+        candidates = HybridMerge(candidates, correctedQuery, request.TopK);
 
         _logger.LogInformation(
             "Hybrid search merge applied. ConversationId={ConversationId}, CandidateCount={CandidateCount}",
@@ -274,13 +284,13 @@ public sealed class RagWorker : BackgroundService
 
         // 3. Re-rank with keyword boost
         var rerankSw = FabMetrics.StartTimer();
-        var keywords = ExtractKeywords(request.Query);
+        var keywords = ExtractKeywords(correctedQuery);
         var expanded = ExpandKeywordsWithSynonyms(keywords);
         var reranked = RerankWithKeywordBoost(candidates, expanded);
         FabMetrics.RecordElapsed(rerankSw, FabMetrics.RagRerankDuration);
 
         // 3.5. MMR diversity selection
-        var filtered = ApplyMmr(reranked, request.Query, request.TopK);
+        var filtered = ApplyMmr(reranked, correctedQuery, request.TopK);
 
         _logger.LogInformation(
             "Keyword re-ranking + MMR applied. ConversationId={ConversationId}, Keywords=[{Keywords}], TopK={TopK}, ResultCount={ResultCount}",
@@ -302,8 +312,11 @@ public sealed class RagWorker : BackgroundService
     {
         _logger.LogDebug("Running Advanced pipeline. ConversationId={ConversationId}", conversationId);
 
+        // 0. Query Intelligence: correct typos/abbreviations before rewriting
+        var correctedQuery = await ApplyQueryIntelligenceAsync(request.Query, ct);
+
         // 1. Pre-retrieval: Rewrite query (with timeout + graceful degradation)
-        var rewrittenQuery = request.Query;
+        var rewrittenQuery = correctedQuery;
         if (_queryRewriter is not null && _ragOptions.EnableQueryRewriting)
         {
             try
@@ -311,19 +324,19 @@ public sealed class RagWorker : BackgroundService
                 using var rewriteCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 rewriteCts.CancelAfter(_ragOptions.QueryRewriteTimeoutMs);
                 var rewriteSw = FabMetrics.StartTimer();
-                rewrittenQuery = await _queryRewriter.RewriteAsync(request.Query, rewriteCts.Token);
+                rewrittenQuery = await _queryRewriter.RewriteAsync(correctedQuery, rewriteCts.Token);
                 FabMetrics.RecordElapsed(rewriteSw, FabMetrics.RagQueryRewriteDuration);
                 _logger.LogInformation(
                     "Query rewritten. ConversationId={ConversationId}, Original={Original}, Rewritten={Rewritten}",
-                    conversationId, request.Query, rewrittenQuery);
+                    conversationId, correctedQuery, rewrittenQuery);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 _logger.LogWarning(
-                    "Query rewrite timed out ({TimeoutMs}ms), using original query. ConversationId={ConversationId}",
+                    "Query rewrite timed out ({TimeoutMs}ms), using corrected query. ConversationId={ConversationId}",
                     _ragOptions.QueryRewriteTimeoutMs, conversationId);
                 FabMetrics.RagStageTimeoutCount.Add(1, new KeyValuePair<string, object?>("stage", "query_rewrite"));
-                rewrittenQuery = request.Query;
+                rewrittenQuery = correctedQuery;
             }
         }
 
@@ -336,7 +349,7 @@ public sealed class RagWorker : BackgroundService
             using var vectorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             vectorCts.CancelAfter(_ragOptions.VectorSearchTimeoutMs);
             var advVectorSw = FabMetrics.StartTimer();
-            var collection = _qdrantOptions.DefaultCollection;
+            var collection = GetSearchCollection();
             var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
             searchResults = await _vectorStore.SearchAsync(
                 collection, queryVector, overFetchK, filter: null, vectorCts.Token);
@@ -432,17 +445,20 @@ public sealed class RagWorker : BackgroundService
         _logger.LogDebug("Running Graph pipeline. ConversationId={ConversationId}, Query={Query}, TopK={TopK}",
             conversationId, request.Query, request.TopK);
 
+        // 0. Query Intelligence: correct typos/abbreviations before rewriting
+        var correctedQuery = await ApplyQueryIntelligenceAsync(request.Query, ct);
+
         // 1. Rewrite query (reuse Advanced rewriter)
-        var rewrittenQuery = request.Query;
+        var rewrittenQuery = correctedQuery;
         if (_queryRewriter is not null && _ragOptions.EnableQueryRewriting)
         {
-            rewrittenQuery = await _queryRewriter.RewriteAsync(request.Query, ct);
+            rewrittenQuery = await _queryRewriter.RewriteAsync(correctedQuery, ct);
         }
 
         // 2. Embed + vector search
         var graphVectorSw = FabMetrics.StartTimer();
         var queryVector = await _llmClient.GetEmbeddingAsync(rewrittenQuery, isQuery: true, ct);
-        var collection = _qdrantOptions.DefaultCollection;
+        var collection = GetSearchCollection();
         var overFetchK = Math.Max(_ragOptions.LlmRerankCandidateCount, request.TopK * 10);
         var searchResults = await _vectorStore.SearchAsync(
             collection, queryVector, overFetchK, filter: null, ct);
@@ -530,6 +546,35 @@ public sealed class RagWorker : BackgroundService
             IterationCount = iterationCount,
             Results = results
         };
+    }
+
+    // ─── Query Intelligence ─────────────────────────────────────────────
+
+    private async Task<string> ApplyQueryIntelligenceAsync(string query, CancellationToken ct)
+    {
+        if (_queryIntelligencePipeline is null || !_ragOptions.EnableQueryIntelligence)
+            return query;
+
+        try
+        {
+            var result = await _queryIntelligencePipeline.CorrectAsync(query, ct);
+            if (result.WasModified)
+                _logger.LogDebug("Query corrected: {Original} → {Corrected}", query, result.CorrectedQuery);
+            return result.CorrectedQuery;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Query intelligence failed, using original query");
+            return query;
+        }
+    }
+
+    // ─── Collection routing ──────────────────────────────────────────────
+
+    private string GetSearchCollection()
+    {
+        return _dualIndexManager?.GetSearchCollection()
+            ?? _qdrantOptions.DefaultCollection;
     }
 
     // ─── Shared helpers ─────────────────────────────────────────────────
