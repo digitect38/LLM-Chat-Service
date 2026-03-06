@@ -12,6 +12,8 @@ builder.Services.Configure<EquipmentOptions>(builder.Configuration.GetSection(Eq
 builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection(AdminOptions.SectionName));
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddSingleton<EmbeddingConfigService>();
+builder.Services.AddSingleton<LogReaderService>();
+builder.Services.AddSingleton<LogAnalyzerService>();
 builder.Services.AddHttpClient("Gateway", client =>
 {
     var gatewayUrl = builder.Configuration["Gateway:HttpUrl"] ?? "http://localhost:5000";
@@ -30,11 +32,11 @@ app.UseStaticFiles();
 app.UseRouting();
 
 // TTS proxy — same-origin endpoint so mobile browsers don't need cross-port fetch
+// Streams response directly instead of buffering entire audio (fixes ~5s overhead)
 app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory httpFactory, ILogger<Program> logger) =>
 {
     var client = httpFactory.CreateClient("Gateway");
 
-    // Buffer the request body so we can log it on failure
     using var ms = new MemoryStream();
     await req.Body.CopyToAsync(ms);
     var bodyBytes = ms.ToArray();
@@ -50,9 +52,26 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory ht
         logger.LogWarning("[TTS Proxy] Gateway returned {Status}: {Error}", (int)resp.StatusCode, errBody);
         return Results.Json(new { error = errBody, status = (int)resp.StatusCode }, statusCode: (int)resp.StatusCode);
     }
-    var audio = await resp.Content.ReadAsByteArrayAsync();
-    logger.LogInformation("[TTS Proxy] Success, returning {Len} bytes WAV", audio.Length);
-    return Results.File(audio, "audio/wav", "speech.wav");
+
+    var respContentType = resp.Content.Headers.ContentType?.ToString() ?? "audio/wav";
+
+    // If response is JSON (Browser engine signal), pass through as-is
+    if (respContentType.Contains("application/json"))
+    {
+        var json = await resp.Content.ReadAsStringAsync();
+        return Results.Content(json, "application/json");
+    }
+
+    // Forward TTS engine/voice/fallback info headers for client debug logs
+    foreach (var hdr in new[] { "X-TTS-Engine", "X-TTS-Voice", "X-TTS-Fallback", "X-TTS-Chain" })
+    {
+        if (resp.Headers.TryGetValues(hdr, out var vals))
+            req.HttpContext.Response.Headers[hdr] = vals.FirstOrDefault() ?? "";
+    }
+
+    // Stream audio directly instead of buffering
+    var stream = await resp.Content.ReadAsStreamAsync();
+    return Results.Stream(stream, respContentType, "speech.wav");
 });
 
 // STT/Transcribe proxy — forward all /api/transcribe/* to ChatGateway

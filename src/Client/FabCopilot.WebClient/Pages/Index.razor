@@ -11,6 +11,8 @@
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject EmbeddingConfigService EmbeddingConfigService
+@inject LogReaderService LogReaderService
+@inject LogAnalyzerService LogAnalyzerService
 @implements IAsyncDisposable
 
 <div class="chat-app">
@@ -101,6 +103,11 @@
                         @onclick='() => SetRenderMode("batch")'>Batch</button>
             </div>
             <div class="topbar-spacer"></div>
+            <button class="topbar-icon-btn @(_logPaneOpen ? "topbar-icon-active" : "")"
+                    @onclick="ToggleLogPane"
+                    title="@(_logPaneOpen ? "로그 분석 패널 닫기" : "로그 분석 패널 열기")">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 010-4h14v4"/><path d="M3 5v14a2 2 0 002 2h16v-5"/><path d="M18 12a2 2 0 100 4 2 2 0 000-4z"/></svg>
+            </button>
             <button class="topbar-icon-btn @(_citationPaneOpen ? "topbar-icon-active" : "")"
                     @onclick="ToggleCitationPane"
                     title="@(_citationPaneOpen ? "참조 패널 닫기" : "참조 패널 열기")">
@@ -427,6 +434,10 @@
         </div>
     </main>
 
+    <!-- ===== Log Analyzer Pane ===== -->
+    <LogAnalyzerPane IsOpen="_logPaneOpen"
+                     OnClose="CloseLogPane" />
+
     <!-- ===== Citation Pane ===== -->
     <CitationPane IsOpen="_citationPaneOpen"
                   Citations="_activeCitations"
@@ -466,6 +477,7 @@
     // UI state
     private bool _sidebarOpen = true;
     private bool _citationPaneOpen;
+    private bool _logPaneOpen;
     private List<CitationInfo>? _activeCitations;
     private string _selectedModelId = string.Empty;
     private string _searchMode = "hybrid";
@@ -811,6 +823,14 @@
         StopRenderTimer();
         StopStaleStreamTimer();
 
+        // Stop streaming TTS if active
+        if (_ttsStreamingActive)
+        {
+            _ttsStreamingActive = false;
+            try { await JS.InvokeVoidAsync("fabTts.stop"); } catch { }
+            _ttsPlayingIdx = -1;
+        }
+
         var assistantMsg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
         if (assistantMsg is not null)
         {
@@ -1047,10 +1067,25 @@
         }
     }
 
+    // ─── Log Analyzer Pane ─────────────────────────────────────────────
+
+    private void ToggleLogPane()
+    {
+        _logPaneOpen = !_logPaneOpen;
+        StateHasChanged();
+    }
+
+    private void CloseLogPane()
+    {
+        _logPaneOpen = false;
+        StateHasChanged();
+    }
+
     // ─── TTS (Text-to-Speech) ───────────────────────────────────────────
 
     private int _ttsPlayingIdx = -1;
     private bool _ttsLoading;
+    private bool _ttsStreamingActive;
 
     private async Task PlayLastTts()
     {
@@ -1070,6 +1105,13 @@
 
     private async Task PlayTts(int idx)
     {
+        // Stop streaming TTS if active before manual play
+        if (_ttsStreamingActive)
+        {
+            _ttsStreamingActive = false;
+            await JS.InvokeVoidAsync("fabTts.stop");
+        }
+
         // If already playing this message, stop it
         if (_ttsPlayingIdx == idx)
         {
@@ -1110,6 +1152,7 @@
     public void OnTtsEnded()
     {
         _ttsPlayingIdx = -1;
+        _ttsStreamingActive = false;
 
         if (_isVoiceMode)
         {
@@ -1130,6 +1173,7 @@
         _connectionError = $"TTS 오류: {error}";
         _ttsPlayingIdx = -1;
         _ttsLoading = false;
+        _ttsStreamingActive = false;
 
         if (_isVoiceMode)
         {
@@ -1201,7 +1245,7 @@
         _isRecording = false;
         _interimText = "";
         _recordingSeconds = 0;
-        _connectionError = $"음성 변환 실패: {error}";
+        _connectionError = $"음성 인식 실패: {error}";
 
         if (_isVoiceMode)
             _ = InvokeAsync(async () => await ExitVoiceModeAsync());
@@ -1257,7 +1301,18 @@
         {
             // User gesture context — acquire mic + unlock audio ONCE for entire session
             try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
-            try { await JS.InvokeVoidAsync("audioRecorder.setVoiceMode", true); } catch { }
+
+            // Pre-acquire mic — returns false if permission denied
+            bool micAcquired = false;
+            try { micAcquired = await JS.InvokeAsync<bool>("audioRecorder.setVoiceMode", true); }
+            catch { micAcquired = false; }
+
+            if (!micAcquired)
+            {
+                _connectionError = "마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 접근을 허용하세요.";
+                StateHasChanged();
+                return;
+            }
 
             _isVoiceMode = true;
             StateHasChanged();
@@ -1269,6 +1324,7 @@
     {
         _isVoiceMode = false;
         _voicePhase = VoicePhase.Idle;
+        _ttsStreamingActive = false;
 
         // Disable silence auto-stop
         try { await JS.InvokeVoidAsync("audioRecorder.setVoiceMode", false); } catch { }
@@ -1436,6 +1492,19 @@
             {
                 assistantMsg = new ChatMessageViewModel { IsUser = false, IsStreaming = true };
                 _messages.Add(assistantMsg);
+
+                // Voice mode: start streaming TTS for real-time sentence playback
+                if (_isVoiceMode)
+                {
+                    try
+                    {
+                        _voicePhase = VoicePhase.Speaking;
+                        _ttsPlayingIdx = _messages.Count - 1;
+                        await JS.InvokeVoidAsync("fabTts.playStream", _dotNetRef);
+                        _ttsStreamingActive = true;
+                    }
+                    catch { _ttsStreamingActive = false; }
+                }
             }
 
             if (!string.IsNullOrEmpty(chunk.Error))
@@ -1450,7 +1519,10 @@
 
                 // Voice mode: exit on error
                 if (_isVoiceMode)
+                {
+                    _ttsStreamingActive = false;
                     await ExitVoiceModeAsync();
+                }
 
                 StateHasChanged();
                 await ScrollToBottom();
@@ -1485,13 +1557,29 @@
                 StateHasChanged();
                 await ScrollToBottom();
 
-                // Voice mode: auto-play TTS for the completed response
+                // Voice mode: flush streaming TTS or fall back to full-text TTS
                 if (_isVoiceMode)
-                    await VoiceAutoTtsAsync();
+                {
+                    if (_ttsStreamingActive)
+                    {
+                        // Flush remaining buffer — OnTtsEnded callback handles voice cycle
+                        try { await JS.InvokeVoidAsync("fabTts.flushStream"); } catch { }
+                    }
+                    else
+                    {
+                        await VoiceAutoTtsAsync();
+                    }
+                }
             }
             else
             {
                 assistantMsg.Text += chunk.Token;
+
+                // Feed token to streaming TTS for real-time sentence synthesis
+                if (_ttsStreamingActive)
+                {
+                    try { await JS.InvokeVoidAsync("fabTts.feedText", chunk.Token); } catch { }
+                }
 
                 if (_renderMode != "batch")
                 {
@@ -1743,7 +1831,16 @@
 
     private void HandleStateChanged(System.Net.WebSockets.WebSocketState state)
     {
-        InvokeAsync(() => { StateHasChanged(); return Task.CompletedTask; });
+        InvokeAsync(async () =>
+        {
+            // Auto-exit voice mode on WebSocket disconnect to prevent orphaned recording
+            if (_isVoiceMode && state != System.Net.WebSockets.WebSocketState.Open)
+            {
+                try { await ExitVoiceModeAsync(); } catch { }
+                _connectionError = "서버 연결이 끊겨 음성 모드가 종료되었습니다.";
+            }
+            StateHasChanged();
+        });
     }
 
     private async Task ScrollToBottom()

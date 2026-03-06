@@ -1,0 +1,525 @@
+@using FabCopilot.WebClient.Models
+@using FabCopilot.WebClient.Services
+@inject LogReaderService LogReader
+@inject LogAnalyzerService Analyzer
+@inject IJSRuntime JS
+
+<aside class="log-pane @(IsOpen ? "" : "log-pane-closed")">
+    @if (IsOpen)
+    {
+        <div class="log-pane-resize-handle"></div>
+
+        <!-- Header -->
+        <div class="lp-header">
+            <h3>Log Analyzer</h3>
+            <button class="icon-btn" @onclick="Close" title="닫기">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="lp-search-bar">
+            <input class="lp-input" type="text" placeholder="키워드 검색..."
+                   @bind="_keyword" @bind:event="oninput" @onkeydown="OnSearchKeyDown" />
+
+            <div class="lp-filter-row">
+                <select class="lp-select" @bind="_selectedService">
+                    <option value="">All Services</option>
+                    @foreach (var svc in _services)
+                    {
+                        <option value="@svc">@svc</option>
+                    }
+                </select>
+                <div class="lp-level-toggles">
+                    @foreach (var lvl in _allLevels)
+                    {
+                        var isActive = _activeLevels.Contains(lvl);
+                        <button class="lp-level-toggle @(isActive ? "active" : "") lp-lvl-@lvl.ToLower()"
+                                @onclick="() => ToggleLevel(lvl)">@lvl</button>
+                    }
+                </div>
+            </div>
+
+            <div class="lp-time-presets">
+                <button class="lp-time-preset @(_timePreset == "1h" ? "active" : "")" @onclick='() => SetTimePreset("1h")'>1h</button>
+                <button class="lp-time-preset @(_timePreset == "6h" ? "active" : "")" @onclick='() => SetTimePreset("6h")'>6h</button>
+                <button class="lp-time-preset @(_timePreset == "24h" ? "active" : "")" @onclick='() => SetTimePreset("24h")'>24h</button>
+                <button class="lp-time-preset @(_timePreset == "7d" ? "active" : "")" @onclick='() => SetTimePreset("7d")'>7d</button>
+            </div>
+
+            <input class="lp-input" type="text" placeholder="CorrelationId..."
+                   @bind="_correlationId" @bind:event="oninput" />
+
+            <button class="lp-search-btn" @onclick="ExecuteSearch" disabled="@_isSearching">
+                @(_isSearching ? "검색 중..." : "검색")
+            </button>
+        </div>
+
+        <!-- Stats Summary -->
+        @if (_searchResult is not null)
+        {
+            <div class="lp-stats">
+                <div class="lp-stat-card">
+                    <div class="lp-stat-value">@_searchResult.TotalCount</div>
+                    <div class="lp-stat-label">Total</div>
+                </div>
+                <div class="lp-stat-card lp-stat-error">
+                    <div class="lp-stat-value">@_statsErrorCount</div>
+                    <div class="lp-stat-label">Errors</div>
+                </div>
+                <div class="lp-stat-card lp-stat-warning">
+                    <div class="lp-stat-value">@_statsWarnCount</div>
+                    <div class="lp-stat-label">Warnings</div>
+                </div>
+                <div class="lp-stat-card lp-stat-cid">
+                    <div class="lp-stat-value">@_statsUniqueCids</div>
+                    <div class="lp-stat-label">CIDs</div>
+                </div>
+            </div>
+        }
+
+        <!-- Sub-tabs -->
+        <div class="lp-tabs">
+            <button class="lp-tab @(_subTab == "results" ? "active" : "")" @onclick='() => _subTab = "results"'>
+                Results @if (_searchResult is not null) { <span class="lp-tab-badge">@_searchResult.TotalCount</span> }
+            </button>
+            <button class="lp-tab @(_subTab == "top-errors" ? "active" : "")" @onclick="LoadTopErrors">Errors</button>
+            <button class="lp-tab @(_subTab == "dashboard" ? "active" : "")" @onclick="LoadErrorDashboard">Dashboard</button>
+            <button class="lp-tab @(_subTab == "flow" ? "active" : "")" @onclick='() => _subTab = "flow"'>Flow</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="lp-content">
+
+            @* ── Search Results ── *@
+            @if (_subTab == "results")
+            {
+                @if (_searchResult is not null && _searchResult.Entries.Count > 0)
+                {
+                    <div class="lp-log-table-wrap">
+                        <table class="lp-log-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Svc</th>
+                                    <th>Lvl</th>
+                                    <th>CID</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in _searchResult.Entries)
+                                {
+                                    var levelClass = entry.DisplayLevel switch
+                                    {
+                                        "ERR" => "lp-row-error",
+                                        "WRN" => "lp-row-warning",
+                                        "DBG" => "lp-row-debug",
+                                        _ => ""
+                                    };
+                                    <tr class="@levelClass">
+                                        <td class="lp-col-time">@entry.DisplayTime</td>
+                                        <td class="lp-col-svc" title="@entry.ServiceName">@(TruncateService(entry.ServiceName))</td>
+                                        <td><span class="lp-level-badge lp-badge-@entry.DisplayLevel.ToLower()">@entry.DisplayLevel</span></td>
+                                        <td class="lp-col-cid">
+                                            @if (!string.IsNullOrEmpty(entry.CorrelationId))
+                                            {
+                                                <button class="lp-cid-link" @onclick="() => TraceFlow(entry.CorrelationId)">
+                                                    @entry.CorrelationId[..Math.Min(8, entry.CorrelationId.Length)]
+                                                </button>
+                                            }
+                                        </td>
+                                        <td class="lp-col-msg">
+                                            @entry.RenderedMessage
+                                            @if (!string.IsNullOrEmpty(entry.Exception))
+                                            {
+                                                <div class="lp-exception">@entry.Exception</div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @if (_searchResult.TotalPages > 1)
+                    {
+                        <div class="lp-pagination">
+                            <button class="lp-page-btn" disabled="@(_searchResult.Page <= 1)"
+                                    @onclick="() => GoToPage(_searchResult.Page - 1)">Prev</button>
+                            <span class="lp-page-info">@_searchResult.Page / @_searchResult.TotalPages</span>
+                            <button class="lp-page-btn" disabled="@(_searchResult.Page >= _searchResult.TotalPages)"
+                                    @onclick="() => GoToPage(_searchResult.Page + 1)">Next</button>
+                        </div>
+                    }
+                }
+                else if (_searchResult is not null)
+                {
+                    <div class="lp-empty">검색 결과가 없습니다</div>
+                }
+                else
+                {
+                    <div class="lp-empty">검색 조건을 입력하고 검색 버튼을 클릭하세요</div>
+                }
+            }
+
+            @* ── Top Errors ── *@
+            @if (_subTab == "top-errors")
+            {
+                @if (_topErrors.Count > 0)
+                {
+                    <div class="lp-log-table-wrap">
+                        <table class="lp-log-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:50px">#</th>
+                                    <th>Service</th>
+                                    <th>Template</th>
+                                    <th>Last</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var group in _topErrors)
+                                {
+                                    <tr class="lp-row-error">
+                                        <td><strong>@group.Count</strong></td>
+                                        <td class="lp-col-svc" title="@group.ServiceName">@(TruncateService(group.ServiceName))</td>
+                                        <td class="lp-col-msg">@group.MessageTemplate</td>
+                                        <td class="lp-col-time">@group.LastSeen.ToString("MM-dd HH:mm")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="lp-empty">선택한 시간 범위에 에러가 없습니다</div>
+                }
+            }
+
+            @* ── Error Dashboard ── *@
+            @if (_subTab == "dashboard")
+            {
+                @if (_serviceHealth.Count > 0)
+                {
+                    <div class="lp-bar-chart">
+                        @foreach (var svc in _serviceHealth)
+                        {
+                            var maxVal = _serviceHealth.Max(s => s.TotalCount);
+                            var errPct = svc.TotalCount > 0 ? (int)(svc.ErrorCount * 100.0 / svc.TotalCount) : 0;
+                            var wrnPct = svc.TotalCount > 0 ? (int)(svc.WarningCount * 100.0 / svc.TotalCount) : 0;
+
+                            <div class="lp-bar-row">
+                                <span class="lp-bar-label" title="@svc.ServiceName">@(TruncateService(svc.ServiceName))</span>
+                                <div class="lp-bar-track">
+                                    @if (svc.ErrorCount > 0)
+                                    {
+                                        <div class="lp-bar-fill lp-bar-error" style="width: @(errPct)%"
+                                             title="@svc.ErrorCount ERR"></div>
+                                    }
+                                    @if (svc.WarningCount > 0)
+                                    {
+                                        <div class="lp-bar-fill lp-bar-warning" style="width: @(wrnPct)%"
+                                             title="@svc.WarningCount WRN"></div>
+                                    }
+                                    <div class="lp-bar-fill lp-bar-info" style="width: @(100 - errPct - wrnPct)%"
+                                         title="@(svc.InfoCount + svc.DebugCount) INF/DBG"></div>
+                                </div>
+                                <span class="lp-bar-count">@svc.TotalCount</span>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="lp-empty">선택한 시간 범위에 데이터가 없습니다</div>
+                }
+            }
+
+            @* ── Request Flow ── *@
+            @if (_subTab == "flow")
+            {
+                <div class="lp-flow-search">
+                    <input class="lp-input" type="text" placeholder="CorrelationId 입력..."
+                           @bind="_flowCorrelationId" @bind:event="oninput" @onkeydown="OnFlowKeyDown" />
+                    <button class="lp-search-btn" @onclick="TraceRequestFlow" disabled="@_isTracingFlow">
+                        @(_isTracingFlow ? "추적 중..." : "추적")
+                    </button>
+                </div>
+
+                @if (_requestFlow is not null && _requestFlow.Events.Count > 0)
+                {
+                    <div class="lp-flow-summary">
+                        <span>Events: <strong>@_requestFlow.Events.Count</strong></span>
+                        <span>Duration: <strong>@_requestFlow.TotalDuration.TotalMilliseconds.ToString("F0")ms</strong></span>
+                    </div>
+
+                    <div class="lp-flow-timeline">
+                        @foreach (var evt in _requestFlow.Events)
+                        {
+                            var levelClass = evt.Level switch
+                            {
+                                "ERR" => "lp-flow-error",
+                                "WRN" => "lp-flow-warning",
+                                _ => "lp-flow-info"
+                            };
+
+                            <div class="lp-flow-event @levelClass">
+                                <div class="lp-flow-node"></div>
+                                <div class="lp-flow-content">
+                                    <div class="lp-flow-header">
+                                        <span class="lp-flow-svc">@evt.ServiceName</span>
+                                        <span class="lp-flow-time">@evt.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                        @if (evt.GapFromPrevious > TimeSpan.Zero)
+                                        {
+                                            <span class="lp-flow-gap">+@evt.GapFromPrevious.TotalMilliseconds.ToString("F0")ms</span>
+                                        }
+                                    </div>
+                                    <div class="lp-flow-message">@evt.Message</div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else if (_requestFlow is not null)
+                {
+                    <div class="lp-empty">해당 CorrelationId의 이벤트를 찾을 수 없습니다</div>
+                }
+            }
+        </div>
+    }
+</aside>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    // Search state
+    private string _keyword = "";
+    private string _selectedService = "";
+    private string _correlationId = "";
+    private string _timePreset = "24h";
+    private DateTime? _startTime;
+    private DateTime? _endTime;
+    private HashSet<string> _activeLevels = ["INF", "WRN", "ERR", "DBG"];
+    private readonly string[] _allLevels = ["ERR", "WRN", "INF", "DBG"];
+    private bool _isSearching;
+
+    // Results
+    private LogSearchResult? _searchResult;
+    private int _statsErrorCount;
+    private int _statsWarnCount;
+    private int _statsUniqueCids;
+
+    // Services list
+    private string[] _services = [];
+
+    // Sub-tabs
+    private string _subTab = "results";
+
+    // Error dashboard
+    private List<ServiceHealthBucket> _serviceHealth = [];
+
+    // Top errors
+    private List<ErrorTemplateGroup> _topErrors = [];
+
+    // Request flow
+    private string _flowCorrelationId = "";
+    private RequestFlow? _requestFlow;
+    private bool _isTracingFlow;
+
+    // Resize
+    private bool _resizeInitialized;
+
+    protected override void OnInitialized()
+    {
+        _services = LogReader.GetDistinctServices();
+        ApplyTimePreset();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (IsOpen && !_resizeInitialized)
+        {
+            _resizeInitialized = true;
+            await JS.InvokeVoidAsync("citationResize.init",
+                ".log-pane", ".log-pane-resize-handle", 300);
+        }
+        if (!IsOpen)
+        {
+            _resizeInitialized = false;
+        }
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+
+    private void ToggleLevel(string level)
+    {
+        if (_activeLevels.Contains(level))
+            _activeLevels.Remove(level);
+        else
+            _activeLevels.Add(level);
+    }
+
+    private void SetTimePreset(string preset)
+    {
+        _timePreset = preset;
+        ApplyTimePreset();
+    }
+
+    private void ApplyTimePreset()
+    {
+        _endTime = DateTime.Now;
+        _startTime = _timePreset switch
+        {
+            "1h" => DateTime.Now.AddHours(-1),
+            "6h" => DateTime.Now.AddHours(-6),
+            "24h" => DateTime.Now.AddDays(-1),
+            "7d" => DateTime.Now.AddDays(-7),
+            _ => _startTime
+        };
+    }
+
+    private async Task ExecuteSearch()
+    {
+        _isSearching = true;
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+
+            var query = new LogSearchQuery
+            {
+                Keyword = string.IsNullOrWhiteSpace(_keyword) ? null : _keyword,
+                ServiceName = string.IsNullOrWhiteSpace(_selectedService) ? null : _selectedService,
+                Levels = new HashSet<string>(_activeLevels),
+                CorrelationId = string.IsNullOrWhiteSpace(_correlationId) ? null : _correlationId,
+                StartTime = _startTime,
+                EndTime = _endTime,
+                Page = 1,
+                PageSize = 100
+            };
+
+            _searchResult = LogReader.SearchJsonLogs(query);
+
+            _statsErrorCount = _searchResult.Entries.Count(e => e.DisplayLevel == "ERR");
+            _statsWarnCount = _searchResult.Entries.Count(e => e.DisplayLevel == "WRN");
+            _statsUniqueCids = _searchResult.Entries
+                .Where(e => !string.IsNullOrEmpty(e.CorrelationId))
+                .Select(e => e.CorrelationId)
+                .Distinct()
+                .Count();
+        });
+
+        _isSearching = false;
+        _subTab = "results";
+        StateHasChanged();
+    }
+
+    private async Task GoToPage(int page)
+    {
+        _isSearching = true;
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+
+            var query = new LogSearchQuery
+            {
+                Keyword = string.IsNullOrWhiteSpace(_keyword) ? null : _keyword,
+                ServiceName = string.IsNullOrWhiteSpace(_selectedService) ? null : _selectedService,
+                Levels = new HashSet<string>(_activeLevels),
+                CorrelationId = string.IsNullOrWhiteSpace(_correlationId) ? null : _correlationId,
+                StartTime = _startTime,
+                EndTime = _endTime,
+                Page = page,
+                PageSize = 100
+            };
+
+            _searchResult = LogReader.SearchJsonLogs(query);
+        });
+
+        _isSearching = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadErrorDashboard()
+    {
+        _subTab = "dashboard";
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+            _serviceHealth = Analyzer.GetServiceHealth(
+                _startTime ?? DateTime.Now.AddDays(-1),
+                _endTime ?? DateTime.Now);
+        });
+
+        StateHasChanged();
+    }
+
+    private async Task LoadTopErrors()
+    {
+        _subTab = "top-errors";
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+            _topErrors = Analyzer.GetTopErrors(
+                _startTime ?? DateTime.Now.AddDays(-1),
+                _endTime ?? DateTime.Now,
+                string.IsNullOrWhiteSpace(_selectedService) ? null : _selectedService);
+        });
+
+        StateHasChanged();
+    }
+
+    private async Task TraceFlow(string correlationId)
+    {
+        _flowCorrelationId = correlationId;
+        _subTab = "flow";
+        await TraceRequestFlow();
+    }
+
+    private async Task TraceRequestFlow()
+    {
+        if (string.IsNullOrWhiteSpace(_flowCorrelationId)) return;
+
+        _isTracingFlow = true;
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            _requestFlow = Analyzer.GetRequestFlow(_flowCorrelationId.Trim());
+        });
+
+        _isTracingFlow = false;
+        StateHasChanged();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ExecuteSearch();
+    }
+
+    private async Task OnFlowKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await TraceRequestFlow();
+    }
+
+    private static string TruncateService(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return "—";
+        // Remove common prefix for compact display
+        var display = name.Replace("FabCopilot.", "").Replace("Service", "");
+        return display.Length > 12 ? display[..12] + ".." : display;
+    }
+}
