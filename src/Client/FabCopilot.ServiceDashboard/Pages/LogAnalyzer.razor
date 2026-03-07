@@ -1,0 +1,505 @@
+@using FabCopilot.ServiceDashboard.Models
+@using FabCopilot.ServiceDashboard.Services
+
+<div class="log-analyzer">
+    @* ── Search Bar ── *@
+    <div class="log-search-bar">
+        <input class="log-search-input" type="text" placeholder="Keyword search..."
+               @bind="_keyword" @bind:event="oninput" @onkeydown="OnSearchKeyDown" />
+
+        <select class="log-search-input svc-select" @bind="_selectedService">
+            <option value="">All Services</option>
+            @foreach (var svc in _services)
+            {
+                <option value="@svc">@svc</option>
+            }
+        </select>
+
+        <div class="level-toggles">
+            @foreach (var lvl in _allLevels)
+            {
+                var isActive = _activeLevels.Contains(lvl);
+                <button class="level-toggle @(isActive ? "active" : "") level-@lvl.ToLower()"
+                        @onclick="() => ToggleLevel(lvl)">@lvl</button>
+            }
+        </div>
+
+        <div class="time-presets">
+            <button class="time-preset @(_timePreset == "1h" ? "active" : "")" @onclick='() => SetTimePreset("1h")'>1h</button>
+            <button class="time-preset @(_timePreset == "6h" ? "active" : "")" @onclick='() => SetTimePreset("6h")'>6h</button>
+            <button class="time-preset @(_timePreset == "24h" ? "active" : "")" @onclick='() => SetTimePreset("24h")'>24h</button>
+            <button class="time-preset @(_timePreset == "7d" ? "active" : "")" @onclick='() => SetTimePreset("7d")'>7d</button>
+            <button class="time-preset @(_timePreset == "custom" ? "active" : "")" @onclick='() => _timePreset = "custom"'>Custom</button>
+        </div>
+
+        @if (_timePreset == "custom")
+        {
+            <input type="datetime-local" class="log-search-input datetime-input" @bind="_startTime" />
+            <span class="datetime-sep">~</span>
+            <input type="datetime-local" class="log-search-input datetime-input" @bind="_endTime" />
+        }
+
+        <input class="log-search-input cid-input" type="text" placeholder="CorrelationId..."
+               @bind="_correlationId" @bind:event="oninput" />
+
+        <button class="btn btn-primary" @onclick="ExecuteSearch" disabled="@_isSearching">
+            @(_isSearching ? "Searching..." : "Search")
+        </button>
+    </div>
+
+    @* ── Stats Summary ── *@
+    @if (_searchResult is not null)
+    {
+        <div class="stats-summary">
+            <div class="stat-card">
+                <div class="stat-value">@_searchResult.TotalCount</div>
+                <div class="stat-label">Total</div>
+            </div>
+            <div class="stat-card stat-error">
+                <div class="stat-value">@_statsErrorCount</div>
+                <div class="stat-label">Errors</div>
+            </div>
+            <div class="stat-card stat-warning">
+                <div class="stat-value">@_statsWarnCount</div>
+                <div class="stat-label">Warnings</div>
+            </div>
+            <div class="stat-card stat-corr">
+                <div class="stat-value">@_statsUniqueCids</div>
+                <div class="stat-label">Unique CIDs</div>
+            </div>
+            <div class="stat-card stat-time">
+                <div class="stat-value">@_searchResult.SearchDuration.TotalMilliseconds.ToString("F0")ms</div>
+                <div class="stat-label">Search Time</div>
+            </div>
+        </div>
+    }
+
+    @* ── Sub-tabs ── *@
+    <div class="analyzer-tabs">
+        <button class="analyzer-tab @(_subTab == "results" ? "active" : "")" @onclick='() => _subTab = "results"'>
+            Search Results @if (_searchResult is not null) { <span class="tab-badge">@_searchResult.TotalCount</span> }
+        </button>
+        <button class="analyzer-tab @(_subTab == "dashboard" ? "active" : "")" @onclick="LoadErrorDashboard">
+            Error Dashboard
+        </button>
+        <button class="analyzer-tab @(_subTab == "top-errors" ? "active" : "")" @onclick="LoadTopErrors">
+            Top Errors
+        </button>
+        <button class="analyzer-tab @(_subTab == "flow" ? "active" : "")" @onclick='() => _subTab = "flow"'>
+            Request Flow
+        </button>
+    </div>
+
+    @* ── Search Results Tab ── *@
+    @if (_subTab == "results")
+    {
+        @if (_searchResult is not null && _searchResult.Entries.Count > 0)
+        {
+            <div class="log-results-scroll">
+                <table class="json-log-table">
+                    <thead>
+                        <tr>
+                            <th class="col-time">Time</th>
+                            <th class="col-svc">Service</th>
+                            <th class="col-lvl">Level</th>
+                            <th class="col-cid">CorrId</th>
+                            <th class="col-msg">Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var entry in _searchResult.Entries)
+                        {
+                            var levelClass = entry.DisplayLevel switch
+                            {
+                                "ERR" => "log-error",
+                                "WRN" => "log-warning",
+                                "DBG" => "log-debug",
+                                _ => "log-info"
+                            };
+                            <tr class="@levelClass">
+                                <td class="col-time">@entry.DisplayTime</td>
+                                <td class="col-svc">@(entry.ServiceName ?? "—")</td>
+                                <td class="col-lvl"><span class="level-badge @levelClass">@entry.DisplayLevel</span></td>
+                                <td class="col-cid">
+                                    @if (!string.IsNullOrEmpty(entry.CorrelationId))
+                                    {
+                                        <button class="btn-link-cid" @onclick="() => TraceFlow(entry.CorrelationId)">
+                                            @entry.CorrelationId[..Math.Min(8, entry.CorrelationId.Length)]
+                                        </button>
+                                    }
+                                </td>
+                                <td class="col-msg">
+                                    @entry.RenderedMessage
+                                    @if (!string.IsNullOrEmpty(entry.Exception))
+                                    {
+                                        <div class="log-exception">@entry.Exception</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ── Pagination ── *@
+            @if (_searchResult.TotalPages > 1)
+            {
+                <div class="pagination-bar">
+                    <button class="btn btn-xs btn-secondary" disabled="@(_searchResult.Page <= 1)"
+                            @onclick="() => GoToPage(_searchResult.Page - 1)">Prev</button>
+                    <span class="page-info">Page @_searchResult.Page / @_searchResult.TotalPages (@_searchResult.TotalCount total)</span>
+                    <button class="btn btn-xs btn-secondary" disabled="@(_searchResult.Page >= _searchResult.TotalPages)"
+                            @onclick="() => GoToPage(_searchResult.Page + 1)">Next</button>
+                </div>
+            }
+        }
+        else if (_searchResult is not null)
+        {
+            <div class="log-empty">No results found</div>
+        }
+        else
+        {
+            <div class="log-empty">Enter search criteria and click Search</div>
+        }
+    }
+
+    @* ── Error Dashboard Tab ── *@
+    @if (_subTab == "dashboard")
+    {
+        @if (_serviceHealth.Count > 0)
+        {
+            <div class="bar-chart">
+                @foreach (var svc in _serviceHealth)
+                {
+                    var maxVal = _serviceHealth.Max(s => s.TotalCount);
+                    var pct = maxVal > 0 ? (int)(svc.TotalCount * 100.0 / maxVal) : 0;
+                    var errPct = svc.TotalCount > 0 ? (int)(svc.ErrorCount * 100.0 / svc.TotalCount) : 0;
+                    var wrnPct = svc.TotalCount > 0 ? (int)(svc.WarningCount * 100.0 / svc.TotalCount) : 0;
+
+                    <div class="bar-row">
+                        <span class="bar-label">@svc.ServiceName</span>
+                        <div class="bar-track">
+                            @if (svc.ErrorCount > 0)
+                            {
+                                <div class="bar-fill bar-error" style="width: @(errPct)%"
+                                     title="@svc.ErrorCount ERR"></div>
+                            }
+                            @if (svc.WarningCount > 0)
+                            {
+                                <div class="bar-fill bar-warning" style="width: @(wrnPct)%"
+                                     title="@svc.WarningCount WRN"></div>
+                            }
+                            <div class="bar-fill bar-info" style="width: @(100 - errPct - wrnPct)%"
+                                 title="@(svc.InfoCount + svc.DebugCount) INF/DBG"></div>
+                        </div>
+                        <span class="bar-count">@svc.TotalCount</span>
+                        @if (svc.ErrorCount > 0)
+                        {
+                            <span class="bar-detail bar-detail-err">@svc.ErrorCount ERR</span>
+                        }
+                        @if (svc.WarningCount > 0)
+                        {
+                            <span class="bar-detail bar-detail-wrn">@svc.WarningCount WRN</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="log-empty">No data for selected time range</div>
+        }
+    }
+
+    @* ── Top Errors Tab ── *@
+    @if (_subTab == "top-errors")
+    {
+        @if (_topErrors.Count > 0)
+        {
+            <div class="log-results-scroll">
+                <table class="json-log-table">
+                    <thead>
+                        <tr>
+                            <th style="width:60px">Count</th>
+                            <th class="col-svc">Service</th>
+                            <th>Message Template</th>
+                            <th style="width:140px">First Seen</th>
+                            <th style="width:140px">Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var group in _topErrors)
+                        {
+                            <tr class="log-error">
+                                <td><strong>@group.Count</strong></td>
+                                <td class="col-svc">@group.ServiceName</td>
+                                <td class="col-msg">@group.MessageTemplate</td>
+                                <td class="col-time">@group.FirstSeen.ToString("MM-dd HH:mm")</td>
+                                <td class="col-time">@group.LastSeen.ToString("MM-dd HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="log-empty">No errors found in selected time range</div>
+        }
+    }
+
+    @* ── Request Flow Tab ── *@
+    @if (_subTab == "flow")
+    {
+        <div class="flow-search-bar">
+            <input class="log-search-input" type="text" placeholder="Enter CorrelationId to trace..."
+                   @bind="_flowCorrelationId" @bind:event="oninput" @onkeydown="OnFlowKeyDown" />
+            <button class="btn btn-primary" @onclick="TraceRequestFlow" disabled="@_isTracingFlow">
+                @(_isTracingFlow ? "Tracing..." : "Trace")
+            </button>
+        </div>
+
+        @if (_requestFlow is not null && _requestFlow.Events.Count > 0)
+        {
+            <div class="flow-summary">
+                <span>CorrelationId: <strong>@_requestFlow.CorrelationId</strong></span>
+                <span>Events: <strong>@_requestFlow.Events.Count</strong></span>
+                <span>Duration: <strong>@_requestFlow.TotalDuration.TotalMilliseconds.ToString("F0")ms</strong></span>
+            </div>
+
+            <div class="flow-timeline">
+                @foreach (var evt in _requestFlow.Events)
+                {
+                    var levelClass = evt.Level switch
+                    {
+                        "ERR" => "flow-error",
+                        "WRN" => "flow-warning",
+                        _ => "flow-info"
+                    };
+
+                    <div class="flow-event @levelClass">
+                        <div class="flow-node"></div>
+                        <div class="flow-content">
+                            <div class="flow-header">
+                                <span class="flow-svc">@evt.ServiceName</span>
+                                <span class="flow-time">@evt.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                @if (evt.GapFromPrevious > TimeSpan.Zero)
+                                {
+                                    <span class="flow-gap">+@evt.GapFromPrevious.TotalMilliseconds.ToString("F0")ms</span>
+                                }
+                            </div>
+                            <div class="flow-message">@evt.Message</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else if (_requestFlow is not null)
+        {
+            <div class="log-empty">No events found for this CorrelationId</div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public LogReaderService LogReader { get; set; } = default!;
+    [Parameter] public LogAnalyzerService Analyzer { get; set; } = default!;
+
+    // Search state
+    private string _keyword = "";
+    private string _selectedService = "";
+    private string _correlationId = "";
+    private string _timePreset = "24h";
+    private DateTime? _startTime;
+    private DateTime? _endTime;
+    private HashSet<string> _activeLevels = ["INF", "WRN", "ERR", "DBG"];
+    private readonly string[] _allLevels = ["ERR", "WRN", "INF", "DBG"];
+    private bool _isSearching;
+
+    // Results
+    private LogSearchResult? _searchResult;
+    private int _statsErrorCount;
+    private int _statsWarnCount;
+    private int _statsUniqueCids;
+
+    // Services list
+    private string[] _services = [];
+
+    // Sub-tabs
+    private string _subTab = "results";
+
+    // Error dashboard
+    private List<ServiceHealthBucket> _serviceHealth = [];
+
+    // Top errors
+    private List<ErrorTemplateGroup> _topErrors = [];
+
+    // Request flow
+    private string _flowCorrelationId = "";
+    private RequestFlow? _requestFlow;
+    private bool _isTracingFlow;
+
+    protected override void OnInitialized()
+    {
+        _services = LogReader.GetDistinctServices();
+        ApplyTimePreset();
+    }
+
+    private void ToggleLevel(string level)
+    {
+        if (_activeLevels.Contains(level))
+            _activeLevels.Remove(level);
+        else
+            _activeLevels.Add(level);
+    }
+
+    private void SetTimePreset(string preset)
+    {
+        _timePreset = preset;
+        ApplyTimePreset();
+    }
+
+    private void ApplyTimePreset()
+    {
+        _endTime = DateTime.Now;
+        _startTime = _timePreset switch
+        {
+            "1h" => DateTime.Now.AddHours(-1),
+            "6h" => DateTime.Now.AddHours(-6),
+            "24h" => DateTime.Now.AddDays(-1),
+            "7d" => DateTime.Now.AddDays(-7),
+            _ => _startTime
+        };
+    }
+
+    private async Task ExecuteSearch()
+    {
+        _isSearching = true;
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+
+            var query = new LogSearchQuery
+            {
+                Keyword = string.IsNullOrWhiteSpace(_keyword) ? null : _keyword,
+                ServiceName = string.IsNullOrWhiteSpace(_selectedService) ? null : _selectedService,
+                Levels = new HashSet<string>(_activeLevels),
+                CorrelationId = string.IsNullOrWhiteSpace(_correlationId) ? null : _correlationId,
+                StartTime = _startTime,
+                EndTime = _endTime,
+                Page = 1,
+                PageSize = 100
+            };
+
+            _searchResult = LogReader.SearchJsonLogs(query);
+
+            // Compute stats from full result metadata
+            _statsErrorCount = _searchResult.Entries.Count(e => e.DisplayLevel == "ERR");
+            _statsWarnCount = _searchResult.Entries.Count(e => e.DisplayLevel == "WRN");
+            _statsUniqueCids = _searchResult.Entries
+                .Where(e => !string.IsNullOrEmpty(e.CorrelationId))
+                .Select(e => e.CorrelationId)
+                .Distinct()
+                .Count();
+        });
+
+        _isSearching = false;
+        StateHasChanged();
+    }
+
+    private async Task GoToPage(int page)
+    {
+        _isSearching = true;
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+
+            var query = new LogSearchQuery
+            {
+                Keyword = string.IsNullOrWhiteSpace(_keyword) ? null : _keyword,
+                ServiceName = string.IsNullOrWhiteSpace(_selectedService) ? null : _selectedService,
+                Levels = new HashSet<string>(_activeLevels),
+                CorrelationId = string.IsNullOrWhiteSpace(_correlationId) ? null : _correlationId,
+                StartTime = _startTime,
+                EndTime = _endTime,
+                Page = page,
+                PageSize = 100
+            };
+
+            _searchResult = LogReader.SearchJsonLogs(query);
+        });
+
+        _isSearching = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadErrorDashboard()
+    {
+        _subTab = "dashboard";
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+            _serviceHealth = Analyzer.GetServiceHealth(
+                _startTime ?? DateTime.Now.AddDays(-1),
+                _endTime ?? DateTime.Now);
+        });
+
+        StateHasChanged();
+    }
+
+    private async Task LoadTopErrors()
+    {
+        _subTab = "top-errors";
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            if (_timePreset != "custom") ApplyTimePreset();
+            _topErrors = Analyzer.GetTopErrors(
+                _startTime ?? DateTime.Now.AddDays(-1),
+                _endTime ?? DateTime.Now,
+                string.IsNullOrWhiteSpace(_selectedService) ? null : _selectedService);
+        });
+
+        StateHasChanged();
+    }
+
+    private async Task TraceFlow(string correlationId)
+    {
+        _flowCorrelationId = correlationId;
+        _subTab = "flow";
+        await TraceRequestFlow();
+    }
+
+    private async Task TraceRequestFlow()
+    {
+        if (string.IsNullOrWhiteSpace(_flowCorrelationId)) return;
+
+        _isTracingFlow = true;
+        StateHasChanged();
+
+        await Task.Run(() =>
+        {
+            _requestFlow = Analyzer.GetRequestFlow(_flowCorrelationId.Trim());
+        });
+
+        _isTracingFlow = false;
+        StateHasChanged();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await ExecuteSearch();
+    }
+
+    private async Task OnFlowKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await TraceRequestFlow();
+    }
+}

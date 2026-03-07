@@ -1,3 +1,4 @@
+@using System.Text
 @using FabCopilot.WebClient.Models
 @using FabCopilot.WebClient.Services
 @inject LogReaderService LogReader
@@ -12,9 +13,16 @@
         <!-- Header -->
         <div class="lp-header">
             <h3>Log Analyzer</h3>
-            <button class="icon-btn" @onclick="Close" title="닫기">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
+            <div class="lp-header-actions">
+                <button class="lp-ai-btn" @onclick="RequestAiAnalysis"
+                        disabled="@(!HasAnalyzableData)" title="AI 로그 분석">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2 7h7l-5.5 4 2 7L12 16l-5.5 4 2-7L3 9h7z"/></svg>
+                    AI 분석
+                </button>
+                <button class="icon-btn" @onclick="Close" title="닫기">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
         </div>
 
         <!-- Search Bar -->
@@ -117,7 +125,8 @@
                                         "DBG" => "lp-row-debug",
                                         _ => ""
                                     };
-                                    <tr class="@levelClass">
+                                    <tr class="@levelClass @(entry.DisplayTime == _highlightedTime ? "lp-row-highlighted" : "")"
+                                        id="lp-time-@(entry.DisplayTime.Replace(":", "-").Replace(".", "-"))">
                                         <td class="lp-col-time">@entry.DisplayTime</td>
                                         <td class="lp-col-svc" title="@entry.ServiceName">@(TruncateService(entry.ServiceName))</td>
                                         <td><span class="lp-level-badge lp-badge-@entry.DisplayLevel.ToLower()">@entry.DisplayLevel</span></td>
@@ -294,6 +303,7 @@
 @code {
     [Parameter] public bool IsOpen { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<LogAnalysisRequest> OnAnalyzeRequest { get; set; }
 
     // Search state
     private string _keyword = "";
@@ -328,6 +338,9 @@
     private string _flowCorrelationId = "";
     private RequestFlow? _requestFlow;
     private bool _isTracingFlow;
+
+    // Timestamp navigation
+    private string? _highlightedTime;
 
     // Resize
     private bool _resizeInitialized;
@@ -521,5 +534,158 @@
         // Remove common prefix for compact display
         var display = name.Replace("FabCopilot.", "").Replace("Service", "");
         return display.Length > 12 ? display[..12] + ".." : display;
+    }
+
+    // ─── AI Analysis ────────────────────────────────────────────────────
+
+    private bool HasAnalyzableData => _subTab switch
+    {
+        "results" => _searchResult is { Entries.Count: > 0 },
+        "top-errors" => _topErrors.Count > 0,
+        "dashboard" => _serviceHealth.Count > 0,
+        "flow" => _requestFlow is { Events.Count: > 0 },
+        _ => false
+    };
+
+    private async Task RequestAiAnalysis()
+    {
+        var (message, context) = _subTab switch
+        {
+            "results" => BuildResultsAnalysisRequest(),
+            "top-errors" => BuildTopErrorsAnalysisRequest(),
+            "dashboard" => BuildDashboardAnalysisRequest(),
+            "flow" => BuildFlowAnalysisRequest(),
+            _ => ((string?)null, (string?)null)
+        };
+
+        if (message is not null && context is not null)
+        {
+            await OnAnalyzeRequest.InvokeAsync(new LogAnalysisRequest
+            {
+                UserMessage = message,
+                LogContext = context
+            });
+        }
+    }
+
+    private (string? Message, string? Context) BuildResultsAnalysisRequest()
+    {
+        if (_searchResult is null || _searchResult.Entries.Count == 0) return (null, null);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"## 검색 결과 ({_searchResult.TotalCount}건 중 상위 {Math.Min(20, _searchResult.Entries.Count)}건)");
+        foreach (var entry in _searchResult.Entries.Take(20))
+        {
+            sb.AppendLine($"- [{entry.DisplayTime}] {entry.ServiceName} [{entry.DisplayLevel}] {entry.RenderedMessage}");
+            if (!string.IsNullOrEmpty(entry.Exception))
+                sb.AppendLine($"  Exception: {entry.Exception[..Math.Min(200, entry.Exception.Length)]}");
+        }
+
+        return ("현재 검색된 로그를 분석하고 주요 패턴과 문제점을 설명해주세요.", sb.ToString());
+    }
+
+    private (string? Message, string? Context) BuildTopErrorsAnalysisRequest()
+    {
+        if (_topErrors.Count == 0) return (null, null);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"## Top 에러 패턴 ({_topErrors.Count}개)");
+        foreach (var err in _topErrors)
+            sb.AppendLine($"- [{err.Count}회] {err.ServiceName}: {err.MessageTemplate} (마지막: {err.LastSeen:MM-dd HH:mm})");
+
+        return ("다음 에러 패턴을 분석하고 근본 원인과 해결 방안을 제시해주세요.", sb.ToString());
+    }
+
+    private (string? Message, string? Context) BuildDashboardAnalysisRequest()
+    {
+        if (_serviceHealth.Count == 0) return (null, null);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"## 서비스 헬스 현황 ({_serviceHealth.Count}개 서비스)");
+        foreach (var svc in _serviceHealth)
+            sb.AppendLine($"- {svc.ServiceName}: Total={svc.TotalCount}, ERR={svc.ErrorCount}, WRN={svc.WarningCount}, INF={svc.InfoCount}");
+
+        return ("서비스별 로그 현황을 분석하고 주의가 필요한 서비스를 식별해주세요.", sb.ToString());
+    }
+
+    private (string? Message, string? Context) BuildFlowAnalysisRequest()
+    {
+        if (_requestFlow is null || _requestFlow.Events.Count == 0) return (null, null);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"## Request Flow (CorrelationId: {_requestFlow.CorrelationId})");
+        sb.AppendLine($"총 이벤트: {_requestFlow.Events.Count}개, 총 소요: {_requestFlow.TotalDuration.TotalMilliseconds:F0}ms");
+        sb.AppendLine();
+        foreach (var evt in _requestFlow.Events)
+        {
+            var gap = evt.GapFromPrevious > TimeSpan.Zero
+                ? $" (+{evt.GapFromPrevious.TotalMilliseconds:F0}ms)"
+                : "";
+            sb.AppendLine($"- [{evt.Timestamp:HH:mm:ss.fff}] {evt.ServiceName} [{evt.Level}] {evt.Message}{gap}");
+        }
+
+        return ("다음 요청 흐름을 분석하고 병목 구간이나 에러 원인을 설명해주세요.", sb.ToString());
+    }
+
+    public async Task NavigateToTimestamp(string timestamp)
+    {
+        _highlightedTime = timestamp;
+
+        // If no search results yet, run a 24h search to get log entries
+        if (_searchResult is null || _searchResult.Entries.Count == 0)
+        {
+            _timePreset = "24h";
+            ApplyTimePreset();
+            await ExecuteSearch();
+        }
+
+        _subTab = "results";
+        StateHasChanged();
+
+        // Give Blazor time to render the updated DOM, then scroll
+        await Task.Delay(100);
+        await JS.InvokeVoidAsync("logTimestampNav.scrollToTime", timestamp);
+    }
+
+    public async Task NavigateToCitation(string timestamp, string keyword)
+    {
+        // Set keyword for search (if provided)
+        if (!string.IsNullOrWhiteSpace(keyword))
+            _keyword = keyword;
+
+        _highlightedTime = !string.IsNullOrWhiteSpace(timestamp) ? timestamp : null;
+
+        // Always execute search to find the cited log entry
+        _timePreset = "24h";
+        ApplyTimePreset();
+        await ExecuteSearch();
+
+        _subTab = "results";
+        StateHasChanged();
+
+        // Give Blazor time to render, then scroll to matching entry
+        await Task.Delay(150);
+
+        // Try timestamp-based scroll first, fall back to keyword-based
+        if (!string.IsNullOrWhiteSpace(timestamp))
+        {
+            await JS.InvokeVoidAsync("logTimestampNav.scrollToTime", timestamp);
+        }
+        else if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            await JS.InvokeVoidAsync("logTimestampNav.scrollToKeyword", keyword);
+        }
+    }
+
+    public void OpenWithSearch(string? keyword = null, string? correlationId = null)
+    {
+        if (!string.IsNullOrWhiteSpace(keyword))
+            _keyword = keyword;
+        if (!string.IsNullOrWhiteSpace(correlationId))
+        {
+            _flowCorrelationId = correlationId;
+            _subTab = "flow";
+        }
+        StateHasChanged();
     }
 }

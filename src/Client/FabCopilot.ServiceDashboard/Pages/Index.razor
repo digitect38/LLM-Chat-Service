@@ -1,0 +1,1295 @@
+@page "/"
+@implements IDisposable
+@inject HealthCheckService HealthChecker
+@inject DockerStatusService DockerStatus
+@inject ProcessControlService ProcessControl
+@inject LogReaderService LogReader
+@inject IJSRuntime JS
+@inject TtsConfigService TtsConfig
+@inject SttConfigService SttConfig
+@inject ModelConfigService ModelConfig
+@inject LogAnalyzerService LogAnalyzerSvc
+@using FabCopilot.ServiceDashboard.Helpers
+@using FabCopilot.ServiceDashboard.Models
+@using FabCopilot.ServiceDashboard.Services
+
+<div class="dashboard">
+    <header class="dashboard-header">
+        <h1>FabCopilot Service Dashboard</h1>
+        <div class="header-actions">
+            <span class="last-updated">@_lastUpdated.ToString("HH:mm:ss")</span>
+            <button class="btn btn-secondary" @onclick="ForceRefresh" disabled="@_isRefreshing">Refresh</button>
+            <label class="keep-dashboard-toggle" title="Keep Dashboard running during restart">
+                <input type="checkbox" @bind="_excludeDashboard" /> Keep Dashboard
+            </label>
+            <button class="btn btn-danger" @onclick="RestartAll" disabled="@_isRestarting">Restart All</button>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrEmpty(_actionMessage))
+    {
+        <div class="action-message @(_actionIsError ? "error" : "success")">
+            @_actionMessage
+            <button class="close-btn" @onclick="() => _actionMessage = null">&times;</button>
+        </div>
+    }
+
+    <div class="summary-bar">
+        <div class="summary-item up">@_upCount Up</div>
+        <div class="summary-item down">@_downCount Down</div>
+        <div class="summary-item unknown">@_unknownCount Unknown</div>
+        <span class="active-model-badge">Model: @_chatModelOriginal</span>
+        <span class="active-tts-badge">TTS: @HealthChecker.ActiveTtsProvider
+            @if (!string.IsNullOrEmpty(HealthChecker.ActiveTtsVoice))
+            {
+                <span class="active-tts-voice">(@HealthChecker.ActiveTtsVoice)</span>
+            }
+        </span>
+        <span class="active-stt-badge">STT: @_sttEngineOriginal (@_sttLanguageOriginal)</span>
+    </div>
+
+    <div class="main-content">
+        @* ── Left: Service Table with Tabs ── *@
+        <div class="table-panel">
+            <div class="tab-bar">
+                <button class="tab @(_activeTab == "dotnet" ? "active" : "")" @onclick='() => _activeTab = "dotnet"'>
+                    .NET Services <span class="tab-badge">@TabBadge(_dotNetServices)</span>
+                </button>
+                <button class="tab @(_activeTab == "infra" ? "active" : "")" @onclick='() => _activeTab = "infra"'>
+                    Infrastructure <span class="tab-badge">@TabBadge(_infraServices)</span>
+                    @if (!DockerStatus.IsDockerAvailable) { <span class="docker-warning">N/A</span> }
+                </button>
+                <button class="tab @(_activeTab == "tts" ? "active" : "")" @onclick='() => _activeTab = "tts"'>
+                    TTS Engines <span class="tab-badge">@TabBadge(_ttsServices)</span>
+                </button>
+                <button class="tab @(_activeTab == "stt" ? "active" : "")" @onclick="OnSttTabClicked">
+                    STT Engines <span class="tab-badge">@TabBadge(_sttServices)</span>
+                </button>
+                <button class="tab @(_activeTab == "config" ? "active" : "")" @onclick="OnConfigTabClicked">
+                    Config
+                </button>
+                <button class="tab @(_activeTab == "logs" ? "active" : "")" @onclick='() => _activeTab = "logs"'>
+                    Log Analyzer
+                </button>
+            </div>
+
+            @* ── .NET Services Tab ── *@
+            @if (_activeTab == "dotnet")
+            {
+                <table class="service-table">
+                    <thead>
+                        <tr><th class="col-status"></th><th>Name</th><th>Port</th><th>Latency</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var svc in _dotNetServices)
+                        {
+                            var status = HealthChecker.GetStatus(svc.Name);
+                            var isSelected = _selectedService?.Name == svc.Name;
+                            <tr class="@(isSelected ? "row-selected" : "") @GetStateClass(status.State)"
+                                @onclick="() => SelectService(svc)">
+                                <td><span class="status-dot @GetStateClass(status.State)"></span></td>
+                                <td class="svc-name">@svc.DisplayName</td>
+                                <td class="svc-port">@(svc.Port?.ToString() ?? "Worker")</td>
+                                <td class="svc-latency">@(status.State == ServiceState.Up ? $"{status.ResponseTimeMs}ms" : "—")</td>
+                                <td class="svc-actions" @onclick:stopPropagation="true">
+                                    @if (status.State == ServiceState.Up)
+                                    {
+                                        <button class="btn btn-xs btn-warning" @onclick="() => StopDotNetService(svc)">Stop</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-xs btn-success" @onclick="() => StartDotNetService(svc)">Start</button>
+                                    }
+                                    <button class="btn btn-xs btn-info" @onclick="() => ShowLog(svc)">Log</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @* ── Infrastructure Tab ── *@
+            @if (_activeTab == "infra")
+            {
+                <table class="service-table">
+                    <thead>
+                        <tr><th class="col-status"></th><th>Name</th><th>Port</th><th>Latency</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var svc in _infraServices)
+                        {
+                            var status = HealthChecker.GetStatus(svc.Name);
+                            var isSelected = _selectedService?.Name == svc.Name;
+                            <tr class="@(isSelected ? "row-selected" : "") @GetStateClass(status.State)"
+                                @onclick="() => SelectService(svc)">
+                                <td><span class="status-dot @GetStateClass(status.State)"></span></td>
+                                <td class="svc-name">@svc.DisplayName</td>
+                                <td class="svc-port">@svc.Port</td>
+                                <td class="svc-latency">@(status.State == ServiceState.Up ? $"{status.ResponseTimeMs}ms" : "—")</td>
+                                <td class="svc-actions" @onclick:stopPropagation="true">
+                                    @if (status.State == ServiceState.Up)
+                                    {
+                                        <button class="btn btn-xs btn-warning" @onclick="() => StopDockerService(svc)">Stop</button>
+                                        <button class="btn btn-xs btn-primary" @onclick="() => RestartDocker(svc.DockerContainer!)">Restart</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-xs btn-success" @onclick="() => StartDockerService(svc)">Start</button>
+                                    }
+                                    <button class="btn btn-xs btn-info" @onclick="() => ShowLog(svc)">Log</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @* ── TTS Engines Tab ── *@
+            @if (_activeTab == "tts")
+            {
+                <div class="tts-tab-header">
+                    <button class="btn btn-xs btn-secondary" @onclick="ToggleTtsSettings">
+                        @(_ttsSettingsOpen ? "Close Settings" : "Voice Settings")
+                    </button>
+                </div>
+                <table class="service-table">
+                    <thead>
+                        <tr><th class="col-status"></th><th>Name</th><th>Port</th><th>Latency</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var svc in _ttsServices)
+                        {
+                            var status = HealthChecker.GetStatus(svc.Name);
+                            var isActive = svc.Name.Equals(HealthChecker.ActiveTtsProvider, StringComparison.OrdinalIgnoreCase);
+                            var isSelected = _selectedService?.Name == svc.Name;
+                            <tr class="@(isSelected ? "row-selected" : "") @GetStateClass(status.State) @(isActive ? "row-active" : "")"
+                                @onclick="() => SelectService(svc)">
+                                <td><span class="status-dot @GetStateClass(status.State)"></span></td>
+                                <td class="svc-name">
+                                    @svc.DisplayName
+                                    @if (isActive) { <span class="active-label">ACTIVE</span> }
+                                </td>
+                                <td class="svc-port">@svc.Port</td>
+                                <td class="svc-latency">@(status.State == ServiceState.Up ? $"{status.ResponseTimeMs}ms" : "—")</td>
+                                <td class="svc-actions" @onclick:stopPropagation="true">
+                                    @if (status.State == ServiceState.Up)
+                                    {
+                                        <button class="btn btn-xs btn-warning" @onclick="() => StopDockerService(svc)">Stop</button>
+                                        <button class="btn btn-xs btn-primary" @onclick="() => RestartDocker(svc.DockerContainer!)">Restart</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-xs btn-success" @onclick="() => StartDockerService(svc)">Start</button>
+                                    }
+                                    <button class="btn btn-xs btn-info" @onclick="() => ShowLog(svc)">Log</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                @* TTS Voice Settings Panel *@
+                @if (_ttsSettingsOpen)
+                {
+                    <div class="tts-settings-panel">
+                        <div class="tts-settings-row">
+                            <label class="tts-label">Engine</label>
+                            <select class="tts-select" @bind="_ttsProvider" @bind:after="OnTtsProviderChanged">
+                                @foreach (var (key, label) in TtsConfigService.ProviderLabels)
+                                {
+                                    <option value="@key">@label</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="tts-settings-row">
+                            <label class="tts-label">Voice</label>
+                            <select class="tts-select" @bind="_ttsVoice">
+                                @foreach (var v in _ttsVoiceOptions)
+                                {
+                                    <option value="@v">@v</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="tts-settings-actions">
+                            @if (_ttsChanged)
+                            {
+                                <span class="tts-changed-hint">Changes pending</span>
+                            }
+                            <button class="btn btn-xs btn-success" @onclick="ApplyTtsSettings" disabled="@(!_ttsChanged)">Apply</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_ttsSaveMessage))
+                        {
+                            <div class="tts-save-message @(_ttsSaveError ? "error" : "success")">@_ttsSaveMessage</div>
+                        }
+                    </div>
+                }
+            }
+
+            @* ── STT Engines Tab ── *@
+            @if (_activeTab == "stt")
+            {
+                <div class="tts-tab-header">
+                    <button class="btn btn-xs btn-secondary" @onclick="ToggleSttSettings">
+                        @(_sttSettingsOpen ? "Close Settings" : "STT Settings")
+                    </button>
+                </div>
+                <table class="service-table">
+                    <thead>
+                        <tr><th class="col-status"></th><th>Name</th><th>Port</th><th>Latency</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var svc in _sttServices)
+                        {
+                            var status = HealthChecker.GetStatus(svc.Name);
+                            var isActive = _sttEngineOriginal == "whisper" || _sttEngineOriginal == "auto";
+                            var isSelected = _selectedService?.Name == svc.Name;
+                            <tr class="@(isSelected ? "row-selected" : "") @GetStateClass(status.State) @(isActive ? "row-active" : "")"
+                                @onclick="() => SelectService(svc)">
+                                <td><span class="status-dot @GetStateClass(status.State)"></span></td>
+                                <td class="svc-name">
+                                    @svc.DisplayName
+                                    @if (isActive) { <span class="active-label">ACTIVE</span> }
+                                </td>
+                                <td class="svc-port">@svc.Port</td>
+                                <td class="svc-latency">@(status.State == ServiceState.Up ? $"{status.ResponseTimeMs}ms" : "—")</td>
+                                <td class="svc-actions" @onclick:stopPropagation="true">
+                                    @if (status.State == ServiceState.Up)
+                                    {
+                                        <button class="btn btn-xs btn-warning" @onclick="() => StopDockerService(svc)">Stop</button>
+                                        <button class="btn btn-xs btn-primary" @onclick="() => RestartDocker(svc.DockerContainer!)">Restart</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-xs btn-success" @onclick="() => StartDockerService(svc)">Start</button>
+                                    }
+                                    <button class="btn btn-xs btn-info" @onclick="() => ShowLog(svc)">Log</button>
+                                </td>
+                            </tr>
+                        }
+                        @* Web Speech API (browser-side, no container) *@
+                        <tr class="@(_sttEngineOriginal == "webspeech" ? "row-active" : "") state-up">
+                            <td><span class="status-dot state-up"></span></td>
+                            <td class="svc-name">
+                                Web Speech API
+                                @if (_sttEngineOriginal == "webspeech") { <span class="active-label">ACTIVE</span> }
+                            </td>
+                            <td class="svc-port">Browser</td>
+                            <td class="svc-latency">—</td>
+                            <td class="svc-actions">
+                                <span class="stt-browser-hint">Built-in</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                @* STT Settings Panel *@
+                @if (_sttSettingsOpen)
+                {
+                    <div class="tts-settings-panel">
+                        <div class="tts-settings-row">
+                            <label class="tts-label">Engine</label>
+                            <select class="tts-select" @bind="_sttEngine">
+                                @foreach (var (engineKey, engineLabel) in SttConfigService.EngineLabels)
+                                {
+                                    <option value="@engineKey">@engineLabel</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="tts-settings-row">
+                            <label class="tts-label">Language</label>
+                            <select class="tts-select" @bind="_sttLanguage">
+                                @foreach (var (langCode, langLabel) in SttConfigService.LanguageLabels)
+                                {
+                                    <option value="@langCode">@langLabel (@langCode)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="tts-settings-row">
+                            <label class="tts-label">Timeout</label>
+                            <input type="number" class="tts-select" style="max-width:100px" @bind="_sttTimeout" min="10" max="300" /> s
+                        </div>
+                        <div class="tts-settings-actions">
+                            @if (_sttChanged)
+                            {
+                                <span class="tts-changed-hint">Changes pending</span>
+                            }
+                            <button class="btn btn-xs btn-success" @onclick="ApplySttSettings" disabled="@(!_sttChanged)">Apply</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_sttSaveMessage))
+                        {
+                            <div class="tts-save-message @(_sttSaveError ? "error" : "success")">@_sttSaveMessage</div>
+                        }
+                    </div>
+                }
+            }
+
+            @* ── Config Tab ── *@
+            @if (_activeTab == "config")
+            {
+                <div class="config-tab">
+                    @* ── Default Model Settings ── *@
+                    <div class="config-section">
+                        <div class="config-section-header">
+                            <h3>Default Model</h3>
+                            <span class="config-badge">LlmService</span>
+                        </div>
+                        <div class="config-grid">
+                            <div class="config-row">
+                                <label class="config-label">Chat Model</label>
+                                <select class="config-select" @bind="_chatModel">
+                                    @foreach (var m in _availableModels)
+                                    {
+                                        <option value="@m.Id">@m.DisplayName (@m.Id)</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">Embedding Model</label>
+                                <select class="config-select" @bind="_embeddingModel">
+                                    @foreach (var m in _availableEmbeddingModels)
+                                    {
+                                        <option value="@m.Id">@m.DisplayName (@(m.VectorSize)D)</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">MaxTokens</label>
+                                <input type="number" class="config-input" @bind="_modelMaxTokens" min="256" max="16384" />
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">NumCtx</label>
+                                <input type="number" class="config-input" @bind="_modelNumCtx" min="512" max="32768" />
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">Timeout (s)</label>
+                                <input type="number" class="config-input" @bind="_modelTimeout" min="10" max="600" />
+                            </div>
+                        </div>
+                        <div class="config-actions">
+                            @if (_modelChanged)
+                            {
+                                <span class="config-changed-hint">Changes pending</span>
+                            }
+                            <button class="btn btn-xs btn-success" @onclick="ApplyModelSettings" disabled="@(!_modelChanged)">Apply</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_modelSaveMessage))
+                        {
+                            <div class="config-save-message @(_modelSaveError ? "error" : "success")">@_modelSaveMessage</div>
+                        }
+                    </div>
+
+                    @* ── STT Settings ── *@
+                    <div class="config-section">
+                        <div class="config-section-header">
+                            <h3>STT (Speech-to-Text)</h3>
+                            <span class="config-badge">ChatGateway</span>
+                        </div>
+                        <div class="config-grid">
+                            <div class="config-row">
+                                <label class="config-label">Engine</label>
+                                <select class="config-select" @bind="_sttEngine">
+                                    @foreach (var (engineKey, engineLabel) in SttConfigService.EngineLabels)
+                                    {
+                                        <option value="@engineKey">@engineLabel</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">Language</label>
+                                <select class="config-select" @bind="_sttLanguage">
+                                    @foreach (var (langCode, langLabel) in SttConfigService.LanguageLabels)
+                                    {
+                                        <option value="@langCode">@langLabel (@langCode)</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">Max File (MB)</label>
+                                <input type="number" class="config-input" @bind="_sttMaxFileSizeMb" min="1" max="100" />
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">Timeout (s)</label>
+                                <input type="number" class="config-input" @bind="_sttTimeout" min="10" max="300" />
+                            </div>
+                        </div>
+                        <div class="config-actions">
+                            @if (_sttChanged)
+                            {
+                                <span class="config-changed-hint">Changes pending</span>
+                            }
+                            <button class="btn btn-xs btn-success" @onclick="ApplySttSettings" disabled="@(!_sttChanged)">Apply</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_sttSaveMessage))
+                        {
+                            <div class="config-save-message @(_sttSaveError ? "error" : "success")">@_sttSaveMessage</div>
+                        }
+                    </div>
+
+                    @* ── TTS Settings (duplicated for convenience) ── *@
+                    <div class="config-section">
+                        <div class="config-section-header">
+                            <h3>TTS (Voice)</h3>
+                            <span class="config-badge">ChatGateway</span>
+                        </div>
+                        <div class="config-grid">
+                            <div class="config-row">
+                                <label class="config-label">Engine</label>
+                                <select class="config-select" @bind="_ttsProvider" @bind:after="OnTtsProviderChanged">
+                                    @foreach (var (key, label) in TtsConfigService.ProviderLabels)
+                                    {
+                                        <option value="@key">@label</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="config-row">
+                                <label class="config-label">Voice</label>
+                                <select class="config-select" @bind="_ttsVoice">
+                                    @foreach (var v in _ttsVoiceOptions)
+                                    {
+                                        <option value="@v">@v</option>
+                                    }
+                                </select>
+                            </div>
+                        </div>
+                        <div class="config-actions">
+                            @if (_ttsChanged)
+                            {
+                                <span class="config-changed-hint">Changes pending</span>
+                            }
+                            <button class="btn btn-xs btn-success" @onclick="ApplyTtsSettings" disabled="@(!_ttsChanged)">Apply</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_ttsSaveMessage))
+                        {
+                            <div class="config-save-message @(_ttsSaveError ? "error" : "success")">@_ttsSaveMessage</div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @* ── Log Analyzer Tab ── *@
+            @if (_activeTab == "logs")
+            {
+                <LogAnalyzer LogReader="LogReader" Analyzer="LogAnalyzerSvc" />
+            }
+        </div>
+    </div>
+
+    @* ── Detail Panel (below table) ── *@
+    @if (_selectedService is not null)
+    {
+        var selStatus = HealthChecker.GetStatus(_selectedService.Name);
+        var selContainer = _selectedService.DockerContainer is not null
+            ? DockerStatus.GetContainer(_selectedService.DockerContainer) : null;
+
+        <div class="detail-panel">
+            <div class="detail-header">
+                <span class="status-dot large @GetStateClass(selStatus.State)"></span>
+                <h2>@_selectedService.DisplayName</h2>
+                @if (_selectedService.Name.Equals(HealthChecker.ActiveTtsProvider, StringComparison.OrdinalIgnoreCase))
+                {
+                    <span class="active-label">ACTIVE TTS</span>
+                }
+                <button class="btn btn-xs btn-secondary detail-close" @onclick="() => _selectedService = null">&times;</button>
+            </div>
+
+            <div class="detail-body">
+                @* Info Grid *@
+                <div class="detail-grid">
+                    <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value @GetStateClass(selStatus.State)">@selStatus.State</span></div>
+                    <div class="detail-row"><span class="detail-label">Category</span><span class="detail-value">@_selectedService.Category</span></div>
+                    @if (_selectedService.Port.HasValue)
+                    {
+                        <div class="detail-row"><span class="detail-label">Port</span><span class="detail-value">@_selectedService.Port</span></div>
+                    }
+                    <div class="detail-row"><span class="detail-label">Health Check</span><span class="detail-value">@_selectedService.HealthCheck</span></div>
+                    @if (selStatus.State == ServiceState.Up)
+                    {
+                        <div class="detail-row"><span class="detail-label">Response Time</span><span class="detail-value">@(selStatus.ResponseTimeMs)ms</span></div>
+                    }
+                    <div class="detail-row"><span class="detail-label">Last Checked</span><span class="detail-value">@selStatus.LastChecked.ToString("HH:mm:ss")</span></div>
+                    @if (!string.IsNullOrEmpty(selStatus.ErrorMessage))
+                    {
+                        <div class="detail-row"><span class="detail-label">Error</span><span class="detail-value error-text">@selStatus.ErrorMessage</span></div>
+                    }
+                    @if (_selectedService.DockerContainer is not null)
+                    {
+                        <div class="detail-row"><span class="detail-label">Container</span><span class="detail-value">@_selectedService.DockerContainer</span></div>
+                    }
+                    @if (_selectedService.DockerComposeService is not null)
+                    {
+                        <div class="detail-row"><span class="detail-label">Compose</span><span class="detail-value">@_selectedService.DockerComposeService</span></div>
+                    }
+                    @if (_selectedService.DockerProfile is not null)
+                    {
+                        <div class="detail-row"><span class="detail-label">Profile</span><span class="detail-value">@_selectedService.DockerProfile</span></div>
+                    }
+                    @if (_selectedService.ProjectPath is not null)
+                    {
+                        <div class="detail-row"><span class="detail-label">Project</span><span class="detail-value">@_selectedService.ProjectPath</span></div>
+                    }
+                    @if (_selectedService.ProcessName is not null)
+                    {
+                        <div class="detail-row"><span class="detail-label">Process</span><span class="detail-value">@_selectedService.ProcessName</span></div>
+                    }
+                </div>
+
+                @* Docker info *@
+                @if (selContainer is not null)
+                {
+                    <div class="detail-grid">
+                        <div class="detail-divider">Docker Container</div>
+                        <div class="detail-row"><span class="detail-label">Image</span><span class="detail-value">@selContainer.Image</span></div>
+                        <div class="detail-row"><span class="detail-label">State</span><span class="detail-value">@selContainer.State</span></div>
+                        <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">@selContainer.Status</span></div>
+                        @if (!string.IsNullOrEmpty(selContainer.Ports))
+                        {
+                            <div class="detail-row"><span class="detail-label">Ports</span><span class="detail-value port-text">@selContainer.Ports</span></div>
+                        }
+                    </div>
+                }
+
+                @* Actions *@
+                <div class="detail-actions">
+                    @if (_selectedService.Category == ServiceCategory.DotNet)
+                    {
+                        @if (selStatus.State == ServiceState.Up)
+                        {
+                            <button class="btn btn-warning" @onclick="() => StopDotNetService(_selectedService)">Stop</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-success" @onclick="() => StartDotNetService(_selectedService)">Start</button>
+                        }
+                        <button class="btn btn-info" @onclick="() => ShowLog(_selectedService)">View Log</button>
+                    }
+                    else if (_selectedService.DockerComposeService is not null)
+                    {
+                        @if (selStatus.State == ServiceState.Up)
+                        {
+                            <button class="btn btn-warning" @onclick="() => StopDockerService(_selectedService)">Stop</button>
+                            <button class="btn btn-primary" @onclick="() => RestartDocker(_selectedService.DockerContainer!)">Restart</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-success" @onclick="() => StartDockerService(_selectedService)">Start</button>
+                        }
+                        <button class="btn btn-info" @onclick="() => ShowLog(_selectedService)">View Log</button>
+                    }
+                </div>
+            </div>
+
+            @* Execution / Service Log *@
+            @if (_commandLog.Count > 0)
+            {
+                <div class="detail-log">
+                    <div class="detail-divider">Execution Log</div>
+                    <div class="log-viewer" id="exec-log">
+                        @foreach (var line in _commandLog)
+                        {
+                            <div class="log-line">@line</div>
+                        }
+                    </div>
+                </div>
+            }
+            @if (_logLines.Length > 0 && _selectedLogService == _selectedService.Name)
+            {
+                <div class="detail-log">
+                    <div class="detail-divider">Service Log (@_selectedLogService)</div>
+                    <div class="log-viewer">
+                        @foreach (var line in _logLines)
+                        {
+                            <div class="log-line">@line</div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @* ── Bottom: Live Log Panel ── *@
+    <div id="live-log-panel" class="live-log-panel @(_liveLogOpen ? "open" : "collapsed")">
+        <div class="live-log-header" @onclick="ToggleLiveLog">
+            <span class="live-log-title">Live Logs</span>
+            <div class="live-log-controls" @onclick:stopPropagation="true">
+                <select @bind="LiveLogService">
+                    <option value="">-- Select --</option>
+                    <optgroup label=".NET Services">
+                        @foreach (var svc in _dotNetServices)
+                        {
+                            <option value="@svc.Name">@svc.DisplayName</option>
+                        }
+                    </optgroup>
+                    <optgroup label="Infrastructure">
+                        @foreach (var svc in _infraServices)
+                        {
+                            <option value="@svc.Name">@svc.DisplayName</option>
+                        }
+                    </optgroup>
+                    <optgroup label="TTS Engines">
+                        @foreach (var svc in _ttsServices)
+                        {
+                            <option value="@svc.Name">@svc.DisplayName</option>
+                        }
+                    </optgroup>
+                    <optgroup label="STT Engines">
+                        @foreach (var svc in _sttServices)
+                        {
+                            <option value="@svc.Name">@svc.DisplayName</option>
+                        }
+                    </optgroup>
+                </select>
+                <button class="btn btn-xs @(_jsonLogMode ? "btn-primary" : "btn-secondary")" @onclick="ToggleJsonLogMode">
+                    @(_jsonLogMode ? "JSON" : "Text")
+                </button>
+                @if (_jsonLogMode)
+                {
+                    <select class="log-level-filter" @bind="LogLevelFilter">
+                        <option value="ALL">ALL</option>
+                        <option value="INF">INF</option>
+                        <option value="WRN">WRN</option>
+                        <option value="ERR">ERR</option>
+                        <option value="DBG">DBG</option>
+                    </select>
+                    <input type="text" class="correlation-filter" placeholder="CorrelationId..."
+                           @bind="_correlationIdFilter" @bind:event="oninput" @bind:after="RefreshLiveLog" />
+                    @if (!string.IsNullOrEmpty(_correlationIdFilter))
+                    {
+                        <button class="btn btn-xs btn-info" @onclick="TraceAcrossServices" title="Trace across all services">
+                            Cross-Trace
+                        </button>
+                    }
+                }
+                <label class="auto-scroll-toggle">
+                    <input type="checkbox" @bind="_liveLogAutoScroll" @bind:after="OnAutoScrollToggled" /> Auto-scroll
+                </label>
+                @if (_liveLogAutoScroll && _liveLogScrollPaused)
+                {
+                    <span class="scroll-paused-hint">Paused (scroll up detected)</span>
+                }
+                <button class="btn btn-xs btn-secondary" @onclick="JumpToBottom" title="Jump to bottom">Bottom</button>
+                <button class="btn btn-xs btn-secondary" @onclick="ClearLiveLog">Clear</button>
+            </div>
+            <span class="live-log-chevron">@(_liveLogOpen ? "\u25BC" : "\u25B2")</span>
+        </div>
+        @if (_liveLogOpen)
+        {
+            <div class="live-log-body" id="live-log-body" @onscroll="OnLiveLogScroll">
+                @if (_jsonLogMode && _jsonLogEntries.Count > 0)
+                {
+                    <table class="json-log-table">
+                        <thead>
+                            <tr>
+                                <th class="col-time">Time</th>
+                                <th class="col-svc">Service</th>
+                                <th class="col-lvl">Level</th>
+                                <th class="col-cid">CorrId</th>
+                                <th class="col-msg">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var entry in _jsonLogEntries)
+                            {
+                                <tr class="@GetJsonLogLevelClass(entry.DisplayLevel)">
+                                    <td class="col-time">@entry.DisplayTime</td>
+                                    <td class="col-svc">@(entry.ServiceName ?? "—")</td>
+                                    <td class="col-lvl"><span class="level-badge @GetJsonLogLevelClass(entry.DisplayLevel)">@entry.DisplayLevel</span></td>
+                                    <td class="col-cid" title="@entry.CorrelationId">
+                                        @if (!string.IsNullOrEmpty(entry.CorrelationId))
+                                        {
+                                            <button class="btn-link-cid" @onclick="() => FilterByCorrelationId(entry.CorrelationId)">
+                                                @entry.CorrelationId[..Math.Min(8, entry.CorrelationId.Length)]
+                                            </button>
+                                        }
+                                    </td>
+                                    <td class="col-msg">
+                                        @entry.RenderedMessage
+                                        @if (!string.IsNullOrEmpty(entry.Exception))
+                                        {
+                                            <div class="log-exception">@entry.Exception</div>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else if (!_jsonLogMode && _liveLogLines.Length > 0)
+                {
+                    @foreach (var line in _liveLogLines)
+                    {
+                        <div class="log-line @GetLogLevelClass(line)">@line</div>
+                    }
+                }
+                else
+                {
+                    <div class="log-empty">Select a service to view live logs</div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private System.Threading.Timer? _uiTimer;
+    private DateTimeOffset _lastUpdated = DateTimeOffset.Now;
+
+    private string _activeTab = "dotnet";
+    private bool _isRefreshing;
+    private bool _isRestarting;
+    private bool _excludeDashboard = true;  // Default: keep dashboard alive
+    private string? _actionMessage;
+    private bool _actionIsError;
+
+    private ServiceDefinition? _selectedService;
+    private string _selectedLogService = "";
+    private int _logLineCount = 100;
+    private string[] _logLines = [];
+
+    private List<string> _commandLog = new();
+
+    // Live log
+    private bool _liveLogOpen = true;
+    private bool _liveLogAutoScroll = true;
+    private bool _liveLogScrollPaused;   // true when user scrolled up
+    private string _liveLogService = "";
+    private string[] _liveLogLines = [];
+    private System.Threading.Timer? _liveLogTimer;
+
+    // JSON log mode
+    private bool _jsonLogMode;
+    private string _correlationIdFilter = "";
+    private string _logLevelFilter = "ALL";
+    private List<JsonLogEntry> _jsonLogEntries = new();
+
+    private string LiveLogService
+    {
+        get => _liveLogService;
+        set
+        {
+            _liveLogService = value;
+            _liveLogLines = [];
+            _jsonLogEntries.Clear();
+            RefreshLiveLog();
+        }
+    }
+
+    private string LogLevelFilter
+    {
+        get => _logLevelFilter;
+        set
+        {
+            _logLevelFilter = value;
+            RefreshLiveLog();
+        }
+    }
+
+    private int _upCount;
+    private int _downCount;
+    private int _unknownCount;
+
+    private static readonly List<ServiceDefinition> _dotNetServices =
+        HealthCheckService.AllServices.Where(s => s.Category == ServiceCategory.DotNet).ToList();
+    private static readonly List<ServiceDefinition> _infraServices =
+        HealthCheckService.AllServices.Where(s => s.Category == ServiceCategory.Infrastructure).ToList();
+    private static readonly List<ServiceDefinition> _ttsServices =
+        HealthCheckService.AllServices.Where(s => s.Category == ServiceCategory.TtsEngine).ToList();
+    private static readonly List<ServiceDefinition> _sttServices =
+        HealthCheckService.AllServices.Where(s => s.Category == ServiceCategory.SttEngine).ToList();
+
+    // TTS Settings
+    private bool _ttsSettingsOpen;
+    private string _ttsProvider = "EdgeTts";
+    private string _ttsProviderOriginal = "EdgeTts";
+    private string _ttsVoice = "ko-KR-SunHiNeural";
+    private string _ttsVoiceOriginal = "ko-KR-SunHiNeural";
+    private List<string> _ttsVoiceOptions = [];
+    private bool _ttsChanged => _ttsProvider != _ttsProviderOriginal || _ttsVoice != _ttsVoiceOriginal;
+    private string? _ttsSaveMessage;
+    private bool _ttsSaveError;
+
+    // STT Settings
+    private bool _sttSettingsOpen;
+    private string _sttEngine = "auto";
+    private string _sttEngineOriginal = "auto";
+    private string _sttLanguage = "auto";
+    private string _sttLanguageOriginal = "auto";
+    private int _sttMaxFileSizeMb = 25;
+    private int _sttMaxFileSizeMbOriginal = 25;
+    private int _sttTimeout = 60;
+    private int _sttTimeoutOriginal = 60;
+    private bool _sttChanged => _sttEngine != _sttEngineOriginal
+                              || _sttLanguage != _sttLanguageOriginal
+                              || _sttMaxFileSizeMb != _sttMaxFileSizeMbOriginal
+                              || _sttTimeout != _sttTimeoutOriginal;
+    private string? _sttSaveMessage;
+    private bool _sttSaveError;
+
+    // Model Settings
+    private string _chatModel = "";
+    private string _chatModelOriginal = "";
+    private string _embeddingModel = "";
+    private string _embeddingModelOriginal = "";
+    private int _modelMaxTokens;
+    private int _modelMaxTokensOriginal;
+    private int _modelNumCtx;
+    private int _modelNumCtxOriginal;
+    private int _modelTimeout;
+    private int _modelTimeoutOriginal;
+    private List<ModelConfigService.ModelInfo> _availableModels = [];
+    private List<ModelConfigService.EmbeddingModelInfo> _availableEmbeddingModels = [];
+    private bool _modelChanged => _chatModel != _chatModelOriginal
+                                || _embeddingModel != _embeddingModelOriginal
+                                || _modelMaxTokens != _modelMaxTokensOriginal
+                                || _modelNumCtx != _modelNumCtxOriginal
+                                || _modelTimeout != _modelTimeoutOriginal;
+    private string? _modelSaveMessage;
+    private bool _modelSaveError;
+
+    protected override void OnInitialized()
+    {
+        LoadTtsConfig();
+        LoadSttConfig();
+        LoadModelConfig();
+        UpdateCounts();
+
+        _uiTimer = new System.Threading.Timer(_ =>
+        {
+            _lastUpdated = DateTimeOffset.Now;
+            UpdateCounts();
+            InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+
+        // Live log polls every 2s
+        _liveLogTimer = new System.Threading.Timer(_ =>
+        {
+            if (!_liveLogOpen || string.IsNullOrEmpty(_liveLogService)) return;
+            RefreshLiveLog();
+            InvokeAsync(async () =>
+            {
+                StateHasChanged();
+                if (_liveLogAutoScroll && !_liveLogScrollPaused)
+                    await ScrollLiveLogToBottom();
+            });
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private void UpdateCounts()
+    {
+        var statuses = HealthChecker.GetAllStatuses();
+        _upCount = statuses.Values.Count(s => s.State == ServiceState.Up);
+        _downCount = statuses.Values.Count(s => s.State == ServiceState.Down);
+        _unknownCount = statuses.Values.Count(s => s.State is ServiceState.Unknown or ServiceState.Degraded);
+    }
+
+    private void SelectService(ServiceDefinition svc)
+    {
+        _selectedService = _selectedService?.Name == svc.Name ? null : svc;
+    }
+
+    private async Task ForceRefresh()
+    {
+        _isRefreshing = true;
+        StateHasChanged();
+
+        await DockerStatus.RefreshAsync();
+        _lastUpdated = DateTimeOffset.Now;
+        UpdateCounts();
+
+        _isRefreshing = false;
+        StateHasChanged();
+    }
+
+    private async Task RestartAll()
+    {
+        _isRestarting = true;
+        _actionMessage = "Restarting all services...";
+        _actionIsError = false;
+        StateHasChanged();
+
+        var result = await ProcessControl.RestartAllAsync(_excludeDashboard);
+        _actionMessage = result.Contains("FAILED", StringComparison.OrdinalIgnoreCase)
+            ? $"Restart failed: {result}"
+            : "All services restarted successfully";
+        _actionIsError = result.Contains("FAILED", StringComparison.OrdinalIgnoreCase);
+        _isRestarting = false;
+        StateHasChanged();
+    }
+
+    private async Task StopDotNetService(ServiceDefinition svc)
+    {
+        _actionMessage = $"Stopping {svc.DisplayName}...";
+        StateHasChanged();
+        var result = await ProcessControl.StopServiceAsync(svc);
+        _actionMessage = $"Stopped {svc.DisplayName}: {result.Trim()}";
+        _actionIsError = false;
+        StateHasChanged();
+    }
+
+    private async Task StartDotNetService(ServiceDefinition svc)
+    {
+        _actionMessage = $"Starting {svc.DisplayName}...";
+        StateHasChanged();
+        var result = await ProcessControl.StartServiceAsync(svc);
+        _actionMessage = result;
+        _actionIsError = result.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
+        StateHasChanged();
+    }
+
+    private async Task StartDockerService(ServiceDefinition svc)
+    {
+        _commandLog.Clear();
+        _commandLog.Add($"[{DateTime.Now:HH:mm:ss}] Starting {svc.DisplayName} via docker compose...");
+        _commandLog.Add($"  service: {svc.DockerComposeService}, profile: {svc.DockerProfile ?? "default"}");
+        _actionMessage = $"Starting {svc.DisplayName} via docker compose...";
+        _selectedService = svc;
+        StateHasChanged();
+
+        var result = await ProcessControl.DockerComposeUpAsync(svc);
+        foreach (var line in result.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            _commandLog.Add(line);
+
+        var hasError = result.Contains("Error", StringComparison.OrdinalIgnoreCase)
+                    || result.Contains("error", StringComparison.Ordinal);
+        _actionMessage = hasError ? $"{svc.DisplayName}: failed" : $"{svc.DisplayName}: started";
+        _actionIsError = hasError;
+        _commandLog.Add($"[{DateTime.Now:HH:mm:ss}] {(hasError ? "FAILED" : "Done")}");
+        StateHasChanged();
+    }
+
+    private async Task StopDockerService(ServiceDefinition svc)
+    {
+        _commandLog.Clear();
+        _commandLog.Add($"[{DateTime.Now:HH:mm:ss}] Stopping {svc.DisplayName}...");
+        _actionMessage = $"Stopping {svc.DisplayName}...";
+        StateHasChanged();
+
+        var result = await ProcessControl.DockerComposeStopAsync(svc);
+        foreach (var line in result.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            _commandLog.Add(line);
+
+        _actionMessage = $"Stopped {svc.DisplayName}";
+        _actionIsError = result.Contains("Error", StringComparison.OrdinalIgnoreCase);
+        _commandLog.Add($"[{DateTime.Now:HH:mm:ss}] Done");
+        StateHasChanged();
+    }
+
+    private async Task RestartDocker(string containerName)
+    {
+        _commandLog.Clear();
+        _commandLog.Add($"[{DateTime.Now:HH:mm:ss}] Restarting container {containerName}...");
+        _actionMessage = $"Restarting {containerName}...";
+        StateHasChanged();
+
+        var result = await ProcessControl.RestartDockerContainerAsync(containerName);
+        foreach (var line in result.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            _commandLog.Add(line);
+
+        _actionMessage = $"Restarted {containerName}";
+        _actionIsError = result.Contains("Error", StringComparison.OrdinalIgnoreCase);
+        _commandLog.Add($"[{DateTime.Now:HH:mm:ss}] Done");
+        StateHasChanged();
+    }
+
+    private async Task ShowLog(ServiceDefinition svc)
+    {
+        _selectedService = svc;
+        _selectedLogService = svc.Name;
+        _logLines = LogReader.ReadServiceLog(svc.Name, _logLineCount);
+        // Also open in live log
+        LiveLogService = svc.Name;
+        _liveLogOpen = true;
+        StateHasChanged();
+        await Task.Yield();
+        await ScrollToLiveLog();
+    }
+
+    // ─── Live Log ───────────────────────────────────────────
+
+    private void ToggleLiveLog() => _liveLogOpen = !_liveLogOpen;
+
+    private void RefreshLiveLog()
+    {
+        if (string.IsNullOrEmpty(_liveLogService)) return;
+
+        if (_jsonLogMode)
+        {
+            _jsonLogEntries = LogReader.ReadJsonLogEntries(
+                _liveLogService, 200,
+                string.IsNullOrWhiteSpace(_correlationIdFilter) ? null : _correlationIdFilter.Trim(),
+                _logLevelFilter);
+        }
+        else
+        {
+            _liveLogLines = LogReader.ReadServiceLog(_liveLogService, 200);
+        }
+    }
+
+    private void ClearLiveLog()
+    {
+        _liveLogLines = [];
+        _jsonLogEntries.Clear();
+    }
+
+    private void ToggleJsonLogMode()
+    {
+        _jsonLogMode = !_jsonLogMode;
+        RefreshLiveLog();
+    }
+
+    private void FilterByCorrelationId(string correlationId)
+    {
+        _correlationIdFilter = correlationId;
+        RefreshLiveLog();
+    }
+
+    private void TraceAcrossServices()
+    {
+        if (string.IsNullOrWhiteSpace(_correlationIdFilter)) return;
+        _jsonLogEntries = LogReader.ReadCorrelatedLogs(_correlationIdFilter.Trim(), 500);
+    }
+
+    private static string GetJsonLogLevelClass(string level) => level switch
+    {
+        "ERR" or "FTL" => "log-error",
+        "WRN" => "log-warning",
+        "DBG" or "VRB" => "log-debug",
+        _ => "log-info"
+    };
+
+    private async Task ScrollToLiveLog()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                "var p=document.getElementById('live-log-panel');if(p)p.scrollIntoView({behavior:'smooth',block:'start'});" +
+                "var e=document.getElementById('live-log-body');if(e)e.scrollTop=e.scrollHeight;");
+        }
+        catch { /* JS interop may fail during dispose */ }
+    }
+
+    private async Task ScrollLiveLogToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                "var e=document.getElementById('live-log-body');" +
+                "if(e){var gap=e.scrollHeight-e.scrollTop-e.clientHeight;" +
+                "if(gap<80)e.scrollTop=e.scrollHeight;}");
+        }
+        catch { /* JS interop may fail during dispose */ }
+    }
+
+    private async void OnLiveLogScroll()
+    {
+        try
+        {
+            // Check if user is near bottom (within 80px)
+            var nearBottom = await JS.InvokeAsync<bool>("eval",
+                "(function(){var e=document.getElementById('live-log-body');" +
+                "return e?(e.scrollHeight-e.scrollTop-e.clientHeight)<80:true;})()");
+            _liveLogScrollPaused = !nearBottom;
+        }
+        catch { /* JS interop may fail during dispose */ }
+    }
+
+    private void OnAutoScrollToggled()
+    {
+        if (_liveLogAutoScroll) _liveLogScrollPaused = false;
+    }
+
+    private async Task JumpToBottom()
+    {
+        _liveLogScrollPaused = false;
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                "var e=document.getElementById('live-log-body');if(e)e.scrollTop=e.scrollHeight;");
+        }
+        catch { }
+    }
+
+    // ─── TTS Settings ──────────────────────────────────────
+
+    private void LoadTtsConfig()
+    {
+        var (provider, voice, _) = TtsConfig.GetCurrentConfig();
+        _ttsProvider = provider;
+        _ttsProviderOriginal = provider;
+        _ttsVoice = voice;
+        _ttsVoiceOriginal = voice;
+        _ttsVoiceOptions = TtsConfigService.VoiceMap.TryGetValue(provider, out var voices)
+            ? voices.ToList() : ["default"];
+    }
+
+    private void ToggleTtsSettings()
+    {
+        _ttsSettingsOpen = !_ttsSettingsOpen;
+        if (_ttsSettingsOpen) LoadTtsConfig();
+    }
+
+    private void OnTtsProviderChanged()
+    {
+        _ttsVoiceOptions = TtsConfigService.VoiceMap.TryGetValue(_ttsProvider, out var voices)
+            ? voices.ToList() : ["default"];
+        _ttsVoice = _ttsVoiceOptions.First();
+    }
+
+    private void ApplyTtsSettings()
+    {
+        var ok = TtsConfig.SetConfig(_ttsProvider, _ttsVoice);
+        if (ok)
+        {
+            _ttsProviderOriginal = _ttsProvider;
+            _ttsVoiceOriginal = _ttsVoice;
+            _ttsSaveMessage = $"Applied: {_ttsProvider} / {_ttsVoice} (hot-reload, no restart needed)";
+            _ttsSaveError = false;
+        }
+        else
+        {
+            _ttsSaveMessage = "Failed to save — ChatGateway appsettings.json not found";
+            _ttsSaveError = true;
+        }
+    }
+
+    // ─── STT Tab ─────────────────────────────────────────
+
+    private void OnSttTabClicked()
+    {
+        _activeTab = "stt";
+        LoadSttConfig();
+    }
+
+    private void ToggleSttSettings()
+    {
+        _sttSettingsOpen = !_sttSettingsOpen;
+        if (_sttSettingsOpen) LoadSttConfig();
+    }
+
+    // ─── Config Tab ────────────────────────────────────────
+
+    private void OnConfigTabClicked()
+    {
+        _activeTab = "config";
+        LoadSttConfig();
+        LoadModelConfig();
+        LoadTtsConfig();
+    }
+
+    private void LoadSttConfig()
+    {
+        var (engine, _, lang, maxFile, timeout) = SttConfig.GetCurrentConfig();
+        _sttEngine = engine;
+        _sttEngineOriginal = engine;
+        _sttLanguage = lang;
+        _sttLanguageOriginal = lang;
+        _sttMaxFileSizeMb = maxFile;
+        _sttMaxFileSizeMbOriginal = maxFile;
+        _sttTimeout = timeout;
+        _sttTimeoutOriginal = timeout;
+        _sttSaveMessage = null;
+    }
+
+    private void ApplySttSettings()
+    {
+        var ok = SttConfig.SetConfig(_sttEngine, _sttLanguage, _sttMaxFileSizeMb, _sttTimeout);
+        if (ok)
+        {
+            _sttEngineOriginal = _sttEngine;
+            _sttLanguageOriginal = _sttLanguage;
+            _sttMaxFileSizeMbOriginal = _sttMaxFileSizeMb;
+            _sttTimeoutOriginal = _sttTimeout;
+            _sttSaveMessage = $"Applied: Engine={_sttEngine}, Language={_sttLanguage}, MaxFile={_sttMaxFileSizeMb}MB, Timeout={_sttTimeout}s";
+            _sttSaveError = false;
+        }
+        else
+        {
+            _sttSaveMessage = "Failed — ChatGateway appsettings.json not found";
+            _sttSaveError = true;
+        }
+    }
+
+    private void LoadModelConfig()
+    {
+        var cfg = ModelConfig.GetCurrentConfig();
+        _chatModel = cfg.ChatModel;
+        _chatModelOriginal = cfg.ChatModel;
+        _embeddingModel = cfg.EmbeddingModel;
+        _embeddingModelOriginal = cfg.EmbeddingModel;
+        _modelMaxTokens = cfg.MaxTokens;
+        _modelMaxTokensOriginal = cfg.MaxTokens;
+        _modelNumCtx = cfg.NumCtx;
+        _modelNumCtxOriginal = cfg.NumCtx;
+        _modelTimeout = cfg.TimeoutSeconds;
+        _modelTimeoutOriginal = cfg.TimeoutSeconds;
+        _availableModels = cfg.AvailableModels;
+        _availableEmbeddingModels = cfg.AvailableEmbeddingModels;
+        _modelSaveMessage = null;
+    }
+
+    private void ApplyModelSettings()
+    {
+        var messages = new List<string>();
+        bool anyError = false;
+
+        if (_chatModel != _chatModelOriginal)
+        {
+            if (ModelConfig.SetChatModel(_chatModel))
+            {
+                messages.Add($"Chat: {_chatModel}");
+                _chatModelOriginal = _chatModel;
+            }
+            else { anyError = true; }
+        }
+
+        if (_embeddingModel != _embeddingModelOriginal)
+        {
+            if (ModelConfig.SetEmbeddingModel(_embeddingModel))
+            {
+                messages.Add($"Embed: {_embeddingModel}");
+                _embeddingModelOriginal = _embeddingModel;
+            }
+            else { anyError = true; }
+        }
+
+        if (_modelMaxTokens != _modelMaxTokensOriginal
+            || _modelNumCtx != _modelNumCtxOriginal
+            || _modelTimeout != _modelTimeoutOriginal)
+        {
+            if (ModelConfig.SetParameters(_modelMaxTokens, _modelNumCtx, _modelTimeout))
+            {
+                messages.Add($"MaxTokens={_modelMaxTokens}, NumCtx={_modelNumCtx}, Timeout={_modelTimeout}s");
+                _modelMaxTokensOriginal = _modelMaxTokens;
+                _modelNumCtxOriginal = _modelNumCtx;
+                _modelTimeoutOriginal = _modelTimeout;
+            }
+            else { anyError = true; }
+        }
+
+        if (anyError)
+        {
+            _modelSaveMessage = "Failed — LlmService appsettings.json not found";
+            _modelSaveError = true;
+        }
+        else
+        {
+            _modelSaveMessage = $"Applied: {string.Join(", ", messages)} (hot-reload, no restart needed)";
+            _modelSaveError = false;
+        }
+    }
+
+    private string TabBadge(List<ServiceDefinition> services)
+    {
+        var up = services.Count(s => HealthChecker.GetStatus(s.Name).State == ServiceState.Up);
+        return $"{up}/{services.Count}";
+    }
+
+    private static string GetLogLevelClass(string line) => DashboardHelpers.GetLogLevelClass(line);
+
+    private static string GetStateClass(ServiceState state) => DashboardHelpers.GetStateClass(state);
+
+    public void Dispose()
+    {
+        _uiTimer?.Dispose();
+        _liveLogTimer?.Dispose();
+    }
+}

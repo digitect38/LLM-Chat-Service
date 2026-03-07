@@ -16,16 +16,21 @@ public sealed class MessageEnvelope<T>
     [JsonPropertyName("equipmentId")]
     public string? EquipmentId { get; set; }
 
+    [JsonPropertyName("correlationId")]
+    public string CorrelationId { get; set; } = string.Empty;
+
     [JsonPropertyName("payload")]
     public T? Payload { get; set; }
 
-    public static MessageEnvelope<T> Create(string type, T payload, string? equipmentId = null)
+    public static MessageEnvelope<T> Create(string type, T payload,
+        string? equipmentId = null, string? correlationId = null)
     {
         return new MessageEnvelope<T>
         {
             Type = type,
             Payload = payload,
-            EquipmentId = equipmentId
+            EquipmentId = equipmentId,
+            CorrelationId = correlationId ?? Guid.NewGuid().ToString("N")
         };
     }
 }

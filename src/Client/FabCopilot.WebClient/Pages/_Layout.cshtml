@@ -6,7 +6,7 @@
 <html lang="ko">
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <base href="~/" />
     <link href="css/app.css" rel="stylesheet" asp-append-version="true" />
     <link href="FabCopilot.WebClient.styles.css" rel="stylesheet" asp-append-version="true" />
@@ -201,6 +201,42 @@
                     return '[' + links.join(', ') + ']';
                 });
 
+                // Post-process: convert log entry citations into clickable blocks
+                // Pattern: [HH:mm:ss(.fff)?] ServiceName [ERR|WRN|INF|DBG] message
+                // Must be processed BEFORE standalone timestamp links to avoid double-wrapping
+                html = html.replace(/\[(\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)\]\s*([\w.]+)\s*\[(ERR|WRN|INF|DBG)\]\s*([^<\n]{3,})/g, function (match, time, svc, level, msg) {
+                    var keyword = msg.trim();
+                    if (keyword.length > 80) keyword = keyword.substring(0, 80);
+                    var escapedKw = keyword.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    var levelLower = level.toLowerCase();
+                    return '<a class="log-citation-link log-cite-' + levelLower + '" href="#" onclick="logTimestampInterop.onCitationClick(\'' + time + '\', \'' + escapedKw + '\'); return false;">' +
+                        '<span class="log-cite-time">' + time + '</span> ' +
+                        '<span class="log-cite-svc">' + svc + '</span> ' +
+                        '<span class="lp-level-badge lp-badge-' + levelLower + '">' + level + '</span> ' +
+                        msg + '</a>';
+                });
+                // Also detect: "서비스명: 메시지" pattern from top-errors format (e.g. "ChatGateway: Connection timeout")
+                // [N회] Service: message — wrap the message as searchable
+                html = html.replace(/\[(\d+)회\]\s*([\w.]+):\s*([^<\n]{3,})/g, function (match, count, svc, msg) {
+                    var keyword = msg.trim();
+                    if (keyword.length > 80) keyword = keyword.substring(0, 80);
+                    var escapedKw = keyword.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    return '<a class="log-citation-link log-cite-err" href="#" onclick="logTimestampInterop.onCitationClick(\'\', \'' + escapedKw + '\'); return false;">' +
+                        '<span class="log-cite-count">' + count + '회</span> ' +
+                        '<span class="log-cite-svc">' + svc + '</span>: ' +
+                        msg + '</a>';
+                });
+
+                // Post-process: convert timestamps into clickable log-nav links
+                // 1. ISO 8601 full (2024-01-15T14:23:45.123) — extract time part
+                html = html.replace(/(\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?))/g, function (m, full, time) {
+                    return '<a class="log-timestamp-link" href="#" onclick="logTimestampInterop.onClick(\'' + time + '\'); return false;">' + full + '</a>';
+                });
+                // 2. Standalone HH:mm:ss[.fff] — skip if already inside <a> or span tag
+                html = html.replace(/(?<![>"'\w\-:\/])(\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)(?![<\w])/g, function (m, time) {
+                    return '<a class="log-timestamp-link" href="#" onclick="logTimestampInterop.onClick(\'' + time + '\'); return false;">' + time + '</a>';
+                });
+
                 return html;
             },
 
@@ -280,6 +316,54 @@
             },
             dispose: function () {
                 this._dotNetRef = null;
+            }
+        };
+
+        // ─── Log timestamp interop (Blazor ↔ JS) ────────────────────
+        window.logTimestampInterop = {
+            _dotNetRef: null,
+            init: function (dotNetRef) {
+                this._dotNetRef = dotNetRef;
+            },
+            onClick: function (timestamp) {
+                if (this._dotNetRef) {
+                    this._dotNetRef.invokeMethodAsync('OnLogTimestampClick', timestamp);
+                }
+            },
+            onCitationClick: function (timestamp, keyword) {
+                if (this._dotNetRef) {
+                    this._dotNetRef.invokeMethodAsync('OnLogCitationClick', timestamp || '', keyword || '');
+                }
+            },
+            dispose: function () {
+                this._dotNetRef = null;
+            }
+        };
+
+        // ─── Log timestamp/citation scroll helper ─────────────────────
+        window.logTimestampNav = {
+            scrollToTime: function (timestamp) {
+                var id = 'lp-time-' + timestamp.replace(/:/g, '-').replace(/\./g, '-');
+                var el = document.getElementById(id) || document.querySelector('[id^="' + id + '"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('lp-row-flash');
+                    setTimeout(function () { el.classList.remove('lp-row-flash'); }, 2000);
+                }
+            },
+            scrollToKeyword: function (keyword) {
+                // Find first row in the log table whose message cell contains the keyword
+                var rows = document.querySelectorAll('.lp-log-table tbody tr');
+                for (var i = 0; i < rows.length; i++) {
+                    var msgCell = rows[i].querySelector('.lp-col-msg');
+                    if (msgCell && msgCell.textContent.indexOf(keyword) >= 0) {
+                        rows[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        rows[i].classList.add('lp-row-flash');
+                        setTimeout((function (r) { return function () { r.classList.remove('lp-row-flash'); }; })(rows[i]), 2000);
+                        return true;
+                    }
+                }
+                return false;
             }
         };
 
@@ -515,7 +599,7 @@
                 var D = window._ttsDebug;
                 D.log('play: ' + text.length + ' chars, primed=' + !!this._ssPrimed);
 
-                // ── Step 1: Try XTTS via Web Audio (with 5s timeout) ──
+                // ── Step 1: Try server TTS via Web Audio (with 30s timeout) ──
                 var xttsOk = false;
                 try {
                     var ctx = this._ensureCtx();
@@ -529,7 +613,7 @@
                         throw new Error('ctx ' + ctx.state);
                     }
 
-                    D.log('2. fetching XTTS...');
+                    D.log('2. fetching TTS...');
                     var ac = new AbortController();
                     var timer = setTimeout(function() { ac.abort(); }, 30000);
                     var resp = await fetch(gatewayBase + '/api/tts/synthesize', {
@@ -545,7 +629,23 @@
                         D.log('3. HTTP ' + resp.status + ': ' + errText.substring(0, 200));
                         throw new Error('HTTP ' + resp.status);
                     }
-                    D.log('3. HTTP 200');
+
+                    // Check if server says to use Browser SpeechSynthesis
+                    var ct = resp.headers.get('content-type');
+                    if (ct && ct.includes('application/json')) {
+                        var json = await resp.json();
+                        if (json.engine === 'Browser') {
+                            D.log('3. Browser engine → SpeechSynthesis');
+                            this._playSpeechSynthesis(text, dotNetRef);
+                            return;
+                        }
+                        throw new Error(json.error || 'TTS error');
+                    }
+                    var ttsEngine = resp.headers.get('X-TTS-Engine') || '?';
+                    var ttsVoice = resp.headers.get('X-TTS-Voice') || '';
+                    var ttsChain = resp.headers.get('X-TTS-Chain');
+                    if (ttsChain) D.log('3. chain: ' + ttsChain);
+                    D.log('3. HTTP 200 engine=' + ttsEngine + (ttsVoice ? ' voice=' + ttsVoice : ''));
 
                     var arrayBuf = await resp.arrayBuffer();
                     D.log('4. got ' + arrayBuf.byteLength + ' bytes');
@@ -562,16 +662,16 @@
 
                     var self = this;
                     source.onended = function() {
-                        D.log('6. XTTS ended');
+                        D.log('6. TTS ended');
                         self._sourceNode = null;
                         self._playing = false;
                         if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
                     };
                     source.start(0);
                     xttsOk = true;
-                    D.log('6. XTTS PLAYING ✓ gain=' + this._gainNode.gain.value);
+                    D.log('6. TTS PLAYING ✓ gain=' + this._gainNode.gain.value);
                 } catch(ex) {
-                    D.log('XTTS FAIL: ' + ex.message);
+                    D.log('TTS FAIL: ' + ex.message);
                 }
 
                 // ── Step 2: Fallback to SpeechSynthesis ──
@@ -579,6 +679,26 @@
                     D.log('→ SpeechSynthesis fallback');
                     this._playSpeechSynthesis(text, dotNetRef);
                 }
+            },
+
+            _splitTextToChunks: function(text, maxLen) {
+                // Split by sentence boundaries, respecting maxLen per chunk
+                var chunks = [];
+                var delimiters = /(?<=[.!?\u3002\uFF01\uFF1F])\s+/g;
+                var sentences = text.split(delimiters);
+                var current = '';
+                for (var i = 0; i < sentences.length; i++) {
+                    var s = sentences[i];
+                    if (!s) continue;
+                    if (current.length + s.length + 1 > maxLen && current.length > 0) {
+                        chunks.push(current);
+                        current = s;
+                    } else {
+                        current = current ? current + ' ' + s : s;
+                    }
+                }
+                if (current) chunks.push(current);
+                return chunks;
             },
 
             _playSpeechSynthesis: function(text, dotNetRef) {
@@ -592,48 +712,68 @@
 
                 window.speechSynthesis.cancel();
 
-                var spText = text.length > 3000 ? text.substring(0, 3000) + '...' : text;
-                var utt = new SpeechSynthesisUtterance(spText);
-                utt.lang = 'ko-KR';
-                utt.rate = 1.05;
-                utt.volume = 1.0;
-                utt.pitch = 1.0;
+                // Split long text into ~2000 char chunks (safe limit for SpeechSynthesis)
+                var chunks = this._splitTextToChunks(text, 2000);
+                D.log('SS: ' + text.length + ' chars → ' + chunks.length + ' chunks');
 
                 var voices = window.speechSynthesis.getVoices();
                 D.log('SS: voices=' + voices.length);
+                var selectedVoice = null;
                 if (voices.length > 0) {
                     var koVoice = voices.find(function(v) { return v.lang && v.lang.startsWith('ko'); });
                     if (koVoice) {
-                        utt.voice = koVoice;
+                        selectedVoice = koVoice;
                         D.log('SS: voice=' + koVoice.name + ' ' + koVoice.lang);
                     } else {
-                        utt.voice = voices[0];
+                        selectedVoice = voices[0];
                         D.log('SS: no ko, using ' + voices[0].name);
                     }
-                } else {
-                    D.log('SS: no voices! default lang');
                 }
 
                 var self = this;
-                utt.onstart = function() { D.log('SS: started'); };
-                utt.onend = function() {
-                    D.log('SS: ended');
-                    self._playing = false;
-                    if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
-                    if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
-                };
-                utt.onerror = function(e) {
-                    D.log('SS: ERROR ' + (e.error || 'unknown'));
-                    self._playing = false;
-                    if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
-                    if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsError', e.error || 'TTS 오류');
-                };
+                var chunkIdx = 0;
 
-                this._utterance = utt;
-                window.speechSynthesis.speak(utt);
-                D.log('SS: speak() speaking=' + window.speechSynthesis.speaking);
+                function playNextChunk() {
+                    if (!self._playing || chunkIdx >= chunks.length) {
+                        D.log('SS: all ' + chunks.length + ' chunks done');
+                        self._playing = false;
+                        if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
+                        if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
+                        return;
+                    }
 
-                // iOS bug: speechSynthesis pauses after ~15s. Keep poking it.
+                    var utt = new SpeechSynthesisUtterance(chunks[chunkIdx]);
+                    utt.lang = 'ko-KR';
+                    utt.rate = 1.05;
+                    utt.volume = 1.0;
+                    utt.pitch = 1.0;
+                    if (selectedVoice) utt.voice = selectedVoice;
+
+                    utt.onstart = function() { D.log('SS: chunk ' + (chunkIdx+1) + '/' + chunks.length + ' started'); };
+                    utt.onend = function() {
+                        D.log('SS: chunk ' + (chunkIdx+1) + '/' + chunks.length + ' ended');
+                        chunkIdx++;
+                        playNextChunk();
+                    };
+                    utt.onerror = function(e) {
+                        D.log('SS: chunk ' + (chunkIdx+1) + ' ERROR ' + (e.error || 'unknown'));
+                        // Try next chunk on non-fatal errors, abort on cancel/interrupted
+                        if (e.error === 'canceled' || e.error === 'interrupted') {
+                            self._playing = false;
+                            if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
+                            return;
+                        }
+                        chunkIdx++;
+                        playNextChunk();
+                    };
+
+                    self._utterance = utt;
+                    window.speechSynthesis.speak(utt);
+                }
+
+                playNextChunk();
+
+                // iOS/Chrome bug: speechSynthesis pauses after ~15s. Keep poking it.
                 this._synthResumeTimer = setInterval(function() {
                     if (!self._playing) {
                         clearInterval(self._synthResumeTimer);
@@ -644,11 +784,278 @@
                     }
                 }, 5000);
 
-                console.log('[TTS] SpeechSynthesis started, text:', spText.length, 'chars');
+                console.log('[TTS] SpeechSynthesis started, text:', text.length, 'chars,', chunks.length, 'chunks');
+            },
+
+            // ─── Streaming TTS: sentence-by-sentence real-time playback ───
+
+            _streaming: false,
+            _streamBuf: '',
+            _streamQueue: [],
+            _streamProcessing: false,
+            _streamIdx: 0,
+            _streamFlushed: false,
+            _streamAbort: null,
+
+            playStream: function(dotNetRef) {
+                var D = window._ttsDebug;
+                this.stop();
+                this._dotNetRef = dotNetRef;
+                this._streaming = true;
+                this._streamBuf = '';
+                this._streamQueue = [];
+                this._streamProcessing = false;
+                this._streamIdx = 0;
+                this._streamFlushed = false;
+                this._streamAbort = null;
+                this._playing = true;
+                // Ensure AudioContext is ready
+                var ctx = this._ensureCtx();
+                if (ctx.state === 'suspended') ctx.resume();
+                D.log('[StreamTTS] initialized');
+            },
+
+            feedText: function(token) {
+                if (!this._streaming) return;
+                this._streamBuf += token;
+                var sentences = this._extractSentences();
+                if (sentences.length > 0) {
+                    var D = window._ttsDebug;
+                    for (var i = 0; i < sentences.length; i++) {
+                        var clean = this._stripMarkdownForTts(sentences[i]);
+                        if (clean.length > 0) {
+                            this._streamIdx++;
+                            var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
+                            this._streamQueue.push(item);
+                            D.log('[StreamTTS] sentence #' + item.idx + ' queued (' + clean.length + ' chars)');
+                        }
+                    }
+                    this._processQueue();
+                }
+            },
+
+            flushStream: function() {
+                if (!this._streaming) return;
+                var D = window._ttsDebug;
+                var remaining = this._streamBuf.trim();
+                this._streamBuf = '';
+                if (remaining.length > 0) {
+                    var clean = this._stripMarkdownForTts(remaining);
+                    if (clean.length > 0) {
+                        this._streamIdx++;
+                        var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
+                        this._streamQueue.push(item);
+                        D.log('[StreamTTS] flush #' + item.idx + ' (' + clean.length + ' chars)');
+                    }
+                }
+                this._streamFlushed = true;
+                D.log('[StreamTTS] flushed, queue=' + this._streamQueue.length);
+                if (this._streamQueue.length === 0) {
+                    // Nothing was queued at all — signal end
+                    this._streaming = false;
+                    this._playing = false;
+                    if (this._dotNetRef) this._dotNetRef.invokeMethodAsync('OnTtsEnded');
+                } else {
+                    this._processQueue();
+                }
+            },
+
+            _extractSentences: function() {
+                var buf = this._streamBuf;
+                var results = [];
+                // Match sentence-ending punctuation followed by whitespace or CJK punctuation
+                var re = /([.!?。！？])\s+/g;
+                var lastEnd = 0;
+                var match;
+                while ((match = re.exec(buf)) !== null) {
+                    var sentence = buf.substring(lastEnd, match.index + match[1].length).trim();
+                    // Minimum length check: 20 for Latin, 10 for CJK
+                    var hasCJK = /[\u3000-\u9FFF\uAC00-\uD7AF]/.test(sentence);
+                    var minLen = hasCJK ? 10 : 20;
+                    if (sentence.length >= minLen) {
+                        results.push(sentence);
+                        lastEnd = match.index + match[0].length;
+                    }
+                }
+                // CJK sentence-enders without trailing space
+                if (lastEnd < buf.length) {
+                    var rest = buf.substring(lastEnd);
+                    var cjkRe = /([\u3002\uFF01\uFF1F])/g;
+                    var cjkMatch;
+                    var cjkLastEnd = 0;
+                    while ((cjkMatch = cjkRe.exec(rest)) !== null) {
+                        var cjkSentence = rest.substring(cjkLastEnd, cjkMatch.index + 1).trim();
+                        if (cjkSentence.length >= 10) {
+                            results.push(cjkSentence);
+                            cjkLastEnd = cjkMatch.index + 1;
+                        }
+                    }
+                    lastEnd += cjkLastEnd;
+                }
+                // Long sentence split: if remaining buffer > 500 chars, split at comma/semicolon
+                var leftover = buf.substring(lastEnd);
+                if (leftover.length > 500) {
+                    var splitRe = /([,;，；])\s*/g;
+                    var splitMatch;
+                    var splitLastEnd = 0;
+                    while ((splitMatch = splitRe.exec(leftover)) !== null) {
+                        var part = leftover.substring(splitLastEnd, splitMatch.index + splitMatch[0].length).trim();
+                        if (part.length >= 20) {
+                            results.push(part);
+                            splitLastEnd = splitMatch.index + splitMatch[0].length;
+                        }
+                    }
+                    lastEnd += splitLastEnd;
+                }
+                this._streamBuf = buf.substring(lastEnd);
+                return results;
+            },
+
+            _stripMarkdownForTts: function(text) {
+                return text
+                    .replace(/\[cite[-–]?\d+\]/gi, '')        // [cite-1] etc
+                    .replace(/\*\*([^*]+)\*\*/g, '$1')        // **bold**
+                    .replace(/\*([^*]+)\*/g, '$1')             // *italic*
+                    .replace(/#{1,6}\s*/g, '')                 // ## headings
+                    .replace(/`[^`]*`/g, '')                   // inline code
+                    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')  // [text](url)
+                    .replace(/^[\s]*[-*+]\s+/gm, '')           // bullet points
+                    .replace(/^\s*\d+\.\s+/gm, '')             // numbered lists
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            },
+
+            _processQueue: async function() {
+                if (this._streamProcessing) return;
+                this._streamProcessing = true;
+                var D = window._ttsDebug;
+                var self = this;
+                var gatewayBase = this._getGatewayUrl();
+
+                while (this._streamQueue.length > 0) {
+                    if (!this._streaming || !this._playing) break;
+
+                    var current = this._streamQueue[0];
+
+                    // Start fetching current if not started
+                    if (!current.fetching && !current.fetched) {
+                        await this._startFetch(current, gatewayBase);
+                    }
+
+                    // Wait for current to be fetched
+                    if (!current.fetched) {
+                        // Shouldn't happen but guard
+                        await new Promise(function(r) { setTimeout(r, 50); });
+                        continue;
+                    }
+
+                    if (!this._streaming || !this._playing) break;
+
+                    // Start prefetch for next item
+                    if (this._streamQueue.length > 1) {
+                        var next = this._streamQueue[1];
+                        if (!next.fetching && !next.fetched) {
+                            this._startFetch(next, gatewayBase); // fire-and-forget prefetch
+                        }
+                    }
+
+                    // Play current
+                    if (current.audioBuf) {
+                        D.log('[StreamTTS] playing #' + current.idx);
+                        try {
+                            await this._playBuffer(current.audioBuf);
+                        } catch (e) {
+                            D.log('[StreamTTS] play error #' + current.idx + ': ' + e.message);
+                        }
+                        D.log('[StreamTTS] done #' + current.idx);
+                    } else {
+                        D.log('[StreamTTS] skip #' + current.idx + ' (no audio)');
+                    }
+
+                    // Remove from queue
+                    this._streamQueue.shift();
+                }
+
+                this._streamProcessing = false;
+
+                // If flushed and queue empty, streaming is done
+                if (this._streamFlushed && this._streamQueue.length === 0 && this._streaming) {
+                    D.log('[StreamTTS] all done');
+                    this._streaming = false;
+                    this._playing = false;
+                    if (this._dotNetRef) this._dotNetRef.invokeMethodAsync('OnTtsEnded');
+                }
+            },
+
+            _startFetch: async function(item, gatewayBase) {
+                var D = window._ttsDebug;
+                item.fetching = true;
+                try {
+                    var ac = new AbortController();
+                    this._streamAbort = ac;
+                    var timer = setTimeout(function() { ac.abort(); }, 15000);
+                    D.log('[StreamTTS] fetching #' + item.idx + '...');
+                    var resp = await fetch(gatewayBase + '/api/tts/synthesize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: item.text, language: 'ko' }),
+                        signal: ac.signal
+                    });
+                    clearTimeout(timer);
+                    this._streamAbort = null;
+
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+                    // Check for Browser engine response
+                    var ct = resp.headers.get('content-type');
+                    if (ct && ct.includes('application/json')) {
+                        // Browser engine — skip this chunk (streaming TTS uses server engines)
+                        D.log('[StreamTTS] #' + item.idx + ' Browser engine, skip');
+                        item.fetched = true;
+                        return;
+                    }
+
+                    var arrayBuf = await resp.arrayBuffer();
+                    if (arrayBuf.byteLength < 100) throw new Error('empty audio');
+
+                    var ctx = this._ensureCtx();
+                    item.audioBuf = await ctx.decodeAudioData(arrayBuf);
+                    D.log('[StreamTTS] fetched #' + item.idx + ' (' + item.audioBuf.duration.toFixed(1) + 's)');
+                } catch (e) {
+                    D.log('[StreamTTS] fetch error #' + item.idx + ': ' + e.message);
+                    this._streamAbort = null;
+                }
+                item.fetched = true;
+            },
+
+            _playBuffer: function(audioBuf) {
+                var self = this;
+                return new Promise(function(resolve) {
+                    if (!self._streaming || !self._playing) { resolve(); return; }
+                    var ctx = self._ensureCtx();
+                    var source = ctx.createBufferSource();
+                    source.buffer = audioBuf;
+                    source.connect(self._gainNode);
+                    self._sourceNode = source;
+                    source.onended = function() {
+                        self._sourceNode = null;
+                        resolve();
+                    };
+                    source.start(0);
+                });
             },
 
             stop: function() {
                 this._playing = false;
+                // Streaming state cleanup
+                this._streaming = false;
+                this._streamBuf = '';
+                this._streamQueue = [];
+                this._streamFlushed = false;
+                if (this._streamAbort) {
+                    try { this._streamAbort.abort(); } catch(e) {}
+                    this._streamAbort = null;
+                }
                 if (this._sourceNode) {
                     try { this._sourceNode.stop(); } catch(e) {}
                     this._sourceNode = null;
@@ -858,10 +1265,14 @@
                             console.log('[STT] Mic acquired for voice mode session');
                         } catch(e) {
                             console.error('[STT] Mic acquire failed:', e);
+                            this._voiceMode = false;
+                            return false; // Signal failure to Blazor
                         }
                     }
+                    return true;
                 } else {
                     this._releasePersistentStream();
+                    return true;
                 }
             },
 
@@ -1087,20 +1498,92 @@
             }
         };
 
+        // ─── Panel swipe navigation (mobile) ─────────────────────────
+        window.panelSwipe = {
+            _ref: null,
+            _startX: 0,
+            _startY: 0,
+            _tracking: false,
+            _fired: false,
+            init: function (dotnetRef) {
+                this._ref = dotnetRef;
+                var vp = document.querySelector('.panel-viewport');
+                if (!vp || vp._swipeAttached) return;
+                vp._swipeAttached = true;
+                var self = this;
+                vp.addEventListener('touchstart', function (e) {
+                    if (window.innerWidth > 768) return;
+                    var t = e.touches[0];
+                    self._startX = t.clientX;
+                    self._startY = t.clientY;
+                    self._tracking = true;
+                    self._fired = false;
+                }, { passive: true });
+                vp.addEventListener('touchmove', function (e) {
+                    if (!self._tracking || self._fired || window.innerWidth > 768) return;
+                    var t = e.touches[0];
+                    var dx = t.clientX - self._startX;
+                    var dy = t.clientY - self._startY;
+                    var adx = Math.abs(dx);
+                    var ady = Math.abs(dy);
+                    if (adx > 8 && adx > ady) {
+                        e.preventDefault();
+                    }
+                    // Fire immediately at 10px horizontal
+                    if (adx > 10 && adx > ady) {
+                        self._fired = true;
+                        self._tracking = false;
+                        if (dx > 0) self._ref.invokeMethodAsync('SwipePrev');
+                        else self._ref.invokeMethodAsync('SwipeNext');
+                    }
+                }, { passive: false });
+                vp.addEventListener('touchend', function () {
+                    self._tracking = false;
+                }, { passive: true });
+            }
+        };
+
         // ─── Mobile keyboard viewport fix ────────────────────────────
         (function () {
-            if (!window.visualViewport) return;
-            window.visualViewport.addEventListener('resize', function () {
-                // When keyboard closes (viewport height recovers), reset scroll
-                window.scrollTo(0, 0);
-                document.documentElement.scrollTop = 0;
-                document.body.scrollTop = 0;
-            });
-            // Also fix on focus out (keyboard dismiss)
+            var appEl = document.querySelector('.chat-app');
+            if (!appEl) return;
+
+            function setAppHeight() {
+                // visualViewport.height shrinks when keyboard is open
+                var h = window.visualViewport
+                    ? window.visualViewport.height
+                    : window.innerHeight;
+                appEl.style.setProperty('--app-height', h + 'px');
+                // Also set bottom to keep the app pinned to the top of the visible area
+                appEl.style.top = (window.visualViewport ? window.visualViewport.offsetTop : 0) + 'px';
+                appEl.style.height = h + 'px';
+            }
+
+            // Initial set
+            setAppHeight();
+
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', setAppHeight);
+                window.visualViewport.addEventListener('scroll', setAppHeight);
+            } else {
+                window.addEventListener('resize', setAppHeight);
+            }
+
+            // When keyboard dismisses, reset scroll position
             document.addEventListener('focusout', function () {
                 setTimeout(function () {
                     window.scrollTo(0, 0);
                 }, 100);
+            });
+
+            // On iOS, ensure input stays visible after focus
+            document.addEventListener('focusin', function (e) {
+                if (e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')) {
+                    setTimeout(function () {
+                        setAppHeight();
+                        e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                    }, 300);
+                }
             });
         })();
     </script>

@@ -5,7 +5,10 @@ using FabCopilot.Messaging.Extensions;
 using FabCopilot.Redis.Extensions;
 using FabCopilot.Redis.Interfaces;
 using FabCopilot.Observability.Extensions;
+using FabCopilot.ChatGateway.Configuration;
 using FabCopilot.ChatGateway.Services;
+using FabCopilot.ChatGateway.Services.Engines;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,13 +31,25 @@ builder.Services.AddHttpClient("Whisper", (sp, client) =>
     client.BaseAddress = new Uri(baseUrl);
     client.Timeout = TimeSpan.FromSeconds(config.GetValue("Whisper:TimeoutSeconds", 60));
 });
-builder.Services.AddHttpClient("TTS", (sp, client) =>
-{
-    var config = sp.GetRequiredService<IConfiguration>();
-    var baseUrl = config["Tts:BaseUrl"] ?? "http://localhost:8400";
-    client.BaseAddress = new Uri(baseUrl);
-    client.Timeout = TimeSpan.FromSeconds(config.GetValue("Tts:TimeoutSeconds", 30));
-});
+// TTS Adaptation Layer — 8-engine multi-provider with hot-reload
+builder.Services.Configure<TtsOptions>(builder.Configuration.GetSection(TtsOptions.SectionName));
+builder.Services.AddSingleton<ITtsEngine, EdgeTtsEngine>();
+builder.Services.AddSingleton<ITtsEngine>(sp => new XttsTtsEngine(
+    sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<ILogger<XttsTtsEngine>>()));
+builder.Services.AddSingleton<ITtsEngine>(sp => new OpenAiCompatTtsEngine(
+    "Kokoro", sp.GetRequiredService<IOptionsMonitor<TtsOptions>>(), sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton<ITtsEngine>(sp => new OpenAiCompatTtsEngine(
+    "CosyVoice", sp.GetRequiredService<IOptionsMonitor<TtsOptions>>(), sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton<ITtsEngine>(sp => new OpenAiCompatTtsEngine(
+    "Chatterbox", sp.GetRequiredService<IOptionsMonitor<TtsOptions>>(), sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton<ITtsEngine, FishSpeechTtsEngine>();
+builder.Services.AddSingleton<ITtsEngine, BarkTtsEngine>();
+builder.Services.AddSingleton<ITtsEngine>(sp => new OpenAiCompatTtsEngine(
+    "Piper", sp.GetRequiredService<IOptionsMonitor<TtsOptions>>(), sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton<ITtsEngine>(sp => new OpenAiCompatTtsEngine(
+    "Orpheus", sp.GetRequiredService<IOptionsMonitor<TtsOptions>>(), sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton<TtsEngineResolver>();
+builder.Services.AddHttpClient("TTS");
 
 var app = builder.Build();
 
@@ -188,83 +203,46 @@ app.MapPost("/api/transcribe/{equipmentId}", async (
     return Results.Content(json, "application/json");
 }).DisableAntiforgery();
 
-// TTS: cache studio speakers on first use
-JsonNode? _cachedStudioSpeakers = null;
-string _cachedSpeakerName = "";
-
-async Task<(JsonArray? Embedding, JsonArray? GptCondLatent)> GetSpeakerVoiceAsync(HttpClient client, string speakerName, Microsoft.Extensions.Logging.ILogger logger)
-{
-    if (_cachedStudioSpeakers is null || _cachedSpeakerName != speakerName)
-    {
-        var resp = await client.GetAsync("/studio_speakers");
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync();
-        _cachedStudioSpeakers = JsonNode.Parse(json);
-        _cachedSpeakerName = speakerName;
-    }
-
-    var speaker = _cachedStudioSpeakers?[speakerName];
-    if (speaker is null)
-    {
-        // Fallback: use first available speaker
-        var first = _cachedStudioSpeakers?.AsObject().FirstOrDefault();
-        if (first is { Value: not null })
-        {
-            speaker = first.Value.Value;
-            logger.LogInformation("TTS speaker '{Requested}' not found, using '{Fallback}'", speakerName, first.Value.Key);
-        }
-    }
-
-    return (speaker?["speaker_embedding"]?.AsArray(), speaker?["gpt_cond_latent"]?.AsArray());
-}
-
 // TTS health check endpoint
-app.MapGet("/api/tts/health", async (IHttpClientFactory httpFactory) =>
+app.MapGet("/api/tts/health", (TtsEngineResolver resolver, IOptionsMonitor<TtsOptions> ttsOpts) =>
 {
-    try
-    {
-        using var client = httpFactory.CreateClient("TTS");
-        client.Timeout = TimeSpan.FromSeconds(5);
-        var resp = await client.GetAsync("/studio_speakers");
-        return resp.IsSuccessStatusCode
-            ? Results.Ok(new { status = "ok" })
-            : Results.StatusCode(503);
-    }
-    catch
-    {
-        return Results.StatusCode(503);
-    }
+    var engine = resolver.Resolve();
+    return Results.Ok(new { status = "ok", engine = engine.Name, provider = ttsOpts.CurrentValue.Provider });
 });
 
-// TTS speakers list endpoint
-app.MapGet("/api/tts/speakers", async (IHttpClientFactory httpFactory) =>
+// TTS current config endpoint
+app.MapGet("/api/tts/config", (TtsEngineResolver resolver, IOptionsMonitor<TtsOptions> ttsOpts) =>
 {
-    try
+    var opts = ttsOpts.CurrentValue;
+    return Results.Ok(new
     {
-        using var client = httpFactory.CreateClient("TTS");
-        var resp = await client.GetAsync("/studio_speakers");
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync();
-        var speakers = JsonNode.Parse(json)?.AsObject();
-        var names = speakers?.Select(s => s.Key).ToList() ?? [];
-        return Results.Ok(new { speakers = names });
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { error = ex.Message }, statusCode: 503);
-    }
+        provider = opts.Provider,
+        voice = opts.Voice,
+        speed = opts.Speed,
+        availableEngines = resolver.AvailableEngines
+    });
 });
 
-// TTS synthesis endpoint — converts text to speech audio via XTTS
-app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory httpFactory, ILogger<Program> logger) =>
+// TTS synthesis endpoint — multi-engine adapter layer
+app.MapPost("/api/tts/synthesize", async (HttpRequest req, TtsEngineResolver resolver,
+    IOptionsMonitor<TtsOptions> ttsOpts, ILogger<Program> logger) =>
 {
     var body = await req.ReadFromJsonAsync<TtsSynthesizeRequest>();
     if (body is null || string.IsNullOrWhiteSpace(body.Text))
         return Results.BadRequest(new { error = "No text provided" });
 
+    var opts = ttsOpts.CurrentValue;
+
+    // Browser engine — signal client to use SpeechSynthesis API
+    if (opts.Provider.Equals("Browser", StringComparison.OrdinalIgnoreCase))
+        return Results.Json(new { engine = "Browser" });
+
+    var voiceText = body.Text;
+
     // Strip citation markers for voice output
-    var voiceText = System.Text.RegularExpressions.Regex.Replace(
-        body.Text, @"\[MNL-[^\]]*\]|\[cite-\d+\]|\[출처[^\]]*\]|\*\*|##|#+\s", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+    voiceText = System.Text.RegularExpressions.Regex.Replace(
+        voiceText, @"\[MNL-[^\]]*\]|\[cite-\d+\]|\[출처[^\]]*\]|\*\*|##|#+\s", "",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
 
     // Generate voice summary (first 3 sentences) if requested
     if (body.SummaryOnly)
@@ -274,67 +252,29 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, IHttpClientFactory ht
         if (!voiceText.EndsWith('.')) voiceText += ".";
     }
 
-    // XTTS Korean character limit is 95; truncate to first ~2 sentences within limit
-    if (voiceText.Length > 90)
+    logger.LogInformation("TTS synthesize via {Engine}, voice={Voice}, text={Len} chars",
+        resolver.CurrentProvider, opts.Voice, voiceText.Length);
+
+    var synth = await resolver.SynthesizeWithFallbackAsync(
+        voiceText, opts.Voice, opts, req.HttpContext.RequestAborted);
+
+    if (!synth.Result.IsSuccess)
     {
-        // Try to cut at a natural sentence boundary
-        var cut = voiceText.LastIndexOf('.', 89);
-        if (cut < 30) cut = voiceText.LastIndexOf(' ', 89);
-        if (cut < 30) cut = 90;
-        voiceText = voiceText[..(cut + 1)];
+        logger.LogWarning("TTS synthesis failed (all engines): {Error}", synth.Result.Error);
+        return Results.Json(new { error = synth.Result.Error, engine = synth.EngineName }, statusCode: 503);
     }
 
-    try
-    {
-        using var client = httpFactory.CreateClient("TTS");
-        var speakerName = body.Speaker ?? "Claribel Dervla";
-        (JsonArray? embedding, JsonArray? gptCondLatent) = await GetSpeakerVoiceAsync(client, speakerName, logger);
+    if (synth.FallbackFrom is not null)
+        logger.LogInformation("TTS served by fallback engine {Engine} (primary: {Primary})",
+            synth.EngineName, synth.FallbackFrom);
 
-        if (embedding is null || gptCondLatent is null)
-            return Results.Json(new { error = "TTS 스피커 음성 데이터를 가져올 수 없습니다" }, statusCode: 500);
-
-        var ttsPayload = new
-        {
-            text = voiceText,
-            language = body.Language ?? "ko",
-            speaker_embedding = embedding,
-            gpt_cond_latent = gptCondLatent
-        };
-
-        var response = await client.PostAsJsonAsync("/tts", ttsPayload);
-        if (!response.IsSuccessStatusCode)
-        {
-            var err = await response.Content.ReadAsStringAsync();
-            logger.LogWarning("TTS synthesis failed: {Status} {Error}", response.StatusCode, err);
-            return Results.Json(new { error = $"TTS 합성 실패: {err}" }, statusCode: (int)response.StatusCode);
-        }
-
-        // XTTS returns base64-encoded WAV wrapped in a JSON string (Content-Type: application/json)
-        // e.g. "UklGR..." — need to unwrap JSON quotes and decode base64
-        var contentType = response.Content.Headers.ContentType?.MediaType;
-        byte[] audioBytes;
-        if (contentType == "application/json" || contentType == "text/plain")
-        {
-            var raw = await response.Content.ReadAsStringAsync();
-            // Strip surrounding JSON quotes if present
-            if (raw.StartsWith('"') && raw.EndsWith('"'))
-                raw = raw[1..^1];
-            audioBytes = Convert.FromBase64String(raw);
-        }
-        else
-        {
-            // Already binary WAV
-            audioBytes = await response.Content.ReadAsByteArrayAsync();
-        }
-        return Results.File(audioBytes, "audio/wav", "speech.wav");
-    }
-    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-    {
-        logger.LogWarning(ex, "TTS server unreachable");
-        return Results.Json(
-            new { error = "TTS 서버에 연결할 수 없습니다. --profile tts 로 컨테이너를 시작하세요." },
-            statusCode: 503);
-    }
+    // Expose engine/voice/fallback info to client debug logs
+    req.HttpContext.Response.Headers["X-TTS-Engine"] = synth.EngineName;
+    req.HttpContext.Response.Headers["X-TTS-Voice"] = synth.VoiceUsed;
+    if (synth.FallbackFrom is not null)
+        req.HttpContext.Response.Headers["X-TTS-Fallback"] = synth.FallbackFrom;
+    req.HttpContext.Response.Headers["X-TTS-Chain"] = string.Join(" > ", synth.Chain);
+    return Results.File(synth.Result.AudioData, synth.Result.ContentType, "speech.wav");
 });
 
 // Feedback endpoint — logs user feedback to the audit trail
@@ -415,4 +355,4 @@ app.MapDelete("/api/conversations/{equipmentId}/{conversationId}", async (string
 
 app.Run();
 
-record TtsSynthesizeRequest(string Text, string? Language = "ko", bool SummaryOnly = false, string? SpeakerWav = null, string? Speaker = null);
+record TtsSynthesizeRequest(string Text, string? Language = "ko", bool SummaryOnly = false);

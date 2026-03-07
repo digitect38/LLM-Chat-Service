@@ -42,6 +42,8 @@
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
 
+    <!-- TTS (Edge TTS via openai-edge-tts Docker container — no NuGet needed) -->
+
     <!-- PDF -->
     <PackageVersion Include="PdfPig" Version="0.1.13" />
 

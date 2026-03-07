@@ -8,6 +8,7 @@ public class EmbeddingConfigService
     private readonly string[] _appsettingsPaths;
     private readonly string _llmServicePath;
     private readonly string _webClientPath;
+    private readonly string _gatewayPath;
 
     public EmbeddingConfigService(IWebHostEnvironment env)
     {
@@ -18,6 +19,7 @@ public class EmbeddingConfigService
 
         _llmServicePath = Path.Combine(srcRoot, "src", "Services", "FabCopilot.LlmService", "appsettings.json");
         _webClientPath = Path.Combine(clientRoot, "appsettings.json");
+        _gatewayPath = Path.Combine(srcRoot, "src", "Services", "FabCopilot.ChatGateway", "appsettings.json");
 
         _appsettingsPaths = new[]
         {
@@ -33,6 +35,7 @@ public class EmbeddingConfigService
         _appsettingsPaths = appsettingsPaths;
         _llmServicePath = llmServicePath;
         _webClientPath = webClientPath;
+        _gatewayPath = "";
     }
 
     public string GetCurrentProvider()
@@ -249,5 +252,46 @@ public class EmbeddingConfigService
 
         node["SearchMode"] = mode;
         File.WriteAllText(_webClientPath, node.ToJsonString(options));
+    }
+
+    // ─── TTS Provider ──────────────────────────────────────────
+
+    public (string Provider, string Voice, float Speed) GetCurrentTtsConfig()
+    {
+        if (string.IsNullOrEmpty(_gatewayPath) || !File.Exists(_gatewayPath))
+            return ("EdgeTts", "ko-KR-SunHiNeural", 1.0f);
+
+        var json = File.ReadAllText(_gatewayPath);
+        var node = JsonNode.Parse(json);
+        var tts = node?["Tts"];
+        if (tts is null)
+            return ("EdgeTts", "ko-KR-SunHiNeural", 1.0f);
+
+        var provider = tts["Provider"]?.GetValue<string>() ?? "EdgeTts";
+        var voice = tts["Voice"]?.GetValue<string>() ?? "ko-KR-SunHiNeural";
+        var speed = tts["Speed"]?.GetValue<float>() ?? 1.0f;
+        return (provider, voice, speed);
+    }
+
+    public void SetTtsProvider(string provider, string voice, float speed = 1.0f)
+    {
+        if (string.IsNullOrEmpty(_gatewayPath) || !File.Exists(_gatewayPath)) return;
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        var json = File.ReadAllText(_gatewayPath);
+        var node = JsonNode.Parse(json);
+        if (node is null) return;
+
+        if (node["Tts"] is not JsonObject ttsSection)
+        {
+            ttsSection = new JsonObject();
+            node["Tts"] = ttsSection;
+        }
+
+        ttsSection["Provider"] = provider;
+        ttsSection["Voice"] = voice;
+        ttsSection["Speed"] = speed;
+
+        File.WriteAllText(_gatewayPath, node.ToJsonString(options));
     }
 }

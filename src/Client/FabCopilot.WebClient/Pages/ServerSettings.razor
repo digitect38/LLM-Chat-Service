@@ -127,6 +127,44 @@
                         }
                     </div>
 
+                    <!-- TTS Engine -->
+                    <div class="config-section">
+                        <label class="config-label">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+                            TTS Engine
+                        </label>
+                        <div style="display:flex;gap:8px;margin-bottom:8px">
+                            <select class="config-select" style="flex:1" @bind="_ttsProvider" @bind:after="OnTtsProviderChanged">
+                                <option value="Kokoro">Kokoro 82M (Primary, &lt;0.3s)</option>
+                                <option value="CosyVoice">CosyVoice 3 (Premium, 150ms streaming)</option>
+                                <option value="Orpheus">Orpheus 400M (Premium, emotions)</option>
+                                <option value="EdgeTts">Edge TTS (Cloud fallback, &lt;1s)</option>
+                                <option value="Piper">Piper (CPU fallback, &lt;0.3s)</option>
+                                <option value="FishSpeech">FishSpeech 1.5 (GPU, ~2s)</option>
+                                <option value="Chatterbox">Chatterbox (GPU, EN only)</option>
+                                <option value="Xtts">XTTS 2.0 (Legacy, ~5s)</option>
+                                <option value="Bark">Bark (GPU, ~5s)</option>
+                                <option value="Browser">Browser SpeechSynthesis</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <label class="config-label" style="margin:0;min-width:50px;font-size:0.85rem">Voice</label>
+                            <select class="config-select" style="flex:1" @bind="_ttsVoice">
+                                @foreach (var v in _ttsVoiceOptions)
+                                {
+                                    <option value="@v">@v</option>
+                                }
+                            </select>
+                        </div>
+                        @if (_ttsProviderChanged)
+                        {
+                            <div class="config-warning" style="margin-top:8px;background:#f0fdf4;border-color:#bbf7d0;color:#16a34a">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                TTS 엔진 변경은 즉시 반영됩니다 (재시작 불필요)
+                            </div>
+                        }
+                    </div>
+
                     <!-- Dual Index Management -->
                     <div class="config-section">
                         <label class="config-label">
@@ -458,6 +496,35 @@
         public string? StandbyModelId { get; set; }
     }
 
+    // ─── TTS settings ───────────────────────────────────────────
+    private string _ttsProvider = "EdgeTts";
+    private string _ttsProviderOriginal = "EdgeTts";
+    private string _ttsVoice = "ko-KR-SunHiNeural";
+    private string _ttsVoiceOriginal = "ko-KR-SunHiNeural";
+    private bool _ttsProviderChanged => _ttsProvider != _ttsProviderOriginal || _ttsVoice != _ttsVoiceOriginal;
+    private List<string> _ttsVoiceOptions = new();
+
+    private static readonly Dictionary<string, string[]> TtsVoiceMap = new()
+    {
+        ["Kokoro"] = ["af_heart", "af_sky", "af_bella", "am_adam", "am_michael", "bf_emma", "bm_george", "bf_isabella"],
+        ["CosyVoice"] = ["korean_female", "korean_male", "chinese_female", "chinese_male", "english_female", "english_male"],
+        ["Orpheus"] = ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"],
+        ["EdgeTts"] = ["ko-KR-SunHiNeural", "ko-KR-InJoonNeural", "en-US-JennyNeural", "en-US-GuyNeural", "ja-JP-NanamiNeural"],
+        ["Piper"] = ["ko_KR-kss-low", "en_US-lessac-medium", "en_US-amy-medium", "en_GB-alba-medium"],
+        ["FishSpeech"] = ["default"],
+        ["Chatterbox"] = ["default"],
+        ["Xtts"] = ["Claribel Dervla"],
+        ["Bark"] = ["v2/ko_speaker_0", "v2/ko_speaker_1", "v2/ko_speaker_2", "v2/ko_speaker_3",
+                     "v2/en_speaker_0", "v2/en_speaker_1", "v2/en_speaker_2", "v2/en_speaker_3"],
+        ["Browser"] = ["(OS default)"],
+    };
+
+    private void OnTtsProviderChanged()
+    {
+        _ttsVoiceOptions = TtsVoiceMap.TryGetValue(_ttsProvider, out var voices) ? voices.ToList() : ["default"];
+        _ttsVoice = _ttsVoiceOptions.First();
+    }
+
     // ─── RAG pipeline toggles ────────────────────────────────────
     private bool _ragQueryRewriting;
     private bool _ragLlmReranking;
@@ -499,6 +566,14 @@
 
         _embeddingProvider = EmbeddingConfigService.GetCurrentProvider();
         _embeddingProviderOriginal = _embeddingProvider;
+
+        // Load TTS config
+        var (ttsProvider, ttsVoice, _) = EmbeddingConfigService.GetCurrentTtsConfig();
+        _ttsProvider = ttsProvider;
+        _ttsProviderOriginal = ttsProvider;
+        _ttsVoice = ttsVoice;
+        _ttsVoiceOriginal = ttsVoice;
+        _ttsVoiceOptions = TtsVoiceMap.TryGetValue(_ttsProvider, out var ttsVoices) ? ttsVoices.ToList() : ["default"];
 
         LoadRagToggles();
     }
@@ -586,6 +661,13 @@
                 _ragHybridSearchOrig = _ragHybridSearch;
                 _ragMmrOrig = _ragMmr;
                 _ragCacheOrig = _ragCache;
+            }
+
+            if (_ttsProviderChanged)
+            {
+                EmbeddingConfigService.SetTtsProvider(_ttsProvider, _ttsVoice);
+                _ttsProviderOriginal = _ttsProvider;
+                _ttsVoiceOriginal = _ttsVoice;
             }
 
             var restartNeeded = _llmProviderChanged || _embeddingProviderChanged || _modelChanged;

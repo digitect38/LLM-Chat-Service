@@ -35,7 +35,7 @@ public static class ObservabilityServiceExtensions
 
             // Console sink (human-readable)
             loggerConfig.WriteTo.Console(
-                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{ServiceName}] {Message:lj}{NewLine}{Exception}");
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{ServiceName}] {CorrelationId:l} {Message:lj}{NewLine}{Exception}");
 
             // Text file sink (daily rolling)
             loggerConfig.WriteTo.File(options.LogFilePath,

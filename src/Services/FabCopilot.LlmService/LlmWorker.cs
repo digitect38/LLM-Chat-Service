@@ -10,6 +10,7 @@ using FabCopilot.Llm.Models;
 using FabCopilot.Messaging.Interfaces;
 using FabCopilot.Observability.Metrics;
 using FabCopilot.Redis.Interfaces;
+using Serilog.Context;
 
 namespace FabCopilot.LlmService;
 
@@ -78,11 +79,12 @@ public sealed class LlmWorker : BackgroundService
                         continue;
                     }
 
+                    var correlationId = envelope.CorrelationId;
                     _logger.LogInformation(
-                        "Processing chat request. ConversationId={ConversationId}, EquipmentId={EquipmentId}, TraceId={TraceId}",
-                        request.ConversationId, request.EquipmentId, envelope.TraceId);
+                        "Processing chat request. ConversationId={ConversationId}, EquipmentId={EquipmentId}, TraceId={TraceId}, CorrelationId={CorrelationId}",
+                        request.ConversationId, request.EquipmentId, envelope.TraceId, correlationId);
 
-                    _ = ProcessChatRequestAsync(request, stoppingToken);
+                    _ = ProcessChatRequestAsync(request, correlationId, stoppingToken);
                 }
 
                 // Subscription completed (NATS idle timeout) — re-subscribe
@@ -98,8 +100,9 @@ public sealed class LlmWorker : BackgroundService
         _logger.LogInformation("LlmWorker stopped");
     }
 
-    private async Task ProcessChatRequestAsync(ChatRequest request, CancellationToken ct)
+    private async Task ProcessChatRequestAsync(ChatRequest request, string correlationId, CancellationToken ct)
     {
+        using var logScope = LogContext.PushProperty("CorrelationId", correlationId);
         var streamSubject = NatsSubjects.ChatStream(request.ConversationId);
 
         try
@@ -133,7 +136,7 @@ public sealed class LlmWorker : BackgroundService
             // 2.5. Retrieve RAG context from vector store (using sanitized message)
             var ragSw = FabMetrics.StartTimer();
             var ragResponse = await RetrieveRagContextAsync(
-                request.ConversationId, request.UserMessage, request.EquipmentId, ct);
+                request.ConversationId, request.UserMessage, request.EquipmentId, correlationId, ct);
             FabMetrics.RecordElapsed(ragSw, FabMetrics.LlmRagRetrievalDuration);
             var ragResults = ragResponse?.Results ?? [];
 
@@ -216,7 +219,7 @@ public sealed class LlmWorker : BackgroundService
 
                 await _messageBus.PublishAsync(
                     streamSubject,
-                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", chunk, request.EquipmentId),
+                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", chunk, request.EquipmentId, correlationId),
                     ct);
             }
 
@@ -258,7 +261,7 @@ public sealed class LlmWorker : BackgroundService
 
                 await _messageBus.PublishAsync(
                     streamSubject,
-                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", sourceChunk, request.EquipmentId),
+                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", sourceChunk, request.EquipmentId, correlationId),
                     ct);
             }
 
@@ -284,7 +287,7 @@ public sealed class LlmWorker : BackgroundService
 
                     await _messageBus.PublishAsync(
                         streamSubject,
-                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", disclaimerChunk, request.EquipmentId),
+                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", disclaimerChunk, request.EquipmentId, correlationId),
                         ct);
 
                     FabMetrics.LlmGateBTriggeredCount.Add(1);
@@ -306,7 +309,7 @@ public sealed class LlmWorker : BackgroundService
 
                     await _messageBus.PublishAsync(
                         streamSubject,
-                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", warningChunk, request.EquipmentId),
+                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", warningChunk, request.EquipmentId, correlationId),
                         ct);
 
                     FabMetrics.LlmGateBTriggeredCount.Add(1);
@@ -335,7 +338,7 @@ public sealed class LlmWorker : BackgroundService
 
                     await _messageBus.PublishAsync(
                         streamSubject,
-                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", gateCChunk, request.EquipmentId),
+                        MessageEnvelope<ChatStreamChunk>.Create("chat.stream.chunk", gateCChunk, request.EquipmentId, correlationId),
                         ct);
 
                     FabMetrics.LlmGateCTriggeredCount.Add(1);
@@ -399,7 +402,7 @@ public sealed class LlmWorker : BackgroundService
 
             await _messageBus.PublishAsync(
                 streamSubject,
-                MessageEnvelope<ChatStreamChunk>.Create("chat.stream.complete", completeChunk, request.EquipmentId),
+                MessageEnvelope<ChatStreamChunk>.Create("chat.stream.complete", completeChunk, request.EquipmentId, correlationId),
                 ct);
 
             // 7. Append the assistant message to the Redis conversation
@@ -441,7 +444,7 @@ public sealed class LlmWorker : BackgroundService
 
                 await _messageBus.PublishAsync(
                     streamSubject,
-                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.error", errorChunk, request.EquipmentId),
+                    MessageEnvelope<ChatStreamChunk>.Create("chat.stream.error", errorChunk, request.EquipmentId, correlationId),
                     ct);
             }
             catch (Exception publishEx)
@@ -457,8 +460,9 @@ public sealed class LlmWorker : BackgroundService
     {
         var messages = new List<LlmChatMessage>();
 
-        // System message with equipment context, RAG documents, and intent routing
-        var systemPrompt = BuildSystemPrompt(request.EquipmentId, request.Context, ragResults, isConfident, intent);
+        // System message with equipment context, RAG documents, intent routing, and log context
+        var systemPrompt = BuildSystemPrompt(
+            request.EquipmentId, request.Context, ragResults, isConfident, intent, request.LogContext);
         messages.Add(LlmChatMessage.System(systemPrompt));
 
         // Conversation history
@@ -498,7 +502,7 @@ public sealed class LlmWorker : BackgroundService
 
     internal static string BuildSystemPrompt(
         string equipmentId, EquipmentContext? context, List<RetrievalResult> ragResults,
-        bool isConfident = true, QueryIntent? intent = null)
+        bool isConfident = true, QueryIntent? intent = null, string? logContext = null)
     {
         var prompt = $"""
             You are an equipment copilot assistant for semiconductor fab equipment.
@@ -644,11 +648,28 @@ public sealed class LlmWorker : BackgroundService
             }
         }
 
+        // Inject log analysis context if provided
+        if (!string.IsNullOrWhiteSpace(logContext))
+        {
+            prompt += $"""
+
+            [LOG ANALYSIS CONTEXT]
+            아래는 사용자가 조회한 시스템 로그 데이터입니다. 이 데이터를 분석하여 답변에 활용하세요.
+            - 에러 패턴, 근본 원인, 서비스 간 연관 관계를 파악하세요.
+            - 시간순 이벤트 흐름과 에러 전파 경로를 설명하세요.
+            - 구체적인 해결 방안이나 조치 사항을 제시하세요.
+
+            <log-data>
+            {logContext}
+            </log-data>
+            """;
+        }
+
         return prompt;
     }
 
     private async Task<RagResponse?> RetrieveRagContextAsync(
-        string conversationId, string userMessage, string equipmentId, CancellationToken ct)
+        string conversationId, string userMessage, string equipmentId, string correlationId, CancellationToken ct)
     {
         var responseSubject = NatsSubjects.RagResponse(conversationId);
 
@@ -680,7 +701,7 @@ public sealed class LlmWorker : BackgroundService
 
             await _messageBus.PublishAsync(
                 NatsSubjects.RagRequest,
-                MessageEnvelope<RagRequest>.Create("rag.request", ragRequest, equipmentId),
+                MessageEnvelope<RagRequest>.Create("rag.request", ragRequest, equipmentId, correlationId),
                 ragCts.Token);
 
             _logger.LogDebug("Published RAG request. ConversationId={ConversationId}", conversationId);

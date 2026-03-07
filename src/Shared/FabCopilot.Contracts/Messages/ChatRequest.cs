@@ -20,6 +20,9 @@ public sealed class ChatRequest
     [JsonPropertyName("searchMode")]
     public string SearchMode { get; set; } = "hybrid";
 
+    [JsonPropertyName("logContext")]
+    public string? LogContext { get; set; }
+
     [JsonPropertyName("context")]
     public EquipmentContext? Context { get; set; }
 }

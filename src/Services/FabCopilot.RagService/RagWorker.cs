@@ -15,6 +15,7 @@ using FabCopilot.VectorStore.Configuration;
 using FabCopilot.VectorStore.Interfaces;
 using FabCopilot.VectorStore.Models;
 using Microsoft.Extensions.Options;
+using Serilog.Context;
 
 // Alias for clarity
 using ISynonymDict = FabCopilot.RagService.Interfaces.ISynonymDictionary;
@@ -114,11 +115,12 @@ public sealed class RagWorker : BackgroundService
                         continue;
                     }
 
+                    var correlationId = envelope.CorrelationId;
                     _logger.LogInformation(
-                        "Processing RAG request. Query={Query}, EquipmentId={EquipmentId}, TopK={TopK}, Pipeline={Pipeline}, TraceId={TraceId}",
-                        request.Query, request.EquipmentId, request.TopK, request.PipelineMode, envelope.TraceId);
+                        "Processing RAG request. Query={Query}, EquipmentId={EquipmentId}, TopK={TopK}, Pipeline={Pipeline}, TraceId={TraceId}, CorrelationId={CorrelationId}",
+                        request.Query, request.EquipmentId, request.TopK, request.PipelineMode, envelope.TraceId, correlationId);
 
-                    _ = ProcessRagRequestAsync(request, stoppingToken);
+                    _ = ProcessRagRequestAsync(request, correlationId, stoppingToken);
                 }
 
                 // Subscription completed (NATS idle timeout) — re-subscribe
@@ -134,8 +136,9 @@ public sealed class RagWorker : BackgroundService
         _logger.LogInformation("RagWorker stopped");
     }
 
-    private async Task ProcessRagRequestAsync(RagRequest request, CancellationToken ct)
+    private async Task ProcessRagRequestAsync(RagRequest request, string correlationId, CancellationToken ct)
     {
+        using var logScope = LogContext.PushProperty("CorrelationId", correlationId);
         var conversationId = request.ConversationId ?? Guid.NewGuid().ToString();
         var responseSubject = NatsSubjects.RagResponse(conversationId);
 
@@ -203,7 +206,7 @@ public sealed class RagWorker : BackgroundService
             // Publish response
             await _messageBus.PublishAsync(
                 responseSubject,
-                MessageEnvelope<RagResponse>.Create("rag.response", response, request.EquipmentId),
+                MessageEnvelope<RagResponse>.Create("rag.response", response, request.EquipmentId, correlationId),
                 ct);
 
             _logger.LogInformation(
@@ -232,7 +235,7 @@ public sealed class RagWorker : BackgroundService
 
                 await _messageBus.PublishAsync(
                     responseSubject,
-                    MessageEnvelope<RagResponse>.Create("rag.response.error", errorResponse, request.EquipmentId),
+                    MessageEnvelope<RagResponse>.Create("rag.response.error", errorResponse, request.EquipmentId, correlationId),
                     ct);
             }
             catch (Exception publishEx)

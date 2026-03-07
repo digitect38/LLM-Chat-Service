@@ -1,5 +1,10 @@
 # Restart script — kill all .NET services and restart as background processes (no extra windows)
-$root = "C:\Develop25\LLM-Chat-Service"
+# -ExcludeDashboard: skip ServiceDashboard stop/start (used when invoked FROM Dashboard)
+param(
+    [switch]$ExcludeDashboard
+)
+
+$root = Split-Path -Parent $PSScriptRoot   # auto-detect from script location
 $logDir = "$root\logs"
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
@@ -11,6 +16,9 @@ $names = @(
     "FabCopilot.KnowledgeService",
     "FabCopilot.RagService"
 )
+if (-not $ExcludeDashboard) {
+    $names += "FabCopilot.ServiceDashboard"
+}
 
 foreach ($n in $names) {
     $p = Get-Process -Name $n -ErrorAction SilentlyContinue
@@ -41,6 +49,9 @@ $projects = [ordered]@{
     "RagService"       = "src\Services\FabCopilot.RagService"
     "WebClient"        = "src\Client\FabCopilot.WebClient"
 }
+if (-not $ExcludeDashboard) {
+    $projects["ServiceDashboard"] = "src\Client\FabCopilot.ServiceDashboard"
+}
 
 foreach ($entry in $projects.GetEnumerator()) {
     $name = $entry.Key
@@ -60,8 +71,9 @@ Write-Host "`n=== Waiting for startup ===" -ForegroundColor Yellow
 Start-Sleep -Seconds 6
 
 $ports = [ordered]@{
-    "ChatGateway (5000)" = 5000
-    "WebClient (5010)"   = 5010
+    "ChatGateway (5000)"      = 5000
+    "WebClient (5010)"        = 5010
+    "ServiceDashboard (5020)" = 5020
 }
 
 foreach ($ep in $ports.GetEnumerator()) {
@@ -76,4 +88,5 @@ foreach ($ep in $ports.GetEnumerator()) {
 
 Write-Host "`n=== Done (0 extra windows) ===" -ForegroundColor Green
 Write-Host "  WebClient:  http://localhost:5010"
+Write-Host "  Dashboard:  http://localhost:5020"
 Write-Host "  Logs:       $logDir\"

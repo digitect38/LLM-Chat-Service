@@ -1,8 +1,10 @@
 @page "/"
+@using System.Text
 @using Microsoft.Extensions.Options
 @using FabCopilot.Contracts.Messages
 @using FabCopilot.Observability.Metrics
 @using FabCopilot.WebClient.Configuration
+@using FabCopilot.WebClient.Models
 @using FabCopilot.WebClient.Services
 @inject ChatService ChatService
 @inject IJSRuntime JS
@@ -15,105 +17,123 @@
 @inject LogAnalyzerService LogAnalyzerService
 @implements IAsyncDisposable
 
-<div class="chat-app">
-    <!-- ===== Sidebar ===== -->
-    <aside class="sidebar @(_sidebarOpen ? "" : "sidebar-closed")">
-        <div class="sidebar-top">
-            <button class="icon-btn" @onclick="ToggleSidebar" title="사이드바 닫기">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-            </button>
-            <button class="icon-btn" @onclick="StartNewChat" title="새 대화">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
-        </div>
+<div class="chat-app @AppThemeClass @DesktopPanelClass">
+    <!-- ===== Panel Tab Bar ===== -->
+    <div class="panel-tabs">
+        <button class="panel-tab @(_activePanel == PanelKind.List ? "panel-tab-active" : "")"
+                @onclick="() => SetActivePanel(PanelKind.List)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="4" x2="21" y2="4"/><line x1="6" y1="10" x2="21" y2="10"/><line x1="6" y1="16" x2="21" y2="16"/><circle cx="3" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="16" r="1" fill="currentColor" stroke="none"/></svg>
+            <span>목록</span>
+            @if (_conversationHistory.Count > 0)
+            {
+                <span class="tab-badge">@_conversationHistory.Count</span>
+            }
+        </button>
+        <button class="panel-tab @(_activePanel == PanelKind.Chat ? "panel-tab-active" : "")"
+                @onclick="() => SetActivePanel(PanelKind.Chat)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7" opacity="0.3"/><path d="M12 2 L13.1 8.2 L17.4 4.6 L14.5 10.5 L21 10.3 L15.2 13 L18.8 18.4 L12.8 14.8 L12 22 L11.2 14.8 L5.2 18.4 L8.8 13 L3 10.3 L9.5 10.5 L6.6 4.6 L10.9 8.2 Z"/></svg>
+            <span>채팅</span>
+            <span class="status-dot @(ChatService.IsConnected ? "dot-on" : "dot-off")"></span>
+        </button>
+        <button class="panel-tab @(_activePanel == PanelKind.Log ? "panel-tab-active" : "")"
+                @onclick="() => SetActivePanel(PanelKind.Log)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 010-4h14v4"/><path d="M3 5v14a2 2 0 002 2h16v-5"/><path d="M18 12a2 2 0 100 4 2 2 0 000-4z"/></svg>
+            <span>로그 분석</span>
+        </button>
+        <button class="panel-tab @(_activePanel == PanelKind.Cite ? "panel-tab-active" : "")"
+                @onclick="() => SetActivePanel(PanelKind.Cite)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>참고 문서</span>
+            @if (_activeCitations is { Count: > 0 })
+            {
+                <span class="tab-badge">@_activeCitations.Count</span>
+            }
+        </button>
+        <button class="panel-tab" @onclick='() => Navigation.NavigateTo("/settings")'>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            <span>설정</span>
+        </button>
+        <button class="panel-tab" @onclick='() => Navigation.NavigateTo("/server/settings")'>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            <span>서버</span>
+        </button>
+        <span class="panel-tabs-version">@AppVersion</span>
+    </div>
 
-        <nav class="sidebar-conversations">
-            @if (_isLoadingHistory)
-            {
-                <div class="sidebar-empty">기록 로딩 중...</div>
-            }
-            else if (_conversationHistory.Count == 0)
-            {
-                <div class="sidebar-empty">대화 기록 없음</div>
-            }
-            else
-            {
-                @foreach (var conv in _conversationHistory)
-                {
-                    <div class="conv-item-wrapper">
-                        <button class="conv-item @(conv.Id == _conversationId ? "conv-active" : "")"
-                                @onclick="() => SwitchConversation(conv.Id)"
-                                title="@conv.Title">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                            <span class="conv-title">@conv.Title</span>
-                        </button>
-                        <button class="conv-delete-btn"
-                                @onclick="() => DeleteConversationAsync(conv.Id)"
-                                @onclick:stopPropagation="true"
-                                title="대화 삭제">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        </button>
-                    </div>
-                }
-            }
-        </nav>
+    <!-- ===== Panel Viewport ===== -->
+    <div class="panel-viewport">
+        <div class="panel-track" style="transform: translateX(-@((int)_activePanel * 25)%)">
 
-        <div class="sidebar-footer">
-            <div class="sidebar-equipment">
-                <select class="equipment-select"
-                        @bind="EquipmentId"
-                        disabled="@_isSending">
-                    @foreach (var eq in _availableEquipment)
+            <!-- ── Panel 0: Conversation List ── -->
+            <section class="panel panel-list">
+                <div class="plist-top">
+                    <h3>대화 기록</h3>
+                    <button class="icon-btn" @onclick="StartNewChat" title="새 대화">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </button>
+                </div>
+                <nav class="plist-conversations">
+                    @if (_isLoadingHistory)
                     {
-                        <option value="@eq.Id">@eq.DisplayName</option>
+                        <div class="plist-empty">기록 로딩 중...</div>
                     }
-                </select>
-                <span class="status-dot @(ChatService.IsConnected ? "dot-on" : "dot-off")"></span>
-            </div>
-            <button class="sidebar-settings-btn" @onclick='() => Navigation.NavigateTo("/settings")'>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-                설정
-            </button>
-            <button class="sidebar-settings-btn" @onclick='() => Navigation.NavigateTo("/server/settings")'>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-                서버 설정
-            </button>
-        </div>
-    </aside>
+                    else if (_conversationHistory.Count == 0)
+                    {
+                        <div class="plist-empty">대화 기록 없음</div>
+                    }
+                    else
+                    {
+                        @foreach (var conv in _conversationHistory)
+                        {
+                            <div class="conv-item-wrapper">
+                                <button class="conv-item @(conv.Id == _conversationId ? "conv-active" : "")"
+                                        @onclick="() => SelectConversation(conv.Id)"
+                                        title="@conv.Title">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                                    <span class="conv-title">@conv.Title</span>
+                                </button>
+                                <button class="conv-delete-btn"
+                                        @onclick="() => DeleteConversationAsync(conv.Id)"
+                                        @onclick:stopPropagation="true"
+                                        title="대화 삭제">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                            </div>
+                        }
+                    }
+                </nav>
+                <div class="plist-footer">
+                    <div class="sidebar-equipment">
+                        <select class="equipment-select"
+                                @bind="EquipmentId"
+                                disabled="@_isSending">
+                            @foreach (var eq in _availableEquipment)
+                            {
+                                <option value="@eq.Id">@eq.DisplayName</option>
+                            }
+                        </select>
+                        <span class="status-dot @(ChatService.IsConnected ? "dot-on" : "dot-off")"></span>
+                    </div>
+                </div>
+            </section>
 
-    <!-- ===== Main Content ===== -->
-    <main class="chat-main">
-        <!-- Top bar -->
-        <div class="chat-topbar">
-            @if (!_sidebarOpen)
-            {
-                <button class="icon-btn" @onclick="ToggleSidebar" title="사이드바 열기">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-                </button>
-                <button class="icon-btn" @onclick="StartNewChat" title="새 대화">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-            }
-            <div class="render-mode-toggle">
-                <button class="toggle-btn @(_renderMode == "jit" ? "toggle-active" : "")"
-                        @onclick='() => SetRenderMode("jit")'>JIT</button>
-                <button class="toggle-btn @(_renderMode == "fade" ? "toggle-active" : "")"
-                        @onclick='() => SetRenderMode("fade")'>Fade</button>
-                <button class="toggle-btn @(_renderMode == "batch" ? "toggle-active" : "")"
-                        @onclick='() => SetRenderMode("batch")'>Batch</button>
-            </div>
-            <div class="topbar-spacer"></div>
-            <button class="topbar-icon-btn @(_logPaneOpen ? "topbar-icon-active" : "")"
-                    @onclick="ToggleLogPane"
-                    title="@(_logPaneOpen ? "로그 분석 패널 닫기" : "로그 분석 패널 열기")">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 010-4h14v4"/><path d="M3 5v14a2 2 0 002 2h16v-5"/><path d="M18 12a2 2 0 100 4 2 2 0 000-4z"/></svg>
-            </button>
-            <button class="topbar-icon-btn @(_citationPaneOpen ? "topbar-icon-active" : "")"
-                    @onclick="ToggleCitationPane"
-                    title="@(_citationPaneOpen ? "참조 패널 닫기" : "참조 패널 열기")">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-            </button>
-        </div>
+            <!-- ── Panel 1: Chat ── -->
+            <section class="panel panel-chat">
+                <!-- Top bar (chat-specific controls) -->
+                <div class="chat-topbar">
+                    <div class="render-mode-toggle">
+                        <button class="toggle-btn @(_renderMode == "jit" ? "toggle-active" : "")"
+                                @onclick='() => SetRenderMode("jit")'>JIT</button>
+                        <button class="toggle-btn @(_renderMode == "fade" ? "toggle-active" : "")"
+                                @onclick='() => SetRenderMode("fade")'>Fade</button>
+                        <button class="toggle-btn @(_renderMode == "batch" ? "toggle-active" : "")"
+                                @onclick='() => SetRenderMode("batch")'>Batch</button>
+                    </div>
+                    <div class="topbar-spacer"></div>
+                    <button class="icon-btn" @onclick="StartNewChat" title="새 대화">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </button>
+                </div>
 
         <!-- Messages -->
         <div class="chat-messages" id="chatMessages">
@@ -216,13 +236,13 @@
                                     <div class="msg-actions">
                                         @if (msg.IsUser)
                                         {
-                                            <button class="action-btn" @onclick="() => StartEdit(idx)" title="편집" disabled="@_isSending">
+                                            <button class="action-btn action-btn-edit" @onclick="() => StartEdit(idx)" title="편집" disabled="@_isSending">
                                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                             </button>
                                         }
                                         else
                                         {
-                                            <button class="action-btn @(msg.CopyFeedback ? "action-copied" : "")" @onclick="() => CopyMessage(idx)" title="복사">
+                                            <button class="action-btn action-btn-copy @(msg.CopyFeedback ? "action-copied" : "")" @onclick="() => CopyMessage(idx)" title="복사">
                                                 @if (msg.CopyFeedback)
                                                 {
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -232,13 +252,13 @@
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                                                 }
                                             </button>
-                                            <button class="action-btn @(msg.Feedback == 1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, true)" title="좋아요">
+                                            <button class="action-btn action-btn-like @(msg.Feedback == 1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, true)" title="좋아요">
                                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="@(msg.Feedback == 1 ? "currentColor" : "none")" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
                                             </button>
-                                            <button class="action-btn @(msg.Feedback == -1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, false)" title="싫어요">
+                                            <button class="action-btn action-btn-dislike @(msg.Feedback == -1 ? "action-active" : "")" @onclick="() => SendFeedback(idx, false)" title="싫어요">
                                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="@(msg.Feedback == -1 ? "currentColor" : "none")" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zm7-13h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>
                                             </button>
-                                            <button class="action-btn @(_ttsPlayingIdx == idx ? "action-active" : "")"
+                                            <button class="action-btn action-btn-tts @(_ttsPlayingIdx == idx ? "action-active" : "")"
                                                     @onclick="() => PlayTts(idx)"
                                                     title="@(_ttsPlayingIdx == idx ? "TTS 중지" : "음성으로 듣기")"
                                                     disabled="@(_ttsLoading && _ttsPlayingIdx != idx)">
@@ -257,7 +277,7 @@
                                             </button>
                                             @if (msg.Citations is { Count: > 0 })
                                             {
-                                                <button class="action-btn" @onclick="() => ShowCitations(idx)" title="참조 문서">
+                                                <button class="action-btn action-btn-cite" @onclick="() => ShowCitations(idx)" title="참조 문서">
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                                                 </button>
                                             }
@@ -267,7 +287,7 @@
                                             }
                                             @if (idx == _messages.Count - 1)
                                             {
-                                                <button class="action-btn" @onclick="RegenerateResponse" title="재생성" disabled="@_isSending">
+                                                <button class="action-btn action-btn-regen" @onclick="RegenerateResponse" title="재생성" disabled="@_isSending">
                                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
                                                 </button>
                                             }
@@ -432,18 +452,27 @@
             }
             <div class="input-disclaimer">Fab Copilot은 장비 매뉴얼 기반으로 답변하며, 오류가 있을 수 있습니다.</div>
         </div>
-    </main>
+            </section>
 
-    <!-- ===== Log Analyzer Pane ===== -->
-    <LogAnalyzerPane IsOpen="_logPaneOpen"
-                     OnClose="CloseLogPane" />
+            <!-- ── Panel 2: Log Analyzer ── -->
+            <section class="panel panel-log">
+                <LogAnalyzerPane @ref="_logPaneRef"
+                                 IsOpen="true"
+                                 OnClose="() => SetActivePanel(PanelKind.Chat)"
+                                 OnAnalyzeRequest="HandleLogAnalyzeRequest" />
+            </section>
 
-    <!-- ===== Citation Pane ===== -->
-    <CitationPane IsOpen="_citationPaneOpen"
-                  Citations="_activeCitations"
-                  AutoOpenPage="_autoOpenPage"
-                  AutoOpenSeq="_autoOpenSeq"
-                  OnClose="CloseCitationPane" />
+            <!-- ── Panel 3: Citations ── -->
+            <section class="panel panel-cite">
+                <CitationPane IsOpen="true"
+                              Citations="_activeCitations"
+                              AutoOpenPage="_autoOpenPage"
+                              AutoOpenSeq="_autoOpenSeq"
+                              OnClose="() => SetActivePanel(PanelKind.Chat)" />
+            </section>
+
+        </div>
+    </div>
 </div>
 
 @if (!string.IsNullOrEmpty(_connectionError))
@@ -455,6 +484,12 @@
 }
 
 @code {
+    private const string AppVersion = "v4.85.2";
+    private const string AppThemeClass = "theme-v485";
+
+    private enum PanelKind { List = 0, Chat = 1, Log = 2, Cite = 3 }
+    private PanelKind _activePanel = PanelKind.Chat;
+
     private string _equipmentId = "CMP01";
     private string EquipmentId
     {
@@ -475,12 +510,10 @@
     private bool _isStopping;
 
     // UI state
-    private bool _sidebarOpen = true;
-    private bool _citationPaneOpen;
-    private bool _logPaneOpen;
     private List<CitationInfo>? _activeCitations;
     private string _selectedModelId = string.Empty;
     private string _searchMode = "hybrid";
+    private string? _pendingLogContext;
     private string _renderMode = "jit";  // "jit" | "fade" | "batch"
     private List<ModelEntry> _availableModels = new();
     private List<EquipmentEntry> _availableEquipment = new();
@@ -540,6 +573,9 @@
     private int? _autoOpenPage;
     private int _autoOpenSeq;
 
+    // Log pane ref (for timestamp navigation)
+    private LogAnalyzerPane? _logPaneRef;
+
     private bool _isLoadingHistory;
 
     protected override async Task OnInitializedAsync()
@@ -566,9 +602,24 @@
         await LoadConversationHistoryAsync();
     }
 
-    // ─── Sidebar ────────────────────────────────────────────────────────
+    // ─── Panel Navigation ─────────────────────────────────────────────
 
-    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+    private string DesktopPanelClass => _activePanel switch
+    {
+        PanelKind.Log => "dp-log",
+        PanelKind.Cite => "dp-cite",
+        _ => ""
+    };
+
+    private void SetActivePanel(PanelKind panel)
+    {
+        // Toggle: clicking the already-active right panel closes it
+        if (_activePanel == panel && (panel == PanelKind.Log || panel == PanelKind.Cite))
+            _activePanel = PanelKind.Chat;
+        else
+            _activePanel = panel;
+        StateHasChanged();
+    }
 
     private async Task StartNewChat()
     {
@@ -591,6 +642,16 @@
         }
 
         StateHasChanged();
+    }
+
+    private async Task SelectConversation(string convId)
+    {
+        // 1. Switch to Chat panel IMMEDIATELY — gives instant visual feedback on mobile
+        _activePanel = PanelKind.Chat;
+        StateHasChanged();
+
+        // 2. Load conversation data (async, may take time)
+        await SwitchConversation(convId);
     }
 
     private async Task SwitchConversation(string convId)
@@ -620,26 +681,33 @@
         else
         {
             // Lazy-load full messages from Redis
-            var detail = await ChatService.GetConversationAsync(EquipmentId, convId);
-            if (detail?.Messages is { Count: > 0 })
+            try
             {
-                foreach (var m in detail.Messages)
+                var detail = await ChatService.GetConversationAsync(EquipmentId, convId);
+                if (detail?.Messages is { Count: > 0 })
                 {
-                    var isUser = m.Role == 0; // 0=User
-                    var text = m.Text;
-                    var html = isUser ? null : await RenderMarkdownAsync(text);
-                    _messages.Add(new ChatMessageViewModel
+                    foreach (var m in detail.Messages)
                     {
-                        Text = text,
-                        RenderedHtml = html,
-                        IsUser = isUser
-                    });
+                        var isUser = m.Role == 0; // 0=User
+                        var text = m.Text;
+                        var html = isUser ? null : await RenderMarkdownAsync(text);
+                        _messages.Add(new ChatMessageViewModel
+                        {
+                            Text = text,
+                            RenderedHtml = html,
+                            IsUser = isUser
+                        });
+                    }
+                    // Cache into the sidebar item
+                    target.Messages = _messages.Select(m => new ChatMessageViewModel
+                    {
+                        Text = m.Text, RenderedHtml = m.RenderedHtml, IsUser = m.IsUser, Error = m.Error
+                    }).ToList();
                 }
-                // Cache into the sidebar item
-                target.Messages = _messages.Select(m => new ChatMessageViewModel
-                {
-                    Text = m.Text, RenderedHtml = m.RenderedHtml, IsUser = m.IsUser, Error = m.Error
-                }).ToList();
+            }
+            catch (Exception ex)
+            {
+                _connectionError = $"대화 로딩 실패: {ex.Message}";
             }
         }
 
@@ -804,7 +872,9 @@
 
         try
         {
-            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId, _searchMode);
+            var logContext = _pendingLogContext ?? BuildAutoLogContext(text);
+            _pendingLogContext = null;
+            await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId, _searchMode, logContext);
         }
         catch (Exception ex)
         {
@@ -986,8 +1056,12 @@
         {
             _dotNetRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("citationInterop.init", _dotNetRef);
+            await JS.InvokeVoidAsync("logTimestampInterop.init", _dotNetRef);
 
             await JS.InvokeVoidAsync("audioRecorder.init", _dotNetRef, EquipmentId);
+
+            // Mobile swipe navigation
+            try { await JS.InvokeVoidAsync("panelSwipe.init", _dotNetRef); } catch { }
 
             var savedRenderMode = await JS.InvokeAsync<string>("clientSettings.getRenderMode");
             if (!string.IsNullOrEmpty(savedRenderMode))
@@ -1001,6 +1075,26 @@
                 _timeoutBudgetSeconds = budget;
             }
 
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public void SwipePrev()
+    {
+        if (_activePanel > PanelKind.List)
+        {
+            _activePanel--;
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public void SwipeNext()
+    {
+        if (_activePanel < PanelKind.Cite)
+        {
+            _activePanel++;
             StateHasChanged();
         }
     }
@@ -1020,9 +1114,31 @@
 
         _autoOpenPage = page;
         _autoOpenSeq++;  // increment so CitationPane detects repeated clicks on same page
-        _citationPaneOpen = true;
+        _activePanel = PanelKind.Cite;
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task OnLogTimestampClick(string timestamp)
+    {
+        _activePanel = PanelKind.Log;
+        StateHasChanged();
+        if (_logPaneRef is not null)
+        {
+            await _logPaneRef.NavigateToTimestamp(timestamp);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnLogCitationClick(string timestamp, string keyword)
+    {
+        _activePanel = PanelKind.Log;
+        StateHasChanged();
+        if (_logPaneRef is not null)
+        {
+            await _logPaneRef.NavigateToCitation(timestamp, keyword);
+        }
     }
 
     // ─── Citation Pane ─────────────────────────────────────────────────
@@ -1034,51 +1150,58 @@
         if (msg.Citations is { Count: > 0 })
         {
             _activeCitations = msg.Citations;
-            _citationPaneOpen = true;
+            _activePanel = PanelKind.Cite;
             StateHasChanged();
         }
     }
 
-    private void CloseCitationPane()
+    // ─── Log ↔ Chat Integration ─────────────────────────────────────────
+
+    private static readonly HashSet<string> LogKeywords = new(StringComparer.OrdinalIgnoreCase)
     {
-        _citationPaneOpen = false;
-        _autoOpenPage = null;
-        StateHasChanged();
+        "로그", "에러", "오류", "경고", "장애", "예외", "스택",
+        "log", "error", "warning", "exception", "stacktrace",
+        "서비스 상태", "서비스 헬스", "service health",
+        "최근 에러", "에러 분석", "로그 분석", "장애 분석"
+    };
+
+    private static bool DetectLogIntent(string message)
+    {
+        return LogKeywords.Any(kw => message.Contains(kw, StringComparison.OrdinalIgnoreCase));
     }
 
-    private void ToggleCitationPane()
+    private string? BuildAutoLogContext(string userMessage)
     {
-        if (_citationPaneOpen)
+        if (!DetectLogIntent(userMessage)) return null;
+
+        var sb = new StringBuilder();
+
+        var now = DateTime.Now;
+        var recentErrors = LogAnalyzerService.GetTopErrors(now.AddHours(-1), now);
+        if (recentErrors.Count > 0)
         {
-            CloseCitationPane();
+            sb.AppendLine("## 최근 1시간 Top 에러:");
+            foreach (var err in recentErrors.Take(10))
+                sb.AppendLine($"- [{err.Count}회] {err.ServiceName}: {err.MessageTemplate}");
         }
-        else
+
+        var health = LogAnalyzerService.GetServiceHealth(now.AddHours(-1), now);
+        if (health.Count > 0)
         {
-            // Re-open with last active citations, or show empty state
-            if (_activeCitations is null || _activeCitations.Count == 0)
-            {
-                // Find last assistant message with citations
-                var lastWithCitations = _messages.LastOrDefault(m => !m.IsUser && m.Citations is { Count: > 0 });
-                if (lastWithCitations is not null)
-                    _activeCitations = lastWithCitations.Citations;
-            }
-            _citationPaneOpen = true;
-            StateHasChanged();
+            sb.AppendLine("\n## 서비스 헬스:");
+            foreach (var svc in health)
+                sb.AppendLine($"- {svc.ServiceName}: Total={svc.TotalCount}, ERR={svc.ErrorCount}, WRN={svc.WarningCount}");
         }
+
+        return sb.Length > 0 ? sb.ToString() : null;
     }
 
-    // ─── Log Analyzer Pane ─────────────────────────────────────────────
-
-    private void ToggleLogPane()
+    private async Task HandleLogAnalyzeRequest(LogAnalysisRequest request)
     {
-        _logPaneOpen = !_logPaneOpen;
+        UserMessage = request.UserMessage;
+        _pendingLogContext = request.LogContext;
         StateHasChanged();
-    }
-
-    private void CloseLogPane()
-    {
-        _logPaneOpen = false;
-        StateHasChanged();
+        await SendMessageAsync();
     }
 
     // ─── TTS (Text-to-Speech) ───────────────────────────────────────────
@@ -1551,7 +1674,7 @@
                 {
                     assistantMsg.Citations = chunk.Citations;
                     _activeCitations = chunk.Citations;
-                    _citationPaneOpen = true;
+                    _activePanel = PanelKind.Cite;
                 }
 
                 StateHasChanged();
@@ -1863,6 +1986,7 @@
         if (_staleStreamTimer is not null) await _staleStreamTimer.DisposeAsync();
         _timeoutTimer?.Dispose();
         try { await JS.InvokeVoidAsync("citationInterop.dispose"); } catch { }
+        try { await JS.InvokeVoidAsync("logTimestampInterop.dispose"); } catch { }
         try { await JS.InvokeVoidAsync("audioRecorder.dispose"); } catch { }
         _dotNetRef?.Dispose();
         await ChatService.DisconnectAsync();

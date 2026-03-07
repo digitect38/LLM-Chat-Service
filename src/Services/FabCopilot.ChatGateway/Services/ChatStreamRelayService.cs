@@ -1,6 +1,7 @@
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Messaging.Interfaces;
 using FabCopilot.Redis.Interfaces;
+using Serilog.Context;
 
 namespace FabCopilot.ChatGateway.Services;
 
@@ -50,52 +51,55 @@ public sealed class ChatStreamRelayService : BackgroundService
                     var conversationId = chunk.ConversationId;
                     var equipmentId = envelope.EquipmentId;
 
-                    if (string.IsNullOrEmpty(equipmentId))
+                    using (LogContext.PushProperty("CorrelationId", envelope.CorrelationId))
                     {
-                        _logger.LogWarning(
-                            "Received chunk for conversation {ConversationId} with no equipmentId, cannot route",
-                            conversationId);
-                        continue;
-                    }
+                        if (string.IsNullOrEmpty(equipmentId))
+                        {
+                            _logger.LogWarning(
+                                "Received chunk for conversation {ConversationId} with no equipmentId, cannot route",
+                                conversationId);
+                            continue;
+                        }
 
-                    _logger.LogDebug(
-                        "Relaying chunk for conversation {ConversationId} to equipment {EquipmentId} (complete={IsComplete})",
-                        conversationId, equipmentId, chunk.IsComplete);
+                        _logger.LogDebug(
+                            "Relaying chunk for conversation {ConversationId} to equipment {EquipmentId} (complete={IsComplete})",
+                            conversationId, equipmentId, chunk.IsComplete);
 
-                    try
-                    {
-                        await _connectionManager.SendToEquipmentAsync(equipmentId, conversationId, chunk);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex,
-                            "Failed to relay chunk for conversation {ConversationId} to equipment {EquipmentId}",
-                            conversationId, equipmentId);
-                    }
-
-                    // When the stream is complete, persist the assembled assistant response
-                    if (chunk.IsComplete && !string.IsNullOrEmpty(chunk.Token))
-                    {
                         try
                         {
-                            var assistantMessage = new FabCopilot.Contracts.Models.ChatMessage
-                            {
-                                Role = FabCopilot.Contracts.Enums.MessageRole.Assistant,
-                                Text = chunk.Token,
-                                Timestamp = DateTimeOffset.UtcNow
-                            };
-
-                            await _conversationStore.AppendMessageAsync(conversationId, assistantMessage, stoppingToken);
-
-                            _logger.LogInformation(
-                                "Persisted assistant response for conversation {ConversationId}",
-                                conversationId);
+                            await _connectionManager.SendToEquipmentAsync(equipmentId, conversationId, chunk);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex,
-                                "Failed to persist assistant response for conversation {ConversationId}",
-                                conversationId);
+                                "Failed to relay chunk for conversation {ConversationId} to equipment {EquipmentId}",
+                                conversationId, equipmentId);
+                        }
+
+                        // When the stream is complete, persist the assembled assistant response
+                        if (chunk.IsComplete && !string.IsNullOrEmpty(chunk.Token))
+                        {
+                            try
+                            {
+                                var assistantMessage = new FabCopilot.Contracts.Models.ChatMessage
+                                {
+                                    Role = FabCopilot.Contracts.Enums.MessageRole.Assistant,
+                                    Text = chunk.Token,
+                                    Timestamp = DateTimeOffset.UtcNow
+                                };
+
+                                await _conversationStore.AppendMessageAsync(conversationId, assistantMessage, stoppingToken);
+
+                                _logger.LogInformation(
+                                    "Persisted assistant response for conversation {ConversationId}",
+                                    conversationId);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex,
+                                    "Failed to persist assistant response for conversation {ConversationId}",
+                                    conversationId);
+                            }
                         }
                     }
                 }

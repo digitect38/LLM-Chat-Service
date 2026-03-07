@@ -8,6 +8,7 @@ using FabCopilot.Contracts.Messages;
 using FabCopilot.Contracts.Models;
 using FabCopilot.Messaging.Interfaces;
 using FabCopilot.Redis.Interfaces;
+using Serilog.Context;
 
 namespace FabCopilot.ChatGateway.Services;
 
@@ -290,19 +291,24 @@ public sealed class ConnectionManager : IConnectionManager
         await _conversationStore.AppendMessageAsync(chatRequest.ConversationId, chatMessage, ct);
 
         // Publish the chat request to the NATS message bus
-        var envelope = MessageEnvelope<ChatRequest>.Create(
-            type: "chat.request",
-            payload: chatRequest,
-            equipmentId: equipmentId);
+        var correlationId = Guid.NewGuid().ToString("N");
+        using (LogContext.PushProperty("CorrelationId", correlationId))
+        {
+            var envelope = MessageEnvelope<ChatRequest>.Create(
+                type: "chat.request",
+                payload: chatRequest,
+                equipmentId: equipmentId,
+                correlationId: correlationId);
 
-        await _messageBus.PublishAsync(NatsSubjects.ChatRequest, envelope, ct);
+            await _messageBus.PublishAsync(NatsSubjects.ChatRequest, envelope, ct);
 
-        // Log query to audit trail (fire-and-forget)
-        _ = _auditTrail.LogQueryAsync(equipmentId, chatRequest.ConversationId, chatRequest.UserMessage, ct);
+            // Log query to audit trail (fire-and-forget)
+            _ = _auditTrail.LogQueryAsync(equipmentId, chatRequest.ConversationId, chatRequest.UserMessage, ct);
 
-        _logger.LogInformation(
-            "Published chat request for conversation {ConversationId} to {Subject}",
-            chatRequest.ConversationId,
-            NatsSubjects.ChatRequest);
+            _logger.LogInformation(
+                "Published chat request for conversation {ConversationId} to {Subject}",
+                chatRequest.ConversationId,
+                NatsSubjects.ChatRequest);
+        }
     }
 }
