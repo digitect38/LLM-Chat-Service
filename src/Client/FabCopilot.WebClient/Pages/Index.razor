@@ -141,12 +141,9 @@
             {
                 <div class="empty-state">
                     <div class="empty-logo">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="12" r="7" fill="white" opacity="0.18"/>
-                            <path d="M12 2 L13.1 8.2 L17.4 4.6 L14.5 10.5 L21 10.3 L15.2 13 L18.8 18.4 L12.8 14.8 L12 22 L11.2 14.8 L5.2 18.4 L8.8 13 L3 10.3 L9.5 10.5 L6.6 4.6 L10.9 8.2 Z" fill="white"/>
-                        </svg>
+                        <img src="images/eagle_256x256.png" alt="FabWise" class="welcome-eagle" />
                     </div>
-                    <h1 class="empty-title">Fab Copilot</h1>
+                    <h1 class="empty-title">FabWise</h1>
                     <p class="empty-subtitle">반도체 장비 운영 어시스턴트</p>
                     <div class="empty-hints">
                         <div class="hint-card" @onclick='() => SetQuickMessage("CMP 패드 교체 주기는 어떻게 되나요?")'>CMP 패드 교체 주기</div>
@@ -163,25 +160,7 @@
                     var msg = _messages[idx];
                     <div class="msg-row @(msg.IsUser ? "msg-user-row" : "msg-assistant-row")">
                         <div class="msg-wrapper">
-                            <div class="msg-avatar">
-                                @if (msg.IsUser)
-                                {
-                                    <div class="avatar avatar-user">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                                    </div>
-                                }
-                                else
-                                {
-                                    <div class="avatar avatar-assistant">
-                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                                            <circle cx="12" cy="12" r="7" fill="white" opacity="0.18"/>
-                                            <path d="M12 2 L13.1 8.2 L17.4 4.6 L14.5 10.5 L21 10.3 L15.2 13 L18.8 18.4 L12.8 14.8 L12 22 L11.2 14.8 L5.2 18.4 L8.8 13 L3 10.3 L9.5 10.5 L6.6 4.6 L10.9 8.2 Z" fill="white"/>
-                                        </svg>
-                                    </div>
-                                }
-                            </div>
                             <div class="msg-body">
-                                <div class="msg-sender">@(msg.IsUser ? "나" : "Fab Copilot")</div>
                                 @if (msg.IsEditing)
                                 {
                                     <div class="msg-edit-area">
@@ -450,7 +429,7 @@
                     }
                 </div>
             }
-            <div class="input-disclaimer">Fab Copilot은 장비 매뉴얼 기반으로 답변하며, 오류가 있을 수 있습니다.</div>
+            <div class="input-disclaimer">FabWise은 장비 매뉴얼 기반으로 답변하며, 오류가 있을 수 있습니다.</div>
         </div>
             </section>
 
@@ -646,11 +625,17 @@
 
     private async Task SelectConversation(string convId)
     {
-        // 1. Switch to Chat panel IMMEDIATELY — gives instant visual feedback on mobile
+        // 1. Switch to Chat panel FIRST — gives instant visual feedback on mobile
         _activePanel = PanelKind.Chat;
         StateHasChanged();
+        // Yield to let Blazor flush the render before any blocking work.
+        // Without this, translateX transition won't fire until SwitchConversation completes.
+        await Task.Yield();
 
-        // 2. Load conversation data (async, may take time)
+        // 2. If same conversation, just switch panel (no data reload needed)
+        if (convId == _conversationId) return;
+
+        // 3. Load conversation data (async, may take time)
         await SwitchConversation(convId);
     }
 

@@ -28,7 +28,14 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 }
 
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        // Prevent aggressive browser caching of CSS/JS — always revalidate with ETag
+        ctx.Context.Response.Headers["Cache-Control"] = "no-cache";
+    }
+});
 app.UseRouting();
 
 // TTS proxy — same-origin endpoint so mobile browsers don't need cross-port fetch

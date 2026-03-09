@@ -566,15 +566,21 @@ html, body {
 }
 
 .empty-logo {
-    width: 72px;
-    height: 72px;
+    width: 128px;
+    height: 128px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(145deg, #c2693d, #d97757);
-    border-radius: 50%;
+    background: transparent;
+    border-radius: 0;
     margin-bottom: 20px;
-    box-shadow: 0 4px 20px rgba(217, 119, 87, 0.3);
+    box-shadow: none;
+}
+
+.welcome-eagle {
+    width: 128px;
+    height: 128px;
+    filter: brightness(0) saturate(100%) invert(12%) sepia(89%) saturate(5765%) hue-rotate(230deg) brightness(68%) contrast(120%);
 }
 
 .empty-title {
@@ -600,7 +606,6 @@ html, body {
 .hint-card {
     padding: 12px 20px;
     border: 1px solid #e5e5e5;
-    border-left: 3px solid #2563eb;
     border-radius: 12px;
     font-size: 14px;
     color: #555;
@@ -616,77 +621,67 @@ html, body {
 
 /* ===== Message Row ===== */
 .msg-row {
-    padding: 14px 0;
+    padding: 8px 0;
 }
 
 .msg-user-row {
-    background: #eef4ff;
+    background: transparent;
 }
 
 .msg-assistant-row {
-    background: #ffffff;
+    background: transparent;
 }
 
 .msg-wrapper {
     display: flex;
-    gap: 10px;
     max-width: 768px;
     margin: 0 auto;
     padding: 0 20px;
-    align-items: flex-start;
 }
 
-/* ===== Avatar ===== */
-.msg-avatar {
-    flex-shrink: 0;
+.msg-user-row .msg-wrapper {
+    justify-content: flex-end;
 }
 
-.avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.avatar-user {
-    background: #2563eb;
-    color: #fff;
-}
-
-.avatar-assistant {
-    width: 28px;
-    height: 28px;
-    background: linear-gradient(145deg, #c2693d, #d97757);
-    color: #fff;
-    box-shadow: 0 0 10px rgba(217, 119, 87, 0.35), 0 0 20px rgba(217, 119, 87, 0.15);
-}
-
-.avatar-assistant svg {
-    width: 18px;
-    height: 18px;
+.msg-assistant-row .msg-wrapper {
+    justify-content: flex-start;
 }
 
 /* ===== Message Body ===== */
 .msg-body {
-    flex: 1;
+    max-width: 85%;
     min-width: 0;
 }
 
-.msg-sender {
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 2px;
+.msg-user-row .msg-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.msg-user-row .user-text {
+    background: #e8eaf6;
     color: #1a1a1a;
+    padding: 10px 16px;
+    border-radius: 18px 18px 4px 18px;
+    display: inline-block;
 }
 
-.msg-user-row .msg-sender {
-    color: #2563eb;
+.msg-assistant-row .msg-content {
+    background: transparent;
+    padding: 4px 0;
 }
 
-.msg-assistant-row .msg-sender {
-    color: #c2693d;
+.msg-assistant-row .typing-indicator {
+    background: #f3f4f6;
+    padding: 12px 16px;
+    border-radius: 18px;
+}
+
+.msg-assistant-row .batch-loading {
+    background: #f3f4f6;
+    padding: 12px 16px;
+    border-radius: 18px;
 }
 
 .msg-content {
