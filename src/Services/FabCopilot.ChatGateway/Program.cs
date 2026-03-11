@@ -265,8 +265,8 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, TtsEngineResolver res
     }
 
     if (synth.FallbackFrom is not null)
-        logger.LogInformation("TTS served by fallback engine {Engine} (primary: {Primary})",
-            synth.EngineName, synth.FallbackFrom);
+        logger.LogWarning("[TTS] Served by FALLBACK engine '{Engine}' voice='{Voice}' (primary '{Primary}' failed). Chain: {Chain}",
+            synth.EngineName, synth.VoiceUsed, synth.FallbackFrom, string.Join(" > ", synth.Chain));
 
     // Expose engine/voice/fallback info to client debug logs
     req.HttpContext.Response.Headers["X-TTS-Engine"] = synth.EngineName;

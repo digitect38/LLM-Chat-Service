@@ -65,8 +65,8 @@ public class TtsEngineResolver : IDisposable
 
         var shortError = ExtractShortError(result.Error);
         chain.Add($"{primary.Name}:fail({shortError})");
-        _logger.LogWarning("TTS primary engine {Engine} failed: {Error}. Trying fallback chain...",
-            primary.Name, result.Error);
+        _logger.LogWarning("[TTS FALLBACK] Primary engine '{Engine}' failed (voice={Voice}): {Error}",
+            primary.Name, voice, result.Error);
 
         foreach (var fallbackName in FallbackChain)
         {
@@ -77,20 +77,25 @@ public class TtsEngineResolver : IDisposable
 
             // Use engine-specific default voice during fallback
             var fallbackVoice = DefaultVoices.GetValueOrDefault(fallbackName, "default");
+            _logger.LogWarning("[TTS FALLBACK] Trying fallback engine '{FallbackEngine}' (voice={FallbackVoice}), original was '{Primary}'",
+                fallbackName, fallbackVoice, primary.Name);
             result = await fallbackEngine.SynthesizeAsync(text, fallbackVoice, options, ct);
             if (result.IsSuccess)
             {
                 chain.Add($"{fallbackName}:ok");
-                _logger.LogInformation("TTS fallback to {Engine} succeeded (voice: {Voice})",
-                    fallbackName, fallbackVoice);
+                var chainStr = string.Join(" > ", chain);
+                _logger.LogWarning("[TTS FALLBACK] Succeeded with fallback engine '{FallbackEngine}' (voice={FallbackVoice}). Chain: {Chain}",
+                    fallbackName, fallbackVoice, chainStr);
                 return new(result, fallbackName, fallbackVoice, primary.Name, chain);
             }
 
             shortError = ExtractShortError(result.Error);
             chain.Add($"{fallbackName}:fail({shortError})");
-            _logger.LogWarning("TTS fallback {Engine} also failed: {Error}", fallbackName, result.Error);
+            _logger.LogWarning("[TTS FALLBACK] Fallback engine '{FallbackEngine}' also failed: {Error}", fallbackName, result.Error);
         }
 
+        var finalChain = string.Join(" > ", chain);
+        _logger.LogError("[TTS FALLBACK] ALL engines failed! Chain: {Chain}", finalChain);
         return new(TtsResult.Fail("All TTS engines failed"), primary.Name, voice, null, chain);
     }
 

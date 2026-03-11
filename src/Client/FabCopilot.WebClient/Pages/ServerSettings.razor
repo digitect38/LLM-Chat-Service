@@ -7,6 +7,7 @@
 @inject EmbeddingConfigService EmbeddingConfigService
 @inject IOptions<ModelOptions> ModelOptionsAccessor
 @inject NavigationManager Navigation
+@inject IConfiguration Configuration
 
 <div class="chat-app">
     <!-- ===== Panel Tab Bar ===== -->
@@ -567,6 +568,9 @@
 
     protected override void OnInitialized()
     {
+        var knowledgeBaseUrl = Configuration["KnowledgeService:BaseUrl"] ?? "http://localhost:5002";
+        _dualIndexHttp = new HttpClient { BaseAddress = new Uri(knowledgeBaseUrl) };
+
         var opts = ModelOptionsAccessor.Value;
         _availableModels = opts.Available;
 
@@ -704,8 +708,7 @@
 
     // ─── Dual Index API calls ────────────────────────────────────
 
-    private const string KnowledgeServiceBase = "http://localhost:5002";
-    private static readonly HttpClient DualIndexHttp = new() { BaseAddress = new Uri(KnowledgeServiceBase) };
+    private HttpClient? _dualIndexHttp;
 
     private async Task RefreshDualIndexStatus()
     {
@@ -715,7 +718,7 @@
 
         try
         {
-            var status = await DualIndexHttp.GetFromJsonAsync<DualIndexStatusDto>("/api/dual-index/status");
+            var status = await _dualIndexHttp!.GetFromJsonAsync<DualIndexStatusDto>("/api/dual-index/status");
             _dualIndexStatus = status;
         }
         catch (Exception ex)
@@ -746,7 +749,7 @@
         try
         {
             var body = new { modelId = _prepareModelId, vectorSize = _prepareVectorSize };
-            var response = await DualIndexHttp.PostAsJsonAsync("/api/dual-index/prepare", body);
+            var response = await _dualIndexHttp!.PostAsJsonAsync("/api/dual-index/prepare", body);
             response.EnsureSuccessStatusCode();
 
             _dualIndexMessage = $"Standby 컬렉션 준비 완료 (model: {_prepareModelId}, dim: {_prepareVectorSize})";
@@ -772,7 +775,7 @@
 
         try
         {
-            var response = await DualIndexHttp.PostAsync("/api/dual-index/promote", null);
+            var response = await _dualIndexHttp!.PostAsync("/api/dual-index/promote", null);
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
@@ -812,7 +815,7 @@
         try
         {
             var body = new { previousModelId = _rollbackModelId };
-            var response = await DualIndexHttp.PostAsJsonAsync("/api/dual-index/rollback", body);
+            var response = await _dualIndexHttp!.PostAsJsonAsync("/api/dual-index/rollback", body);
             response.EnsureSuccessStatusCode();
 
             _dualIndexMessage = $"롤백 완료 (model: {_rollbackModelId})";

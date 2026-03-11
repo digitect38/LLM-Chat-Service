@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+**/node_modules/
+logs/
+scripts/
+tests/
+docs/
+infra/
+Captures/
+Plan/
+images/
+benchmark*.js
+test-*.ps1
+test-*.js
+*.txt
+*.md
+nul
