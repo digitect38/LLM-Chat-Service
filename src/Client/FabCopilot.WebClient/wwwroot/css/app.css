@@ -580,7 +580,7 @@ html, body {
 .welcome-eagle {
     width: 128px;
     height: 128px;
-    filter: brightness(0) saturate(100%) invert(12%) sepia(89%) saturate(5765%) hue-rotate(230deg) brightness(68%) contrast(120%);
+    filter: grayscale(100%) opacity(0.4);
 }
 
 .empty-title {
@@ -588,6 +588,9 @@ html, body {
     font-weight: 600;
     margin: 0 0 4px;
     color: #1a1a1a;
+    outline: none;
+    border: none;
+    box-shadow: none;
 }
 
 .empty-subtitle {
@@ -2682,6 +2685,36 @@ code.language-toml::before      { content: "toml";       background: #555; color
 /* ================================================================
    VOICE MODE
    ================================================================ */
+
+/* ── Auto TTS Toggle Button ── */
+.auto-tts-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #888;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+    margin-right: 2px;
+}
+
+.auto-tts-btn:hover {
+    background: #e5e5e5;
+    color: #1a1a1a;
+}
+
+.auto-tts-btn.auto-tts-on {
+    color: #2563eb;
+}
+
+.auto-tts-btn.auto-tts-on:hover {
+    background: #dbeafe;
+}
 
 /* ── Voice Mode Button ── */
 .voice-mode-btn {

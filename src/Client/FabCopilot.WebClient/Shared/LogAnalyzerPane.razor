@@ -53,6 +53,7 @@
                 <button class="lp-time-preset @(_timePreset == "6h" ? "active" : "")" @onclick='() => SetTimePreset("6h")'>6h</button>
                 <button class="lp-time-preset @(_timePreset == "24h" ? "active" : "")" @onclick='() => SetTimePreset("24h")'>24h</button>
                 <button class="lp-time-preset @(_timePreset == "7d" ? "active" : "")" @onclick='() => SetTimePreset("7d")'>7d</button>
+                <button class="lp-time-preset @(_timePreset == "30d" ? "active" : "")" @onclick='() => SetTimePreset("30d")'>30d</button>
             </div>
 
             <input class="lp-input" type="text" placeholder="CorrelationId..."
@@ -393,6 +394,7 @@
             "6h" => DateTime.Now.AddHours(-6),
             "24h" => DateTime.Now.AddDays(-1),
             "7d" => DateTime.Now.AddDays(-7),
+            "30d" => DateTime.Now.AddDays(-30),
             _ => _startTime
         };
     }

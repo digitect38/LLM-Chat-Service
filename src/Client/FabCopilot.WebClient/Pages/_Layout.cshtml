@@ -60,6 +60,14 @@
             }
         };
 
+        // ─── DOM helpers ────────────────────────────────────────────
+        window.domHelper = {
+            clickElement: function (id) {
+                var el = document.getElementById(id);
+                if (el) el.click();
+            }
+        };
+
         // ─── Clipboard ───────────────────────────────────────────
         window.clipboard = {
             copyText: async function (text) {
@@ -500,6 +508,20 @@
             setTimeoutBudget: function(v) {
                 localStorage.setItem('timeoutBudget', v);
             },
+            getDebugMode: function() {
+                return localStorage.getItem('fabwise_debug') === 'true' ? 'on' : 'off';
+            },
+            setDebugMode: function(v) {
+                var on = (v === 'on');
+                localStorage.setItem('fabwise_debug', on ? 'true' : 'false');
+                if (window._ttsDebug) window._ttsDebug._enabled = on;
+            },
+            getAutoTts: function() {
+                return localStorage.getItem('autoTts') || 'on';
+            },
+            setAutoTts: function(v) {
+                localStorage.setItem('autoTts', v);
+            },
             init: function() {
                 this.setCodeFont(this.getCodeFont());
             }
@@ -507,11 +529,14 @@
         window.clientSettings.init();
 
         // ─── TTS (Text-to-Speech) ────────────────────────────────────────
-        // ─── TTS Debug overlay (visible on screen for mobile debugging) ───
+        // ─── TTS Debug overlay (only visible when debug=true in URL or localStorage) ───
         window._ttsDebug = {
             _el: null,
             _lines: [],
+            _enabled: (new URLSearchParams(window.location.search).has('debug')) ||
+                      (function() { try { return localStorage.getItem('fabwise_debug') === 'true'; } catch(e) { return false; } })(),
             log: function(msg) {
+                if (!this._enabled) return;
                 console.log('[TTS] ' + msg);
                 this._lines.push(new Date().toLocaleTimeString() + ' ' + msg);
                 if (this._lines.length > 12) this._lines.shift();
@@ -670,7 +695,9 @@
                     };
                     source.start(0);
                     xttsOk = true;
-                    D.log('6. TTS PLAYING ✓ gain=' + this._gainNode.gain.value);
+                    // Start barge-in detector now that audio is playing
+                    this.startBargeIn();
+                    D.log('6. TTS PLAYING ✓ gain=' + this._gainNode.gain.value + ' (barge-in active)');
                 } catch(ex) {
                     D.log('TTS FAIL: ' + ex.message);
                 }
@@ -733,6 +760,8 @@
 
                 var self = this;
                 var chunkIdx = 0;
+                // Start barge-in detector for SpeechSynthesis playback too
+                this.startBargeIn();
 
                 function playNextChunk() {
                     if (!self._playing || chunkIdx >= chunks.length) {
@@ -798,8 +827,11 @@
             _streamFlushed: false,
             _streamAbort: null,
 
+            _STREAM_VER: 'v5',  // bump on each change to verify fresh code
+
             playStream: function(dotNetRef) {
                 var D = window._ttsDebug;
+                console.log('[StreamTTS ' + this._STREAM_VER + '] playStream called');
                 this.stop();
                 this._dotNetRef = dotNetRef;
                 this._streaming = true;
@@ -810,25 +842,67 @@
                 this._streamFlushed = false;
                 this._streamAbort = null;
                 this._playing = true;
-                // Ensure AudioContext is ready
+                this._feedCount = 0;
+                this._streamGen = (this._streamGen || 0) + 1; // generation counter to invalidate stale _processQueue
+                // Ensure AudioContext is ready (non-blocking)
                 var ctx = this._ensureCtx();
-                if (ctx.state === 'suspended') ctx.resume();
-                D.log('[StreamTTS] initialized');
+                if (ctx.state === 'suspended') {
+                    ctx.resume().then(function() {
+                        console.log('[StreamTTS] AudioContext resumed');
+                    }).catch(function(e) {
+                        console.error('[StreamTTS] AudioContext resume failed:', e);
+                    });
+                }
+                // Start barge-in detector AFTER initialization
+                this.startBargeIn();
+                D.log('[StreamTTS ' + this._STREAM_VER + '] initialized, ctx=' + ctx.state);
             },
 
             feedText: function(token) {
                 if (!this._streaming) return;
+                var D = window._ttsDebug;
+                this._feedCount = (this._feedCount || 0) + 1;
                 this._streamBuf += token;
+                var bufLen = this._streamBuf.length;
+
+                // Log every 10th feed to avoid flooding
+                if (this._feedCount % 10 === 1) {
+                    console.log('[StreamTTS] feed #' + this._feedCount + ' buf=' + bufLen + 'c queue=' + this._streamQueue.length);
+                }
+
+                // Safety: if flushStream already ran but late token arrived, flush immediately
+                if (this._streamFlushed) {
+                    var remaining = this._streamBuf.trim();
+                    this._streamBuf = '';
+                    if (remaining.length > 0) {
+                        var clean = this._stripMarkdownForTts(remaining);
+                        if (clean.length > 0) {
+                            this._streamIdx++;
+                            var gatewayBase = this._getGatewayUrl();
+                            var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
+                            this._streamQueue.push(item);
+                            this._startFetch(item, gatewayBase);
+                            console.warn('[StreamTTS] LATE token after flush → queued #' + item.idx + ': "' + clean.substring(0, 50) + '"');
+                        }
+                    }
+                    this._processQueue();
+                    return;
+                }
+
                 var sentences = this._extractSentences();
                 if (sentences.length > 0) {
-                    var D = window._ttsDebug;
+                    var gatewayBase = this._getGatewayUrl();
+                    console.log('[StreamTTS] EXTRACTED ' + sentences.length + ' sentence(s) at feed #' + this._feedCount);
+                    D.log('[StreamTTS] extracted ' + sentences.length + ' from buf(' + bufLen + '), rem=' + this._streamBuf.length);
                     for (var i = 0; i < sentences.length; i++) {
                         var clean = this._stripMarkdownForTts(sentences[i]);
                         if (clean.length > 0) {
                             this._streamIdx++;
                             var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
                             this._streamQueue.push(item);
-                            D.log('[StreamTTS] sentence #' + item.idx + ' queued (' + clean.length + ' chars)');
+                            // Eagerly start TTS fetch immediately (fire-and-forget)
+                            this._startFetch(item, gatewayBase);
+                            console.log('[StreamTTS] #' + item.idx + ' → TTS fetch: "' + clean.substring(0, 50) + '"');
                         }
                     }
                     this._processQueue();
@@ -836,23 +910,34 @@
             },
 
             flushStream: function() {
-                if (!this._streaming) return;
+                if (!this._streaming) {
+                    console.warn('[StreamTTS] flushStream called but _streaming=false — skipped');
+                    return;
+                }
                 var D = window._ttsDebug;
                 var remaining = this._streamBuf.trim();
+                console.log('[StreamTTS] flushStream: buf="' + remaining.substring(0, 100) + '" (' + remaining.length + ' chars), queue=' + this._streamQueue.length + ', processing=' + this._streamProcessing);
                 this._streamBuf = '';
                 if (remaining.length > 0) {
                     var clean = this._stripMarkdownForTts(remaining);
                     if (clean.length > 0) {
                         this._streamIdx++;
+                        var gatewayBase = this._getGatewayUrl();
                         var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
                         this._streamQueue.push(item);
-                        D.log('[StreamTTS] flush #' + item.idx + ' (' + clean.length + ' chars)');
+                        this._startFetch(item, gatewayBase);
+                        console.log('[StreamTTS] flush #' + item.idx + ' → TTS fetch: "' + clean.substring(0, 80) + '"');
+                    } else {
+                        console.log('[StreamTTS] flush: text stripped to empty after markdown removal');
                     }
+                } else {
+                    console.log('[StreamTTS] flush: buffer was empty (all text already extracted as sentences)');
                 }
                 this._streamFlushed = true;
                 D.log('[StreamTTS] flushed, queue=' + this._streamQueue.length);
                 if (this._streamQueue.length === 0) {
                     // Nothing was queued at all — signal end
+                    console.log('[StreamTTS] flush: no items in queue, signaling done');
                     this._streaming = false;
                     this._playing = false;
                     if (this._dotNetRef) this._dotNetRef.invokeMethodAsync('OnTtsEnded');
@@ -864,50 +949,91 @@
             _extractSentences: function() {
                 var buf = this._streamBuf;
                 var results = [];
-                // Match sentence-ending punctuation followed by whitespace or CJK punctuation
-                var re = /([.!?。！？])\s+/g;
                 var lastEnd = 0;
+                var hasCJK = /[\u3000-\u9FFF\uAC00-\uD7AF]/.test(buf);
+                var minLen = hasCJK ? 5 : 20;
+
+                // Step 1: Split at paragraph breaks (\n\n) — strongest boundary
+                var paraRe = /\n\s*\n/g;
+                var paraMatch;
+                var paraSegments = [];
+                var pStart = 0;
+                while ((paraMatch = paraRe.exec(buf)) !== null) {
+                    var seg = buf.substring(pStart, paraMatch.index).trim();
+                    if (seg.length >= minLen) {
+                        paraSegments.push({ text: seg, end: paraMatch.index + paraMatch[0].length });
+                    }
+                    pStart = paraMatch.index + paraMatch[0].length;
+                }
+                // If paragraph breaks found, extract them
+                if (paraSegments.length > 0) {
+                    for (var p = 0; p < paraSegments.length; p++) {
+                        results.push(paraSegments[p].text);
+                        lastEnd = paraSegments[p].end;
+                    }
+                    this._streamBuf = buf.substring(lastEnd);
+                    return results;
+                }
+
+                // Step 2: Split at sentence-ending punctuation (.!?。！？) + whitespace/newline
+                var re = /([.!?。！？])[\s\n]+/g;
                 var match;
                 while ((match = re.exec(buf)) !== null) {
                     var sentence = buf.substring(lastEnd, match.index + match[1].length).trim();
-                    // Minimum length check: 20 for Latin, 10 for CJK
-                    var hasCJK = /[\u3000-\u9FFF\uAC00-\uD7AF]/.test(sentence);
-                    var minLen = hasCJK ? 10 : 20;
                     if (sentence.length >= minLen) {
                         results.push(sentence);
                         lastEnd = match.index + match[0].length;
                     }
                 }
-                // CJK sentence-enders without trailing space
-                if (lastEnd < buf.length) {
+
+                // Step 3: Split at single newline for CJK (markdown list items, line breaks)
+                if (results.length === 0 && hasCJK && lastEnd < buf.length) {
                     var rest = buf.substring(lastEnd);
+                    var nlRe = /\n/g;
+                    var nlMatch;
+                    var nlLastEnd = 0;
+                    while ((nlMatch = nlRe.exec(rest)) !== null) {
+                        var nlSentence = rest.substring(nlLastEnd, nlMatch.index).trim();
+                        if (nlSentence.length >= minLen) {
+                            results.push(nlSentence);
+                            nlLastEnd = nlMatch.index + nlMatch[0].length;
+                        }
+                    }
+                    lastEnd += nlLastEnd;
+                }
+
+                // Step 4: CJK sentence-enders without trailing space (。！？)
+                if (lastEnd < buf.length) {
+                    var rest2 = buf.substring(lastEnd);
                     var cjkRe = /([\u3002\uFF01\uFF1F])/g;
                     var cjkMatch;
                     var cjkLastEnd = 0;
-                    while ((cjkMatch = cjkRe.exec(rest)) !== null) {
-                        var cjkSentence = rest.substring(cjkLastEnd, cjkMatch.index + 1).trim();
-                        if (cjkSentence.length >= 10) {
+                    while ((cjkMatch = cjkRe.exec(rest2)) !== null) {
+                        var cjkSentence = rest2.substring(cjkLastEnd, cjkMatch.index + 1).trim();
+                        if (cjkSentence.length >= minLen) {
                             results.push(cjkSentence);
                             cjkLastEnd = cjkMatch.index + 1;
                         }
                     }
                     lastEnd += cjkLastEnd;
                 }
-                // Long sentence split: if remaining buffer > 500 chars, split at comma/semicolon
+
+                // Step 5: Long buffer split at comma/semicolon (fallback)
                 var leftover = buf.substring(lastEnd);
-                if (leftover.length > 500) {
+                if (leftover.length > 300) {
                     var splitRe = /([,;，；])\s*/g;
                     var splitMatch;
                     var splitLastEnd = 0;
                     while ((splitMatch = splitRe.exec(leftover)) !== null) {
                         var part = leftover.substring(splitLastEnd, splitMatch.index + splitMatch[0].length).trim();
-                        if (part.length >= 20) {
+                        if (part.length >= minLen) {
                             results.push(part);
                             splitLastEnd = splitMatch.index + splitMatch[0].length;
                         }
                     }
                     lastEnd += splitLastEnd;
                 }
+
                 this._streamBuf = buf.substring(lastEnd);
                 return results;
             },
@@ -930,57 +1056,135 @@
                 if (this._streamProcessing) return;
                 this._streamProcessing = true;
                 var D = window._ttsDebug;
-                var self = this;
                 var gatewayBase = this._getGatewayUrl();
+                var gen = this._streamGen; // capture generation — if it changes, this instance is stale
 
-                while (this._streamQueue.length > 0) {
-                    if (!this._streaming || !this._playing) break;
-
-                    var current = this._streamQueue[0];
-
-                    // Start fetching current if not started
-                    if (!current.fetching && !current.fetched) {
-                        await this._startFetch(current, gatewayBase);
+                // Outer loop: re-check queue after inner loop finishes
+                // This handles items added by flushStream while we were playing
+                while (true) {
+                    // Stale check: if a new stream started, abandon immediately
+                    if (this._streamGen !== gen) {
+                        console.warn('[StreamTTS] processQueue gen ' + gen + ' abandoned (current=' + this._streamGen + ')');
+                        return; // do NOT reset _streamProcessing — new stream owns it
                     }
 
-                    // Wait for current to be fetched
-                    if (!current.fetched) {
-                        // Shouldn't happen but guard
-                        await new Promise(function(r) { setTimeout(r, 50); });
-                        continue;
-                    }
+                    while (this._streamQueue.length > 0) {
+                        if (!this._streaming || !this._playing || this._streamGen !== gen) break;
 
-                    if (!this._streaming || !this._playing) break;
+                        var current = this._streamQueue[0];
 
-                    // Start prefetch for next item
-                    if (this._streamQueue.length > 1) {
-                        var next = this._streamQueue[1];
-                        if (!next.fetching && !next.fetched) {
-                            this._startFetch(next, gatewayBase); // fire-and-forget prefetch
+                        // Start fetching if not already started (fallback — feedText eagerly fetches)
+                        if (!current.fetching && !current.fetched) {
+                            this._startFetch(current, gatewayBase);
                         }
+
+                        // Wait for fetch to complete (poll — fetch was started eagerly or above)
+                        var waitCount = 0;
+                        while (!current.fetched && this._streaming && this._playing && this._streamGen === gen) {
+                            await new Promise(function(r) { setTimeout(r, 30); });
+                            if (++waitCount > 500) { // 15s max wait
+                                D.log('[StreamTTS] #' + current.idx + ' fetch timeout');
+                                break;
+                            }
+                        }
+
+                        if (!this._streaming || !this._playing || this._streamGen !== gen) break;
+                        if (!current.fetched) { this._streamQueue.shift(); continue; }
+
+                        // Play current audio
+                        if (current.audioBuf) {
+                            console.log('[StreamTTS] ▶ PLAYING #' + current.idx + ' (' + current.audioBuf.duration.toFixed(1) + 's) queue=' + this._streamQueue.length);
+                            D.log('[StreamTTS] playing #' + current.idx + ' (' + current.audioBuf.duration.toFixed(1) + 's)');
+                            try {
+                                await this._playBuffer(current.audioBuf);
+                            } catch (e) {
+                                console.error('[StreamTTS] play error #' + current.idx + ':', e.message);
+                            }
+                            D.log('[StreamTTS] done #' + current.idx);
+                        } else {
+                            D.log('[StreamTTS] skip #' + current.idx + ' (no audio)');
+                        }
+
+                        // Remove played item (only if still same generation)
+                        if (this._streamGen === gen) this._streamQueue.shift();
                     }
 
-                    // Play current
-                    if (current.audioBuf) {
-                        D.log('[StreamTTS] playing #' + current.idx);
-                        try {
-                            await this._playBuffer(current.audioBuf);
-                        } catch (e) {
-                            D.log('[StreamTTS] play error #' + current.idx + ': ' + e.message);
+                    // Stale check before waiting
+                    if (this._streamGen !== gen) {
+                        console.warn('[StreamTTS] processQueue gen ' + gen + ' abandoned during wait (current=' + this._streamGen + ')');
+                        return;
+                    }
+
+                    // Wait for flushStream: yield multiple times if stream hasn't been flushed yet
+                    // This gives Blazor time to send the flushStream call after the last feedText
+                    if (!this._streamFlushed && this._streaming && this._playing) {
+                        var waited = 0;
+                        while (!this._streamFlushed && waited < 2000 && this._streaming && this._playing && this._streamGen === gen) {
+                            await new Promise(function(r) { setTimeout(r, 50); });
+                            waited += 50;
+                            // If new items appeared while waiting, go process them
+                            if (this._streamQueue.length > 0) break;
                         }
-                        D.log('[StreamTTS] done #' + current.idx);
+                        if (this._streamGen !== gen) return; // stale
+                        if (waited > 0 && this._streamQueue.length > 0) {
+                            D.log('[StreamTTS] new items appeared after ' + waited + 'ms wait');
+                            continue; // back to inner loop
+                        }
+                        if (!this._streamFlushed) {
+                            console.warn('[StreamTTS] waited ' + waited + 'ms but flushStream never arrived — checking buffer');
+                            // Safety: flush any remaining text ourselves
+                            var leftover = this._streamBuf.trim();
+                            if (leftover.length > 0) {
+                                this._streamBuf = '';
+                                var clean = this._stripMarkdownForTts(leftover);
+                                if (clean.length > 0) {
+                                    this._streamIdx++;
+                                    var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
+                                    this._streamQueue.push(item);
+                                    this._startFetch(item, gatewayBase);
+                                    console.warn('[StreamTTS] SAFETY flush #' + item.idx + ': "' + clean.substring(0, 80) + '"');
+                                    continue; // back to inner loop to play it
+                                }
+                            }
+                        }
                     } else {
-                        D.log('[StreamTTS] skip #' + current.idx + ' (no audio)');
+                        // Stream already flushed — one brief yield for any late items
+                        await new Promise(function(r) { setTimeout(r, 50); });
                     }
 
-                    // Remove from queue
-                    this._streamQueue.shift();
+                    // If no new items and either flushed or stopped, exit
+                    if (this._streamQueue.length === 0 || !this._streaming || !this._playing || this._streamGen !== gen) break;
+                    D.log('[StreamTTS] re-processing queue (' + this._streamQueue.length + ' new items)');
+                }
+
+                // Only modify shared state if still current generation
+                if (this._streamGen !== gen) {
+                    console.warn('[StreamTTS] processQueue gen ' + gen + ' exiting without cleanup (current=' + this._streamGen + ')');
+                    return;
                 }
 
                 this._streamProcessing = false;
 
+                // Final safety: check if _streamBuf has anything left
+                var finalBuf = this._streamBuf.trim();
+                if (finalBuf.length > 0 && this._streaming) {
+                    this._streamBuf = '';
+                    var clean = this._stripMarkdownForTts(finalBuf);
+                    if (clean.length > 0) {
+                        this._streamIdx++;
+                        var item = { idx: this._streamIdx, text: clean, audioBuf: null, fetching: false, fetched: false };
+                        this._streamQueue.push(item);
+                        this._startFetch(item, gatewayBase);
+                        console.warn('[StreamTTS] FINAL safety flush #' + item.idx + ': "' + clean.substring(0, 80) + '"');
+                        // Recurse to play it (streamProcessing is false now)
+                        this._processQueue();
+                        return;
+                    }
+                }
+
                 // If flushed and queue empty, streaming is done
                 if (this._streamFlushed && this._streamQueue.length === 0 && this._streaming) {
+                    console.log('[StreamTTS] ✓ all done (feeds=' + this._feedCount + ', items=' + this._streamIdx + ')');
                     D.log('[StreamTTS] all done');
                     this._streaming = false;
                     this._playing = false;
@@ -989,11 +1193,12 @@
             },
 
             _startFetch: async function(item, gatewayBase) {
+                if (item.fetching || item.fetched) return; // prevent double-fetch
                 var D = window._ttsDebug;
                 item.fetching = true;
                 try {
                     var ac = new AbortController();
-                    this._streamAbort = ac;
+                    item._abort = ac; // per-item abort (not shared)
                     var timer = setTimeout(function() { ac.abort(); }, 15000);
                     D.log('[StreamTTS] fetching #' + item.idx + '...');
                     var resp = await fetch(gatewayBase + '/api/tts/synthesize', {
@@ -1003,14 +1208,14 @@
                         signal: ac.signal
                     });
                     clearTimeout(timer);
-                    this._streamAbort = null;
+
+                    if (!this._streaming) return; // stopped during fetch
 
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
                     // Check for Browser engine response
                     var ct = resp.headers.get('content-type');
                     if (ct && ct.includes('application/json')) {
-                        // Browser engine — skip this chunk (streaming TTS uses server engines)
                         D.log('[StreamTTS] #' + item.idx + ' Browser engine, skip');
                         item.fetched = true;
                         return;
@@ -1023,8 +1228,7 @@
                     item.audioBuf = await ctx.decodeAudioData(arrayBuf);
                     D.log('[StreamTTS] fetched #' + item.idx + ' (' + item.audioBuf.duration.toFixed(1) + 's)');
                 } catch (e) {
-                    D.log('[StreamTTS] fetch error #' + item.idx + ': ' + e.message);
-                    this._streamAbort = null;
+                    D.log('[StreamTTS] fetch err #' + item.idx + ': ' + e.message);
                 }
                 item.fetched = true;
             },
@@ -1048,15 +1252,17 @@
 
             stop: function() {
                 this._playing = false;
+                this.stopBargeIn();
+                // Abort all pending per-item fetches
+                var q = this._streamQueue || [];
+                for (var i = 0; i < q.length; i++) {
+                    if (q[i]._abort) { try { q[i]._abort.abort(); } catch(e) {} }
+                }
                 // Streaming state cleanup
                 this._streaming = false;
                 this._streamBuf = '';
                 this._streamQueue = [];
                 this._streamFlushed = false;
-                if (this._streamAbort) {
-                    try { this._streamAbort.abort(); } catch(e) {}
-                    this._streamAbort = null;
-                }
                 if (this._sourceNode) {
                     try { this._sourceNode.stop(); } catch(e) {}
                     this._sourceNode = null;
@@ -1069,6 +1275,117 @@
                     this._synthResumeTimer = null;
                 }
                 this._utterance = null;
+            },
+
+            // ─── Barge-in: detect user speech during TTS playback ───
+            _bargeInCtx: null,
+            _bargeInAnalyser: null,
+            _bargeInInterval: null,
+            _bargeInSpeechStart: 0,
+            _bargeInMicStream: null,
+            _bargeInReady: false,
+
+            // Pre-acquire mic for barge-in — call from user gesture (e.g. toggle Auto TTS)
+            prepareMic: async function() {
+                var D = window._ttsDebug;
+                // Already have a persistent stream from voice mode?
+                var persistent = window.audioRecorder && window.audioRecorder._persistentStream;
+                if (persistent && persistent.active) {
+                    this._bargeInReady = true;
+                    D.log('Barge-in: using persistent mic');
+                    return true;
+                }
+                // Already have our own stream?
+                if (this._bargeInMicStream && this._bargeInMicStream.active) {
+                    this._bargeInReady = true;
+                    return true;
+                }
+                try {
+                    this._bargeInMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this._bargeInReady = true;
+                    D.log('Barge-in: mic acquired ✓');
+                    return true;
+                } catch(e) {
+                    D.log('Barge-in: mic denied — ' + e.message);
+                    this._bargeInReady = false;
+                    return false;
+                }
+            },
+
+            releaseMic: function() {
+                if (this._bargeInMicStream) {
+                    this._bargeInMicStream.getTracks().forEach(function(t) { t.stop(); });
+                    this._bargeInMicStream = null;
+                }
+                this._bargeInReady = false;
+            },
+
+            startBargeIn: function() {
+                // Get mic stream: persistent (voice mode) > pre-acquired > none
+                var mic = (window.audioRecorder && window.audioRecorder._persistentStream);
+                if (!mic || !mic.active) mic = this._bargeInMicStream;
+                if (!mic || !mic.active) {
+                    window._ttsDebug.log('Barge-in: no mic available');
+                    return;
+                }
+                this._stopBargeInDetector();
+                var D = window._ttsDebug;
+                try {
+                    this._bargeInCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    var src = this._bargeInCtx.createMediaStreamSource(mic);
+                    this._bargeInAnalyser = this._bargeInCtx.createAnalyser();
+                    this._bargeInAnalyser.fftSize = 512;
+                    src.connect(this._bargeInAnalyser);
+
+                    var bufLen = this._bargeInAnalyser.fftSize;
+                    var buf = new Float32Array(bufLen);
+                    var self = this;
+                    var THRESHOLD = 0.02;        // sensitive enough for normal speech
+                    var CONFIRM_MS = 300;        // 300ms sustained speech → stop TTS
+
+                    this._bargeInSpeechStart = 0;
+                    this._bargeInInterval = setInterval(function() {
+                        if (!self._playing || !self._bargeInAnalyser) return;
+                        self._bargeInAnalyser.getFloatTimeDomainData(buf);
+                        var sum = 0;
+                        for (var i = 0; i < bufLen; i++) sum += buf[i] * buf[i];
+                        var rms = Math.sqrt(sum / bufLen);
+
+                        if (rms > THRESHOLD) {
+                            if (self._bargeInSpeechStart === 0) {
+                                self._bargeInSpeechStart = Date.now();
+                            } else if (Date.now() - self._bargeInSpeechStart > CONFIRM_MS) {
+                                D.log('BARGE-IN: speech detected (rms=' + rms.toFixed(3) + ') → stopping TTS');
+                                self.stop();
+                                if (self._dotNetRef) {
+                                    self._dotNetRef.invokeMethodAsync('OnBargeIn');
+                                }
+                            }
+                        } else {
+                            self._bargeInSpeechStart = 0;
+                        }
+                    }, 40);
+                    D.log('Barge-in detector started (threshold=' + THRESHOLD + ', confirm=' + CONFIRM_MS + 'ms)');
+                } catch(e) {
+                    D.log('Barge-in init failed: ' + e.message);
+                }
+            },
+
+            _stopBargeInDetector: function() {
+                if (this._bargeInInterval) {
+                    clearInterval(this._bargeInInterval);
+                    this._bargeInInterval = null;
+                }
+                if (this._bargeInCtx) {
+                    try { this._bargeInCtx.close(); } catch(e) {}
+                    this._bargeInCtx = null;
+                }
+                this._bargeInAnalyser = null;
+                this._bargeInSpeechStart = 0;
+            },
+
+            stopBargeIn: function() {
+                this._stopBargeInDetector();
             }
         };
 
@@ -1414,6 +1731,13 @@
 
             _sendAudio: async function() {
                 var blob = new Blob(this._chunks, { type: 'audio/webm' });
+                // Skip server call if no meaningful audio (empty or < 1KB)
+                if (blob.size < 1000 || !this._speechDetected) {
+                    console.log('[STT] No speech detected, skipping transcription (blob=' + blob.size + 'B)');
+                    if (this._dotNetRef)
+                        this._dotNetRef.invokeMethodAsync('OnTranscriptionComplete', '');
+                    return;
+                }
                 var form = new FormData();
                 form.append('audio', blob, 'recording.webm');
                 // Domain prompt biasing

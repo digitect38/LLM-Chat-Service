@@ -4,6 +4,21 @@
 Write-Host "=== FabCopilot Infrastructure Shutdown ===" -ForegroundColor Cyan
 Write-Host ""
 
+$root = (Resolve-Path "$PSScriptRoot\..").Path
+$composeFile = Join-Path $root "infra\docker-compose.yml"
+
+# Try stopping docker containers first
+$dockerStopped = $false
+if ((Get-Command docker -ErrorAction SilentlyContinue) -and (Test-Path $composeFile)) {
+    $running = docker compose -f $composeFile ps --status running -q 2>$null
+    if ($running) {
+        docker compose -f $composeFile stop nats redis qdrant 2>&1 | Out-Null
+        Write-Host "  Docker containers stopped (nats, redis, qdrant)" -ForegroundColor Yellow
+        $dockerStopped = $true
+    }
+}
+
+# Also stop native processes if running
 $services = [ordered]@{
     "nats-server"  = "NATS"
     "redis-server" = "Redis"
@@ -15,7 +30,7 @@ foreach ($entry in $services.GetEnumerator()) {
     if ($proc) {
         $proc | Stop-Process -Force
         Write-Host "  $($entry.Value): stopped (PID $($proc.Id))" -ForegroundColor Yellow
-    } else {
+    } elseif (-not $dockerStopped) {
         Write-Host "  $($entry.Value): not running" -ForegroundColor DarkGray
     }
 }

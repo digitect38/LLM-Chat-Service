@@ -12,9 +12,12 @@ public sealed partial class LogReaderService
     [GeneratedRegex(@"^(.+?)[-_](\d{8})\.json$", RegexOptions.IgnoreCase)]
     private static partial Regex JsonLogFilePattern();
 
-    public LogReaderService()
+    public LogReaderService(IConfiguration? configuration = null)
     {
-        _logDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "..", "logs"));
+        var configured = configuration?["Logging:LogDirectory"];
+        _logDir = !string.IsNullOrEmpty(configured)
+            ? Path.GetFullPath(configured)
+            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "..", "logs"));
     }
 
     internal LogReaderService(string logDirectory)

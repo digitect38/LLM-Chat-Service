@@ -96,6 +96,29 @@
                     </select>
                     <span class="config-hint">응답 생성 시간이 설정값에 도달하면 경고를 표시합니다</span>
                 </div>
+
+                <!-- Auto TTS -->
+                <div class="config-section">
+                    <label class="config-label">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+                        자동 TTS
+                    </label>
+                    <select class="config-select" @bind="_autoTts">
+                        <option value="off">끄기</option>
+                        <option value="on">켜기</option>
+                    </select>
+                    <span class="config-hint">응답이 생성되는 동안 문장 단위로 자동 음성 재생</span>
+                </div>
+
+                <!-- Debug Mode -->
+                <div class="config-section">
+                    <label class="config-label">디버그 모드</label>
+                    <select class="config-select" @bind="_debugMode">
+                        <option value="off">끄기</option>
+                        <option value="on">켜기</option>
+                    </select>
+                    <span class="config-hint">TTS/STT 디버그 오버레이 표시 (개발자용)</span>
+                </div>
             </div>
 
             <div class="settings-footer">
@@ -116,6 +139,8 @@
     private string _sttEngine = "auto";
     private string _renderMode = "jit";
     private string _timeoutBudget = "180";
+    private string _autoTts = "on";
+    private string _debugMode = "off";
     private string? _clientStatus;
     private bool _clientStatusIsError;
 
@@ -141,6 +166,14 @@
                 if (!string.IsNullOrEmpty(savedTimeout))
                     _timeoutBudget = savedTimeout;
 
+                var savedAutoTts = await JS.InvokeAsync<string>("clientSettings.getAutoTts");
+                if (!string.IsNullOrEmpty(savedAutoTts))
+                    _autoTts = savedAutoTts;
+
+                var savedDebug = await JS.InvokeAsync<string>("clientSettings.getDebugMode");
+                if (!string.IsNullOrEmpty(savedDebug))
+                    _debugMode = savedDebug;
+
                 StateHasChanged();
             }
             catch { }
@@ -155,6 +188,8 @@
             await JS.InvokeVoidAsync("clientSettings.setSttEngine", _sttEngine);
             await JS.InvokeVoidAsync("clientSettings.setRenderMode", _renderMode);
             await JS.InvokeVoidAsync("clientSettings.setTimeoutBudget", _timeoutBudget);
+            await JS.InvokeVoidAsync("clientSettings.setAutoTts", _autoTts);
+            await JS.InvokeVoidAsync("clientSettings.setDebugMode", _debugMode);
             _clientStatus = "클라이언트 설정이 적용되었습니다.";
             _clientStatusIsError = false;
         }

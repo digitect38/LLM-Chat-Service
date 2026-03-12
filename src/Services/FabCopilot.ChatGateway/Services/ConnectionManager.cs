@@ -150,25 +150,12 @@ public sealed class ConnectionManager : IConnectionManager
             return;
         }
 
-        // Fallback: broadcast to all connections for this equipment
+        // No targeted connection — drop the chunk instead of broadcasting.
+        // Broadcasting stale chunks from a previous (stopped) LLM generation to all
+        // connections causes token interleaving with the current response.
         _logger.LogDebug(
-            "No targeted connection for conversation {ConversationId} on equipment {EquipmentId}, broadcasting to {Count} connections",
-            conversationId, equipmentId, connectionsForEquipment.Count);
-
-        var deadConnections = new List<string>();
-
-        foreach (var (connId, ws) in connectionsForEquipment)
-        {
-            if (!await SendToSocketAsync(equipmentId, connId, ws, chunk))
-            {
-                deadConnections.Add(connId);
-            }
-        }
-
-        foreach (var deadConnId in deadConnections)
-        {
-            RemoveConnection(equipmentId, deadConnId);
-        }
+            "No targeted connection for conversation {ConversationId} on equipment {EquipmentId}, dropping chunk (token={TokenPreview})",
+            conversationId, equipmentId, chunk.Token?.Length > 20 ? chunk.Token[..20] + "…" : chunk.Token);
     }
 
     private async Task<bool> SendToSocketAsync(string equipmentId, string connectionId, WebSocket ws, ChatStreamChunk chunk)

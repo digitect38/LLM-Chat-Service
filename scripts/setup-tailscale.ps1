@@ -41,8 +41,10 @@ Write-Host ""
 Write-Host "[2/4] Configuring Windows Firewall rules..." -ForegroundColor Yellow
 
 $rules = @(
-    @{ Name = "FabCopilot-WebClient-5010"; Port = 5010; Desc = "FabCopilot WebClient (Blazor Server)" },
-    @{ Name = "FabCopilot-Gateway-5000";   Port = 5000; Desc = "FabCopilot ChatGateway (WebSocket)" }
+    @{ Name = "VisualFactory-Home-3000";   Port = 3000; Desc = "VisualFactoryHome Landing Page" },
+    @{ Name = "ChatVibe-Service-4000";     Port = 4000; Desc = "ChatVibe-Service (Chat + WebSocket)" },
+    @{ Name = "FabCopilot-Gateway-5000";   Port = 5000; Desc = "FabCopilot ChatGateway (WebSocket)" },
+    @{ Name = "FabCopilot-WebClient-5010"; Port = 5010; Desc = "FabCopilot WebClient (Blazor Server)" }
 )
 
 foreach ($rule in $rules) {
@@ -112,11 +114,12 @@ $hostname = $hostname.TrimEnd('.')
 Write-Host "  Tailscale IP:    $tsIP" -ForegroundColor White
 Write-Host "  Tailscale DNS:   $hostname" -ForegroundColor White
 Write-Host ""
-Write-Host "  WebClient (UI):  http://${tsIP}:5010" -ForegroundColor Green
-Write-Host "                   http://${hostname}:5010" -ForegroundColor Green
+Write-Host "  Home Page:       http://${hostname}:3000" -ForegroundColor Green
+Write-Host "  ChatVibe:        http://${hostname}:4000" -ForegroundColor Green
+Write-Host "  WebClient (UI):  http://${hostname}:5010" -ForegroundColor Green
+Write-Host "  Gateway (WS):    ws://${hostname}:5000/ws/chat/{equipmentId}" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Gateway (WS):    ws://${tsIP}:5000/ws/chat/{equipmentId}" -ForegroundColor Green
-Write-Host "                   ws://${hostname}:5000/ws/chat/{equipmentId}" -ForegroundColor Green
+Write-Host "  (IP alternative: http://${tsIP}:3000, :4000, :5010)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  Note: Connect from any device on your Tailscale network." -ForegroundColor Gray
 Write-Host "========================================" -ForegroundColor Cyan

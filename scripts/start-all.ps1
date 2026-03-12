@@ -1,33 +1,44 @@
 # start-all.ps1
 # FabCopilot 인프라 + .NET 서비스 전체 일괄 시작 스크립트
+#
+# Usage:
+#   .\start-all.ps1              # Infra + Build + Services
+#   .\start-all.ps1 -SkipInfra   # Skip infra (called from parent orchestrator)
 
-$root = "D:\__WORK2__\LLM-Chat-Service-master"
+param(
+    [switch]$SkipInfra
+)
+
+$root = (Resolve-Path "$PSScriptRoot\..").Path
 
 # ============================================
 # Phase 1: 인프라 시작
 # ============================================
-Write-Host "=== Phase 1: Infrastructure ===" -ForegroundColor Cyan
-Write-Host ""
-
-& "$root\scripts\start-infra.ps1"
-
-# 인프라 포트 확인
-$infraPorts = @(4222, 6379, 6333, 11434)
-$infraOk = $true
-foreach ($port in $infraPorts) {
-    try {
-        $tcp = New-Object Net.Sockets.TcpClient("localhost", $port)
-        $tcp.Close()
-    } catch {
-        $infraOk = $false
-    }
-}
-
-if (-not $infraOk) {
+if (-not $SkipInfra) {
+    Write-Host "=== Phase 1: Infrastructure ===" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "ERROR: Infrastructure not fully ready. Fix the issues above before continuing." -ForegroundColor Red
-    Write-Host "Aborting .NET service startup." -ForegroundColor Red
-    exit 1
+
+    & "$root\scripts\start-infra.ps1"
+
+    # 인프라 포트 확인
+    $infraPorts = @(4222, 6379, 6333, 11434)
+    $infraOk = $true
+    foreach ($port in $infraPorts) {
+        try {
+            $tcp = New-Object Net.Sockets.TcpClient("localhost", $port)
+            $tcp.Close()
+        } catch {
+            $infraOk = $false
+        }
+    }
+
+    if (-not $infraOk) {
+        Write-Host ""
+        Write-Host "WARNING: Infrastructure not fully ready." -ForegroundColor Yellow
+        Write-Host "Continuing with build anyway..." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "=== Phase 1: Infrastructure (skipped by parent) ===" -ForegroundColor DarkGray
 }
 
 # ============================================

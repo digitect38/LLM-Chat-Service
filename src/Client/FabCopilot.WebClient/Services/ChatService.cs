@@ -77,7 +77,8 @@ public sealed class ChatService : IAsyncDisposable
         var json = JsonSerializer.Serialize(request);
         var bytes = Encoding.UTF8.GetBytes(json);
 
-        _logger.LogDebug("Sending message: {Json}", json);
+        _logger.LogWarning("WS-SEND convId={ConversationId} equip={EquipmentId} msg={Message}",
+            conversationId, equipmentId, message.Length > 40 ? message[..40] + "…" : message);
 
         await _webSocket.SendAsync(
             new ArraySegment<byte>(bytes),
@@ -123,6 +124,10 @@ public sealed class ChatService : IAsyncDisposable
                     var chunk = JsonSerializer.Deserialize<ChatStreamChunk>(json);
                     if (chunk is not null)
                     {
+                        _logger.LogDebug("WS-RECV convId={ConvId} token={Token} complete={IsComplete}",
+                            chunk.ConversationId?[..Math.Min(chunk.ConversationId?.Length ?? 0, 8)],
+                            chunk.Token?.Length > 20 ? chunk.Token[..20] + "…" : chunk.Token,
+                            chunk.IsComplete);
                         OnMessageReceived?.Invoke(chunk);
                     }
                 }

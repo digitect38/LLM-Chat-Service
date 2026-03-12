@@ -319,47 +319,38 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                     }
                 </button>
-                <button class="voice-mode-btn @(_isVoiceMode ? "voice-mode-active " + VoicePhaseCssClass : "")"
-                        @onclick="ToggleVoiceMode"
-                        title="@(_isVoiceMode ? "음성 모드 종료" : "음성 모드")">
-                    @if (_isVoiceMode && (_voicePhase == VoicePhase.Transcribing || _voicePhase == VoicePhase.Waiting))
+                <button class="auto-tts-btn @(_autoTtsEnabled ? "auto-tts-on" : "")"
+                        @onclick="ToggleAutoTts"
+                        title="@(_autoTtsEnabled ? "자동 음성 대화 끄기" : "자동 음성 대화 켜기")">
+                    @if (_autoTtsEnabled)
                     {
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
                     }
                     else
                     {
-                        <svg width="18" height="16" viewBox="0 0 20 16" class="waveform-icon">
-                            <rect class="wf-bar" x="1"  y="5"  width="2" height="6"  rx="1" fill="currentColor"/>
-                            <rect class="wf-bar" x="5"  y="2"  width="2" height="12" rx="1" fill="currentColor"/>
-                            <rect class="wf-bar" x="9"  y="0"  width="2" height="16" rx="1" fill="currentColor"/>
-                            <rect class="wf-bar" x="13" y="3"  width="2" height="10" rx="1" fill="currentColor"/>
-                            <rect class="wf-bar" x="17" y="5"  width="2" height="6"  rx="1" fill="currentColor"/>
-                        </svg>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
                     }
                 </button>
-                @if (!_isVoiceMode)
-                {
-                    <button class="mic-btn @(_isRecording ? "mic-recording" : "") @(_isTranscribing ? "mic-transcribing" : "")"
-                            @onclick="ToggleRecording"
-                            disabled="@(_isSending || _isTranscribing || _isUploading)"
-                            title="@(_isRecording ? "녹음 중지" : "음성 입력")">
-                        @if (_isTranscribing)
-                        {
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                        }
-                        else if (_isRecording)
-                        {
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                        }
-                        else
-                        {
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                        }
-                    </button>
-                    @if (_isRecording)
+                <button class="mic-btn @(_isRecording ? "mic-recording" : "") @(_isTranscribing ? "mic-transcribing" : "")"
+                        @onclick="ToggleRecording"
+                        disabled="@(_isSending || _isTranscribing || _isUploading)"
+                        title="@(_isRecording ? "녹음 중지" : "음성 입력")">
+                    @if (_isTranscribing)
                     {
-                        <span class="recording-timer">@TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
                     }
+                    else if (_isRecording)
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    }
+                    else
+                    {
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    }
+                </button>
+                @if (_isRecording)
+                {
+                    <span class="recording-timer">@TimeSpan.FromSeconds(_recordingSeconds).ToString("mm\\:ss")</span>
                 }
                 <InputFile OnChange="HandleFileUpload" style="display:none" id="fileUploadInput" accept=".pdf,.md,.txt,.png,.jpg,.jpeg" />
                 <div class="chat-textarea-wrapper">
@@ -393,7 +384,7 @@
                     </button>
                 }
             </div>
-            @if (_isVoiceMode && _voicePhase != VoicePhase.Idle)
+            @if (_autoTtsEnabled && _isVoiceMode && _voicePhase != VoicePhase.Idle)
             {
                 <div class="voice-status-bar @VoicePhaseCssClass">
                     @switch (_voicePhase)
@@ -463,7 +454,7 @@
 }
 
 @code {
-    private const string AppVersion = "v4.85.2";
+    private const string AppVersion = "v4.86.0";
     private const string AppThemeClass = "theme-v485";
 
     private enum PanelKind { List = 0, Chat = 1, Log = 2, Cite = 3 }
@@ -503,6 +494,7 @@
 
     // Render throttle
     private int _renderCounter;
+    private int _chunkCounter;
     private bool _renderPending;
     private Timer? _renderTimer;
 
@@ -827,14 +819,21 @@
         StateHasChanged();
     }
 
+    private int _sendSeq;
+
     private async Task SendMessageAsync()
     {
-        if (string.IsNullOrWhiteSpace(UserMessage) || _isSending)
+        if (string.IsNullOrWhiteSpace(UserMessage) || _isSending || _isStopping)
             return;
 
         var text = UserMessage.Trim();
         UserMessage = string.Empty;
         _isSending = true;
+        _chunkCounter = 0;
+        var seq = ++_sendSeq;
+
+        try { await JS.InvokeVoidAsync("console.warn",
+            $"[Blazor] SEND #{seq} convId={_conversationId[..8]}… msg={text[..Math.Min(text.Length,40)]}"); } catch { }
 
         // Auto-connect
         try
@@ -852,6 +851,12 @@
         _messages.Add(new ChatMessageViewModel { IsUser = false, IsStreaming = true });
         _latencyStopwatch = System.Diagnostics.Stopwatch.StartNew();
         StartTimeoutTimer();
+
+        // Pre-unlock AudioContext during user gesture for Auto TTS
+        if (_autoTtsEnabled && !_isVoiceMode)
+        {
+            try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
+        }
         StateHasChanged();
         await ScrollToBottom();
 
@@ -860,6 +865,8 @@
             var logContext = _pendingLogContext ?? BuildAutoLogContext(text);
             _pendingLogContext = null;
             await ChatService.SendMessageAsync(_conversationId, EquipmentId.Trim(), text, _selectedModelId, _searchMode, logContext);
+            try { await JS.InvokeVoidAsync("console.warn",
+                $"[Blazor] SENT #{seq} convId={_conversationId[..8]}… OK"); } catch { }
         }
         catch (Exception ex)
         {
@@ -877,6 +884,7 @@
         _isStopping = true;
         StopRenderTimer();
         StopStaleStreamTimer();
+        StopTimeoutTimer();
 
         // Stop streaming TTS if active
         if (_ttsStreamingActive)
@@ -894,10 +902,16 @@
                 assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
         }
 
-        _isSending = false;
+        // Reset conversationId so old LLM Worker tokens (still flowing on the old
+        // NATS subject chat.stream.{oldConversationId}) don't mix with the next response.
+        _conversationId = Guid.NewGuid().ToString("N");
+
+        // Disconnect FIRST, then allow new sends — prevents race where the user sends
+        // a new message on the old WebSocket while the old LLM Worker is still streaming.
         await ChatService.DisconnectAsync();
         try { await ChatService.ConnectAsync(EquipmentId.Trim()); } catch { }
 
+        _isSending = false;
         _isStopping = false;
         StateHasChanged();
     }
@@ -1060,6 +1074,9 @@
                 _timeoutBudgetSeconds = budget;
             }
 
+            var savedAutoTts = await JS.InvokeAsync<string>("clientSettings.getAutoTts");
+            _autoTtsEnabled = savedAutoTts == "on";
+
             StateHasChanged();
         }
     }
@@ -1194,6 +1211,8 @@
     private int _ttsPlayingIdx = -1;
     private bool _ttsLoading;
     private bool _ttsStreamingActive;
+    private bool _ttsInitPending;
+    private bool _autoTtsEnabled;
 
     private async Task PlayLastTts()
     {
@@ -1237,17 +1256,33 @@
 
         try
         {
-            var gatewayBase = Configuration["Gateway:HttpUrl"] ?? "http://localhost:5000";
-            // Strip markdown for cleaner TTS input
-            var ttsText = System.Text.RegularExpressions.Regex.Replace(
-                msg.Text, @"\*\*|##|#+\s|`[^`]*`|\[([^\]]*)\]\([^\)]*\)", "$1").Trim();
-            if (string.IsNullOrWhiteSpace(ttsText)) ttsText = msg.Text;
-            await JS.InvokeVoidAsync("fabTts.play", gatewayBase, ttsText, _dotNetRef);
+            // If the message is still streaming, start streaming TTS so sentences
+            // play as they arrive instead of waiting for the full response.
+            if (msg.IsStreaming)
+            {
+                await JS.InvokeVoidAsync("fabTts.playStream", _dotNetRef);
+                _ttsStreamingActive = true;
+                // Feed already-accumulated text so earlier sentences play immediately
+                if (!string.IsNullOrEmpty(msg.Text))
+                {
+                    await JS.InvokeVoidAsync("fabTts.feedText", msg.Text);
+                }
+            }
+            else
+            {
+                var gatewayBase = Configuration["Gateway:HttpUrl"] ?? "http://localhost:5000";
+                // Strip markdown for cleaner TTS input
+                var ttsText = System.Text.RegularExpressions.Regex.Replace(
+                    msg.Text, @"\*\*|##|#+\s|`[^`]*`|\[([^\]]*)\]\([^\)]*\)", "$1").Trim();
+                if (string.IsNullOrWhiteSpace(ttsText)) ttsText = msg.Text;
+                await JS.InvokeVoidAsync("fabTts.play", gatewayBase, ttsText, _dotNetRef);
+            }
         }
         catch (Exception ex)
         {
             _connectionError = $"TTS 오류: {ex.Message}";
             _ttsPlayingIdx = -1;
+            _ttsStreamingActive = false;
         }
         finally
         {
@@ -1298,11 +1333,42 @@
         InvokeAsync(StateHasChanged);
     }
 
+    [JSInvokable]
+    public void OnBargeIn()
+    {
+        _ttsPlayingIdx = -1;
+        _ttsStreamingActive = false;
+
+        if (_isVoiceMode)
+        {
+            _ = InvokeAsync(async () =>
+            {
+                _voicePhase = VoicePhase.Listening;
+                StateHasChanged();
+                await VoiceStartListeningAsync();
+            });
+        }
+        else
+        {
+            // Auto TTS (non-voice mode): just stop playback
+            _ = InvokeAsync(async () =>
+            {
+                try { await JS.InvokeVoidAsync("fabTts.stop"); } catch { }
+                StateHasChanged();
+            });
+        }
+    }
+
     // ─── Voice Recording (STT) ─────────────────────────────────────────
 
     private async Task ToggleRecording()
     {
-        if (_isVoiceMode) { await ToggleVoiceMode(); return; }
+        // If voice conversation is active (autoTts + voiceMode), stop it
+        if (_isVoiceMode)
+        {
+            await ExitVoiceModeAsync();
+            return;
+        }
 
         if (_isRecording)
         {
@@ -1316,6 +1382,27 @@
         }
         else
         {
+            // When Auto TTS is on, enter voice conversation mode (auto-send + auto-listen loop)
+            if (_autoTtsEnabled)
+            {
+                try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
+                bool micAcquired = false;
+                try { micAcquired = await JS.InvokeAsync<bool>("audioRecorder.setVoiceMode", true); }
+                catch { micAcquired = false; }
+
+                if (!micAcquired)
+                {
+                    _connectionError = "마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 접근을 허용하세요.";
+                    StateHasChanged();
+                    return;
+                }
+
+                _isVoiceMode = true;
+                StateHasChanged();
+                await VoiceStartListeningAsync();
+                return;
+            }
+
             _interimText = "";
             _recordingSeconds = 0;
             var started = await JS.InvokeAsync<bool>("audioRecorder.start");
@@ -1333,6 +1420,12 @@
 
         if (_isVoiceMode)
         {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                // No speech detected — silently restart listening
+                _ = InvokeAsync(async () => await VoiceStartListeningAsync());
+                return Task.CompletedTask;
+            }
             _voicePhase = VoicePhase.Transcribing;
             StateHasChanged();
             // Auto-send in voice mode
@@ -1353,11 +1446,26 @@
         _isRecording = false;
         _interimText = "";
         _recordingSeconds = 0;
-        _connectionError = $"음성 인식 실패: {error}";
 
         if (_isVoiceMode)
-            _ = InvokeAsync(async () => await ExitVoiceModeAsync());
+        {
+            // Non-critical errors (no audio, timeout) — silently restart listening
+            // Fatal errors (server down, permission) — exit voice mode
+            var isFatal = error.Contains("연결") || error.Contains("권한") || error.Contains("connect");
+            if (isFatal)
+            {
+                _connectionError = $"음성 인식 실패: {error}";
+                _ = InvokeAsync(async () => await ExitVoiceModeAsync());
+            }
+            else
+            {
+                _ = InvokeAsync(async () => await VoiceStartListeningAsync());
+            }
+            StateHasChanged();
+            return Task.CompletedTask;
+        }
 
+        _connectionError = $"음성 인식 실패: {error}";
         StateHasChanged();
         return Task.CompletedTask;
     }
@@ -1399,32 +1507,22 @@
 
     // ─── Voice Mode (hands-free loop) ────────────────────────────────────
 
-    private async Task ToggleVoiceMode()
+    private async Task ToggleAutoTts()
     {
-        if (_isVoiceMode)
+        _autoTtsEnabled = !_autoTtsEnabled;
+        await JS.InvokeVoidAsync("clientSettings.setAutoTts", _autoTtsEnabled ? "on" : "off");
+        if (_autoTtsEnabled)
         {
-            await ExitVoiceModeAsync();
+            try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
+            // Pre-acquire mic for barge-in detection (user gesture context)
+            try { await JS.InvokeVoidAsync("fabTts.prepareMic"); } catch { }
         }
         else
         {
-            // User gesture context — acquire mic + unlock audio ONCE for entire session
-            try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
-
-            // Pre-acquire mic — returns false if permission denied
-            bool micAcquired = false;
-            try { micAcquired = await JS.InvokeAsync<bool>("audioRecorder.setVoiceMode", true); }
-            catch { micAcquired = false; }
-
-            if (!micAcquired)
-            {
-                _connectionError = "마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 접근을 허용하세요.";
-                StateHasChanged();
-                return;
-            }
-
-            _isVoiceMode = true;
-            StateHasChanged();
-            await VoiceStartListeningAsync();
+            // Release barge-in mic
+            try { await JS.InvokeVoidAsync("fabTts.releaseMic"); } catch { }
+            if (_isVoiceMode)
+                await ExitVoiceModeAsync();
         }
     }
 
@@ -1469,7 +1567,7 @@
 
         try
         {
-            // setVoiceMode(true) already called in ToggleVoiceMode — mic is pre-acquired
+            // setVoiceMode(true) already called in ToggleRecording — mic is pre-acquired
             var started = await JS.InvokeAsync<bool>("audioRecorder.start");
             _isRecording = started;
             if (!started)
@@ -1527,7 +1625,7 @@
 
     private async Task TriggerFileUpload()
     {
-        try { await JS.InvokeVoidAsync("document.getElementById('fileUploadInput').click"); } catch { }
+        try { await JS.InvokeVoidAsync("domHelper.clickElement", "fileUploadInput"); } catch { }
     }
 
     private async Task HandleFileUpload(InputFileChangeEventArgs e)
@@ -1540,7 +1638,7 @@
 
         try
         {
-            var gatewayBase = "http://localhost:5000";
+            var gatewayBase = Configuration["Gateway:HttpUrl"] ?? "http://localhost:5000";
             using var http = new HttpClient { BaseAddress = new Uri(gatewayBase) };
             using var content = new MultipartFormDataContent();
             using var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
@@ -1589,31 +1687,28 @@
 
     private void HandleChunkReceived(FabCopilot.Contracts.Messages.ChatStreamChunk chunk)
     {
-        if (_isStopping) return;
+        if (_isStopping || !_isSending) return;
 
         InvokeAsync(async () =>
         {
-            if (_isStopping) return;
+            if (_isStopping || !_isSending) return;
+
+            // Definitive guard: reject chunks from a different conversation.
+            if (!string.IsNullOrEmpty(chunk.ConversationId) && chunk.ConversationId != _conversationId)
+                return;
 
             var assistantMsg = _messages.LastOrDefault(m => !m.IsUser && m.IsStreaming);
             if (assistantMsg is null)
             {
                 assistantMsg = new ChatMessageViewModel { IsUser = false, IsStreaming = true };
                 _messages.Add(assistantMsg);
-
-                // Voice mode: start streaming TTS for real-time sentence playback
-                if (_isVoiceMode)
-                {
-                    try
-                    {
-                        _voicePhase = VoicePhase.Speaking;
-                        _ttsPlayingIdx = _messages.Count - 1;
-                        await JS.InvokeVoidAsync("fabTts.playStream", _dotNetRef);
-                        _ttsStreamingActive = true;
-                    }
-                    catch { _ttsStreamingActive = false; }
-                }
             }
+
+            // ────────────────────────────────────────────────────────────────
+            // CRITICAL: All state mutations happen SYNCHRONOUSLY below.
+            // NO await before token append — this guarantees token ordering
+            // even when multiple InvokeAsync callbacks interleave at await points.
+            // ────────────────────────────────────────────────────────────────
 
             if (!string.IsNullOrEmpty(chunk.Error))
             {
@@ -1623,15 +1718,14 @@
                 StopRenderTimer();
                 StopStaleStreamTimer();
                 StopTimeoutTimer();
-                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
 
-                // Voice mode: exit on error
+                // Async work (rendering, TTS cleanup) — safe after state is set
+                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
                 if (_isVoiceMode)
                 {
                     _ttsStreamingActive = false;
                     await ExitVoiceModeAsync();
                 }
-
                 StateHasChanged();
                 await ScrollToBottom();
             }
@@ -1642,7 +1736,6 @@
                 StopRenderTimer();
                 StopStaleStreamTimer();
                 StopTimeoutTimer();
-                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
                 if (_renderMode == "fade")
                     assistantMsg.FadeIn = true;
 
@@ -1654,7 +1747,7 @@
                     _latencyStopwatch = null;
                 }
 
-                // Store citations from the completion chunk
+                // Store citations
                 if (chunk.Citations is { Count: > 0 })
                 {
                     assistantMsg.Citations = chunk.Citations;
@@ -1662,40 +1755,74 @@
                     _activePanel = PanelKind.Cite;
                 }
 
+                // Integrity check: log accumulated text at completion
+                try
+                {
+                    var preview = assistantMsg.Text.Length > 200
+                        ? assistantMsg.Text[..200]
+                        : assistantMsg.Text;
+                    await JS.InvokeVoidAsync("console.warn",
+                        $"[Blazor] COMPLETE chunks={_chunkCounter} len={assistantMsg.Text.Length} text={preview}");
+                } catch { }
+
+                // Async work — render final markdown
+                assistantMsg.RenderedHtml = await RenderMarkdownAsync(assistantMsg.Text);
                 StateHasChanged();
                 await ScrollToBottom();
 
-                // Voice mode: flush streaming TTS or fall back to full-text TTS
-                if (_isVoiceMode)
+                // TTS flush (after UI is updated)
+                if (_ttsStreamingActive)
                 {
-                    if (_ttsStreamingActive)
-                    {
-                        // Flush remaining buffer — OnTtsEnded callback handles voice cycle
-                        try { await JS.InvokeVoidAsync("fabTts.flushStream"); } catch { }
-                    }
-                    else
-                    {
-                        await VoiceAutoTtsAsync();
-                    }
+                    try { await JS.InvokeVoidAsync("fabTts.flushStream"); } catch { }
+                }
+                else if (_isVoiceMode)
+                {
+                    await VoiceAutoTtsAsync();
                 }
             }
             else
             {
+                // ═══ TOKEN APPEND — must be synchronous, no await above ═══
+                _chunkCounter++;
                 assistantMsg.Text += chunk.Token;
-
-                // Feed token to streaming TTS for real-time sentence synthesis
-                if (_ttsStreamingActive)
-                {
-                    try { await JS.InvokeVoidAsync("fabTts.feedText", chunk.Token); } catch { }
-                }
 
                 if (_renderMode != "batch")
                 {
                     _renderCounter++;
                     ScheduleRenderUpdate();
                 }
-                // batch 모드: Text만 축적, 렌더 안 함 → IsComplete 시 한 번에 표시
                 ResetStaleStreamTimer();
+
+                // ═══ ASYNC work below — token is already safely appended ═══
+
+                // Start streaming TTS on first token (once per response)
+                // _ttsInitPending prevents re-entry: tokens during init are NOT fed
+                // individually — they're covered by feedText(assistantMsg.Text) after init.
+                if (!_ttsStreamingActive && !_ttsInitPending && (_isVoiceMode || _autoTtsEnabled))
+                {
+                    _ttsInitPending = true; // synchronous guard before await
+                    try
+                    {
+                        if (_isVoiceMode) _voicePhase = VoicePhase.Speaking;
+                        _ttsPlayingIdx = _messages.Count - 1;
+                        await JS.InvokeVoidAsync("fabTts.playStream", _dotNetRef);
+                        _ttsStreamingActive = true;
+                        _ttsInitPending = false;
+                        // Feed ALL text accumulated during init
+                        await JS.InvokeVoidAsync("fabTts.feedText", assistantMsg.Text);
+                    }
+                    catch
+                    {
+                        _ttsStreamingActive = false;
+                        _ttsInitPending = false;
+                    }
+                }
+                else if (_ttsStreamingActive)
+                {
+                    // Normal path: feed individual token
+                    try { await JS.InvokeVoidAsync("fabTts.feedText", chunk.Token); } catch { }
+                }
+                // else: _ttsInitPending — skip feed, will be covered after init
             }
         });
     }
@@ -1704,7 +1831,7 @@
     {
         if (_renderPending) return;
         _renderPending = true;
-        var interval = _renderMode == "jit" ? 300 : 100;
+        var interval = _renderMode == "jit" ? 150 : 100;
         _renderTimer ??= new Timer(_ =>
         {
             InvokeAsync(async () =>
