@@ -37,6 +37,8 @@
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/erlang.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    <script src="js/xstate.min.js"></script>
+    <script src="js/voice-machine.js" asp-append-version="true"></script>
     <script>
         // ─── Scroll ───────────────────────────────────────────────
         window.chatScroll = {
@@ -635,7 +637,7 @@
 
             play: async function(gatewayBaseIgnored, text, dotNetRef) {
                 this._dotNetRef = dotNetRef;
-                this.stop();
+                this._stopInternal();
                 this._playing = true;
                 var gatewayBase = this._getGatewayUrl();
                 var D = window._ttsDebug;
@@ -707,13 +709,15 @@
                         D.log('6. TTS ended');
                         self._sourceNode = null;
                         self._playing = false;
-                        if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
+                        if (window.voiceMachine) window.voiceMachine.send('TTS_ENDED');
+                        // Always notify Blazor directly (fallback if machine already idle)
+                        if (self._dotNetRef) self._dotNetRef.invokeMethodAsync('OnTtsEnded');
                     };
                     source.start(0);
+                    // Notify machine AFTER audio actually starts (prevents premature barge-in)
+                    if (window.voiceMachine) window.voiceMachine.send({ type: 'TTS_PLAY', params: { idx: -1 } });
                     xttsOk = true;
-                    // Start barge-in detector now that audio is playing
-                    this.startBargeIn();
-                    D.log('6. TTS PLAYING ✓ gain=' + this._gainNode.gain.value + ' (barge-in active)');
+                    D.log('6. TTS PLAYING ✓ gain=' + this._gainNode.gain.value);
                 } catch(ex) {
                     D.log('TTS FAIL: ' + ex.message);
                 }
@@ -755,6 +759,7 @@
                 }
 
                 window.speechSynthesis.cancel();
+                if (window.voiceMachine) window.voiceMachine.send({ type: 'TTS_PLAY', params: { idx: -1 } });
 
                 // Split long text into ~2000 char chunks (safe limit for SpeechSynthesis)
                 var chunks = this._splitTextToChunks(text, 2000);
@@ -776,15 +781,15 @@
 
                 var self = this;
                 var chunkIdx = 0;
-                // Start barge-in detector for SpeechSynthesis playback too
-                this.startBargeIn();
+                // Barge-in managed by voiceMachine TTS state entry/exit
 
                 function playNextChunk() {
                     if (!self._playing || chunkIdx >= chunks.length) {
                         D.log('SS: all ' + chunks.length + ' chunks done');
                         self._playing = false;
                         if (self._synthResumeTimer) { clearInterval(self._synthResumeTimer); self._synthResumeTimer = null; }
-                        if (dotNetRef) dotNetRef.invokeMethodAsync('OnTtsEnded');
+                        if (window.voiceMachine) window.voiceMachine.send('TTS_ENDED');
+                        if (self._dotNetRef) self._dotNetRef.invokeMethodAsync('OnTtsEnded');
                         return;
                     }
 
@@ -848,9 +853,10 @@
             playStream: async function(dotNetRef) {
                 var D = window._ttsDebug;
                 console.log('[StreamTTS ' + this._STREAM_VER + '] playStream called');
-                this.stop();
+                this._stopInternal();
                 this._dotNetRef = dotNetRef;
                 this._streaming = true;
+                if (window.voiceMachine) window.voiceMachine.send({ type: 'TTS_STREAM_START', params: { idx: -1 } });
                 this._streamBuf = '';
                 this._streamQueue = [];
                 this._streamProcessing = false;
@@ -870,8 +876,7 @@
                         console.error('[StreamTTS] AudioContext resume failed:', e);
                     }
                 }
-                // Start barge-in detector AFTER initialization
-                this.startBargeIn();
+                // Barge-in managed by voiceMachine TTS state entry/exit
                 D.log('[StreamTTS ' + this._STREAM_VER + '] initialized, ctx=' + ctx.state);
             },
 
@@ -957,6 +962,7 @@
                     console.log('[StreamTTS] flush: no items in queue, signaling done');
                     this._streaming = false;
                     this._playing = false;
+                    if (window.voiceMachine) window.voiceMachine.send('TTS_ENDED');
                     if (this._dotNetRef) this._dotNetRef.invokeMethodAsync('OnTtsEnded');
                 } else {
                     this._processQueue();
@@ -1205,6 +1211,7 @@
                     D.log('[StreamTTS] all done');
                     this._streaming = false;
                     this._playing = false;
+                    if (window.voiceMachine) window.voiceMachine.send('TTS_ENDED');
                     if (this._dotNetRef) this._dotNetRef.invokeMethodAsync('OnTtsEnded');
                 }
             },
@@ -1267,9 +1274,15 @@
                 });
             },
 
+            // Public stop — sends event to state machine
             stop: function() {
+                this._stopInternal();
+                if (window.voiceMachine) window.voiceMachine.send('TTS_STOP');
+            },
+
+            // Internal stop — just cleans up audio resources, no state machine event
+            _stopInternal: function() {
                 this._playing = false;
-                this.stopBargeIn();
                 // Abort all pending per-item fetches
                 var q = this._streamQueue || [];
                 for (var i = 0; i < q.length; i++) {
@@ -1342,153 +1355,15 @@
                 this._bargeInReady = false;
             },
 
+            // ─── Barge-in: now managed by voiceMachine ───
+            // prepareMic/releaseMic remain for mic stream management
             startBargeIn: function() {
-                // Get mic stream: persistent (voice mode) > pre-acquired > none
-                var mic = (window.audioRecorder && window.audioRecorder._persistentStream);
-                if (!mic || !mic.active) mic = this._bargeInMicStream;
-                if (!mic || !mic.active) {
-                    window._ttsDebug.log('Barge-in: no mic available');
-                    return;
-                }
-                this._stopBargeInDetector();
-                this._commandDetected = false;
-                var D = window._ttsDebug;
-
-                // Start voice command listener (WebSpeech) for "멈춰" etc.
-                this._startCommandListener();
-
-                try {
-                    this._bargeInCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    var src = this._bargeInCtx.createMediaStreamSource(mic);
-                    this._bargeInAnalyser = this._bargeInCtx.createAnalyser();
-                    this._bargeInAnalyser.fftSize = 512;
-                    src.connect(this._bargeInAnalyser);
-
-                    var bufLen = this._bargeInAnalyser.fftSize;
-                    var buf = new Float32Array(bufLen);
-                    var self = this;
-                    var THRESHOLD = 0.02;        // sensitive enough for normal speech
-                    var CONFIRM_MS = 300;        // 300ms sustained speech → stop TTS
-
-                    this._bargeInSpeechStart = 0;
-                    this._bargeInInterval = setInterval(function() {
-                        if (!self._playing || !self._bargeInAnalyser) return;
-                        // If voice command already handled it, skip RMS barge-in
-                        if (self._commandDetected) return;
-                        self._bargeInAnalyser.getFloatTimeDomainData(buf);
-                        var sum = 0;
-                        for (var i = 0; i < bufLen; i++) sum += buf[i] * buf[i];
-                        var rms = Math.sqrt(sum / bufLen);
-
-                        if (rms > THRESHOLD) {
-                            if (self._bargeInSpeechStart === 0) {
-                                self._bargeInSpeechStart = Date.now();
-                            } else if (Date.now() - self._bargeInSpeechStart > CONFIRM_MS) {
-                                D.log('BARGE-IN: speech detected (rms=' + rms.toFixed(3) + ') → stopping TTS');
-                                self.stop();
-                                if (self._dotNetRef) {
-                                    self._dotNetRef.invokeMethodAsync('OnBargeIn');
-                                }
-                            }
-                        } else {
-                            self._bargeInSpeechStart = 0;
-                        }
-                    }, 40);
-                    D.log('Barge-in detector started (threshold=' + THRESHOLD + ', confirm=' + CONFIRM_MS + 'ms)');
-                } catch(e) {
-                    D.log('Barge-in init failed: ' + e.message);
-                }
+                // Delegated to voiceMachine TTS state entry action
+                console.log('[fabTts] startBargeIn delegated to voiceMachine');
             },
-
-            // ─── Voice command listener: WebSpeech during TTS ───
-            _startCommandListener: function() {
-                var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) {
-                    window._ttsDebug.log('[VoiceCmd] WebSpeech not available, RMS-only mode');
-                    return;
-                }
-                this._stopCommandListener();
-                var self = this;
-                var D = window._ttsDebug;
-
-                try {
-                    var rec = new SpeechRecognition();
-                    rec.lang = 'ko-KR';
-                    rec.interimResults = true;
-                    rec.continuous = true;
-                    rec.maxAlternatives = 1;
-
-                    rec.onresult = function(event) {
-                        for (var i = event.resultIndex; i < event.results.length; i++) {
-                            var text = event.results[i][0].transcript.trim();
-                            // Only check short utterances — long ones are likely TTS echo
-                            if (text.length === 0 || text.length > 15) continue;
-
-                            var lower = text.toLowerCase();
-                            var matched = false;
-                            for (var j = 0; j < self._STOP_COMMANDS.length; j++) {
-                                if (lower.indexOf(self._STOP_COMMANDS[j]) >= 0) {
-                                    matched = true;
-                                    break;
-                                }
-                            }
-
-                            if (matched) {
-                                D.log('[VoiceCmd] STOP command: "' + text + '" → stopping TTS');
-                                self._commandDetected = true;
-                                self.stop();
-                                if (self._dotNetRef) {
-                                    self._dotNetRef.invokeMethodAsync('OnVoiceCommand', 'stop');
-                                }
-                                return;
-                            }
-                        }
-                    };
-
-                    rec.onerror = function(event) {
-                        if (event.error !== 'aborted' && event.error !== 'no-speech') {
-                            D.log('[VoiceCmd] error: ' + event.error);
-                        }
-                    };
-
-                    rec.onend = function() {
-                        // Auto-restart while TTS is still playing
-                        if (self._playing && !self._commandDetected) {
-                            try { rec.start(); } catch(e) {}
-                        }
-                    };
-
-                    rec.start();
-                    this._commandRecognition = rec;
-                    D.log('[VoiceCmd] Command listener started (keywords: ' + this._STOP_COMMANDS.join(', ') + ')');
-                } catch(e) {
-                    D.log('[VoiceCmd] Failed to start: ' + e.message);
-                }
-            },
-
-            _stopCommandListener: function() {
-                if (this._commandRecognition) {
-                    try { this._commandRecognition.stop(); } catch(e) {}
-                    this._commandRecognition = null;
-                }
-            },
-
-            _stopBargeInDetector: function() {
-                if (this._bargeInInterval) {
-                    clearInterval(this._bargeInInterval);
-                    this._bargeInInterval = null;
-                }
-                if (this._bargeInCtx) {
-                    try { this._bargeInCtx.close(); } catch(e) {}
-                    this._bargeInCtx = null;
-                }
-                this._bargeInAnalyser = null;
-                this._bargeInSpeechStart = 0;
-                this._stopCommandListener();
-            },
-
             stopBargeIn: function() {
-                this._stopBargeInDetector();
+                // Delegated to voiceMachine TTS state exit action
+                console.log('[fabTts] stopBargeIn delegated to voiceMachine');
             }
         };
 

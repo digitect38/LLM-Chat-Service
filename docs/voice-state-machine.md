@@ -1,26 +1,354 @@
 # 음성 입출력 상태 머신 (Voice I/O State Machine)
 
 > FabWise WebClient 음성 대화 기능의 상태 관리 문서
-> 대상 파일: `Index.razor`, `_Layout.cshtml`
+> 대상 파일: `Index.razor`, `_Layout.cshtml`, `voice-machine.js`
 
 ---
 
-## 1. 주요 상태 변수
+## 1. 아키텍처 개요
+
+음성 I/O는 **XState v5 병렬 상태 머신**(`voice-machine.js`)과 **Blazor C# 상태 변수**(`Index.razor`)의
+이중 레이어로 관리된다.
+
+```
+┌─────────────────────────────────────────────────┐
+│  Blazor C# (Index.razor)                        │
+│  - _isVoiceMode, _voicePhase, _ttsPlayingIdx    │
+│  - UI 렌더링, 사용자 인터랙션, WebSocket 통신    │
+│  - voiceMachine.send() 로 JS 상태 머신에 이벤트  │
+└──────────────┬──────────────────────────────┬────┘
+               │ JSInvokable callbacks        │ JS Interop calls
+┌──────────────▼──────────────────────────────▼────┐
+│  XState v5 State Machine (voice-machine.js)      │
+│  - 4개 병렬 리전: mode, stt, tts, sendConfirm   │
+│  - barge-in 수명주기 관리 (entry/exit actions)   │
+│  - 마이크/오디오 리소스 조율                      │
+└──────────────┬──────────────────────────────┬────┘
+               │                              │
+┌──────────────▼────┐  ┌─────────────────────▼────┐
+│  fabTts            │  │  audioRecorder           │
+│  (_Layout.cshtml)  │  │  (_Layout.cshtml)        │
+│  - TTS 재생/중지   │  │  - STT 녹음/전사         │
+│  - Web Audio API   │  │  - Whisper / WebSpeech   │
+└───────────────────┘  └──────────────────────────┘
+```
+
+### 파일 구조
+
+| 파일 | 역할 |
+|---|---|
+| `wwwroot/js/xstate.min.js` | XState v5 UMD 번들 (벤더링, 46KB) |
+| `wwwroot/js/voice-machine.js` | 상태 머신 정의 + barge-in 감지기 |
+| `Pages/_Layout.cshtml` | `fabTts` (TTS), `audioRecorder` (STT) 구현 |
+| `Pages/Index.razor` | Blazor 컴포넌트 — UI + 비즈니스 로직 |
+
+---
+
+## 2. XState 병렬 상태 머신
+
+### 2-1. 머신 구조
+
+```mermaid
+stateDiagram-v2
+    state voice {
+        state mode {
+            [*] --> off
+            off --> autoTts : AUTO_TTS_ON
+            off --> voiceActive : VOICE_ENTER
+            autoTts --> off : AUTO_TTS_OFF
+            autoTts --> voiceActive : VOICE_ENTER
+            voiceActive --> off : VOICE_EXIT
+            voiceActive --> off : AUTO_TTS_OFF
+            voiceActive --> off : WS_DISCONNECT
+        }
+        --
+        state stt {
+            [*] --> stt_idle
+            stt_idle --> recording : REC_START
+            recording --> stt_idle : REC_FINAL / REC_ERROR / REC_ABORT
+            recording --> transcribing : REC_STOP
+            transcribing --> stt_idle : TRANSCRIPT_OK / TRANSCRIPT_ERR
+        }
+        --
+        state tts {
+            [*] --> tts_idle
+            tts_idle --> playing : TTS_PLAY
+            tts_idle --> streaming : TTS_STREAM_START
+            playing --> tts_idle : TTS_ENDED / TTS_STOP / BARGE_IN / VOICE_CMD
+            streaming --> flushing : TTS_FLUSH
+            streaming --> tts_idle : TTS_ENDED / TTS_STOP / BARGE_IN / VOICE_CMD
+            flushing --> tts_idle : TTS_ENDED / TTS_STOP / BARGE_IN / VOICE_CMD
+        }
+        --
+        state sendConfirm {
+            [*] --> hidden
+            hidden --> visible : SEND_CONFIRM_SHOW
+            visible --> hidden : SEND_CONFIRM_STOP / KEEP / CANCEL
+        }
+    }
+```
+
+### 2-2. 컨텍스트 (Context)
+
+| 키 | 타입 | 설명 |
+|---|---|---|
+| `autoTtsEnabled` | `boolean` | Auto TTS 활성화 여부 |
+| `ttsPlayingIdx` | `number` | 재생 중 메시지 인덱스 (`-1` = 없음) |
+| `interimText` | `string` | STT 중간 결과 텍스트 |
+| `recordingSeconds` | `number` | 녹음 경과 시간 |
+| `pendingMessage` | `string\|null` | TTS 중 전송 확인 대기 메시지 |
+| `sttEngine` | `string` | STT 엔진 (`'whisper'` / `'webspeech'`) |
+
+---
+
+## 3. Mode 리전 (음성 모드)
+
+### 상태 전이
+
+| 이벤트 | off → | autoTts → | voiceActive → |
+|---|---|---|---|
+| `AUTO_TTS_ON` | autoTts | — | — |
+| `AUTO_TTS_OFF` | — | off | off |
+| `VOICE_ENTER` | voiceActive | voiceActive | — |
+| `VOICE_EXIT` | — | — | off |
+| `WS_DISCONNECT` | — | — | off |
+
+### Entry / Exit 액션
+
+| 상태 | Entry | Exit |
+|---|---|---|
+| `autoTts` | `unlockAudio`, `prepareMic` | `releaseMic` |
+| `voiceActive` | `unlockAudio`, `acquireVoiceModeMic` | `releaseVoiceModeMic`, `stopAllActivity` |
+
+### C# 연동
+
+```csharp
+// Auto TTS 토글
+await JS.InvokeVoidAsync("voiceMachine.setContext", "autoTtsEnabled", _autoTtsEnabled);
+
+// Voice Mode 진입 (ToggleRecording 내)
+await JS.InvokeVoidAsync("voiceMachine.send", "VOICE_ENTER");
+
+// Voice Mode 퇴출
+await JS.InvokeVoidAsync("voiceMachine.send", "VOICE_EXIT");
+```
+
+---
+
+## 4. STT 리전 (음성 인식)
+
+### 상태 전이
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> recording : REC_START
+
+    recording --> recording : REC_INTERIM\ninterimText 갱신
+    recording --> idle : REC_FINAL\nhandleTranscript
+    recording --> idle : REC_ERROR\nhandleSttError
+    recording --> idle : REC_ABORT
+    recording --> idle : VOICE_EXIT
+    recording --> transcribing : REC_STOP
+
+    transcribing --> idle : TRANSCRIPT_OK\nhandleTranscript
+    transcribing --> idle : TRANSCRIPT_ERR\nhandleSttError
+```
+
+### 이벤트 파라미터
+
+| 이벤트 | params | 설명 |
+|---|---|---|
+| `REC_INTERIM` | `{ text }` | 중간 인식 결과 |
+| `REC_FINAL` | `{ text }` | 최종 인식 결과 (WebSpeech) |
+| `REC_ERROR` | `{ error }` | STT 에러 메시지 |
+| `TRANSCRIPT_OK` | `{ text }` | Whisper 전사 결과 |
+| `TRANSCRIPT_ERR` | `{ error }` | Whisper 전사 에러 |
+
+---
+
+## 5. TTS 리전 (음성 합성)
+
+### 상태 전이
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+
+    idle --> playing : TTS_PLAY\nttsPlayingIdx 설정
+    idle --> streaming : TTS_STREAM_START\nttsPlayingIdx 설정
+
+    playing --> idle : TTS_ENDED
+    playing --> idle : TTS_STOP
+    playing --> idle : TTS_ERROR
+    playing --> idle : BARGE_IN\nstopTtsInternal
+    playing --> idle : VOICE_CMD\nstopTtsInternal
+
+    streaming --> flushing : TTS_FLUSH\nflushStream
+    streaming --> idle : TTS_ENDED / TTS_STOP / BARGE_IN / VOICE_CMD
+
+    flushing --> idle : TTS_ENDED / TTS_STOP / BARGE_IN / VOICE_CMD
+```
+
+### Entry / Exit 액션 (Barge-in 수명주기)
+
+| 상태 | Entry | Exit |
+|---|---|---|
+| `idle` | `assign({ ttsPlayingIdx: -1 })` | — |
+| `playing` | `startBargeIn` | `stopBargeIn`, `notifyTtsState` |
+| `streaming` | `startBargeIn` | `stopBargeIn`, `notifyTtsState` |
+| `flushing` | `startBargeIn` | `stopBargeIn`, `notifyTtsState` |
+
+### TTS 종료 이중 보장 (Dual Notification)
+
+TTS 종료 시 Blazor에 확실히 통지하기 위해 **이중 경로**를 사용:
+
+```
+                     ┌─ voiceMachine.send('TTS_ENDED') → 머신 내부 상태 전이
+source.onended ──────┤
+                     └─ dotNetRef.invokeMethodAsync('OnTtsEnded') → Blazor UI 갱신
+```
+
+**이유**: 머신이 이미 `idle` 상태이면 `TTS_ENDED` 이벤트가 무시되어 Blazor 콜백이
+호출되지 않는 에지 케이스 방지. C# `OnTtsEnded()`는 idempotent하게 구현.
+
+```csharp
+[JSInvokable]
+public void OnTtsEnded()
+{
+    // 이미 처리된 경우 (OnBargeIn/OnVoiceCommand가 먼저 호출) 스킵
+    if (_ttsPlayingIdx < 0 && !_ttsStreamingActive && !_ttsLoading) return;
+    _ttsPlayingIdx = -1;
+    _ttsStreamingActive = false;
+    _ttsLoading = false;
+    // ... voice mode 시 VoiceStartListeningAsync() 호출
+}
+```
+
+### TTS 이벤트 발생 시점 (_Layout.cshtml)
+
+| JS 함수 | 이벤트 | 시점 |
+|---|---|---|
+| `fabTts.play()` | `TTS_PLAY` | `source.start()` 이후 (오디오 재생 시작 후) |
+| `fabTts.playStream()` | `TTS_STREAM_START` | 함수 진입 시 (스트리밍 준비) |
+| `fabTts._playSpeechSynthesis()` | `TTS_PLAY` | SpeechSynthesis 시작 시 |
+| `fabTts.stop()` | `TTS_STOP` | `_stopInternal()` 호출 후 |
+| `source.onended` 등 4개 콜백 | `TTS_ENDED` | 오디오 실제 종료 시 |
+
+---
+
+## 6. SendConfirm 리전 (TTS 중 전송 확인)
+
+| 이벤트 | params | 전이 | 액션 |
+|---|---|---|---|
+| `SEND_CONFIRM_SHOW` | `{ text }` | hidden → visible | `pendingMessage` 설정 |
+| `SEND_CONFIRM_STOP` | — | visible → hidden | `OnSendConfirm(true, text)` |
+| `SEND_CONFIRM_KEEP` | — | visible → hidden | `OnSendConfirm(false, text)` |
+| `SEND_CONFIRM_CANCEL` | — | visible → hidden | `pendingMessage = null` |
+
+---
+
+## 7. Barge-in 감지 시스템
+
+voiceMachine의 TTS 상태 entry/exit 액션으로 수명주기가 관리된다.
+
+### 구성
+
+```
+startBargeIn() ─── TTS 상태 entry 시 호출
+  ├── _startRmsDetector()    → AudioContext + AnalyserNode
+  └── _startCommandListener() → WebSpeech continuous 모드
+
+stopBargeIn()  ─── TTS 상태 exit 시 호출
+  ├── _stopRmsDetector()     → AudioContext.close()
+  └── _stopCommandListener() → SpeechRecognition.stop()
+```
+
+### RMS 감지기
+
+| 항목 | 값 |
+|---|---|
+| 임계값 | RMS > 0.02 |
+| 확인 시간 | 300ms 연속 |
+| 샘플링 주기 | 40ms (setInterval) |
+| 이벤트 | `BARGE_IN` |
+
+### 음성 명령 리스너
+
+| 항목 | 값 |
+|---|---|
+| 엔진 | WebSpeech API (continuous) |
+| 언어 | `ko-KR` |
+| 명령어 | `멈춰`, `그만`, `중지`, `스톱`, `stop` 등 9개 |
+| 에코 필터 | 인식 텍스트 > 15자 → TTS 에코로 간주, 무시 |
+| 이벤트 | `VOICE_CMD { command: 'stop' }` |
+
+### BARGE_IN vs VOICE_CMD 차이
+
+| 항목 | `BARGE_IN` (RMS) | `VOICE_CMD` (WebSpeech) |
+|---|---|---|
+| 트리거 | 아무 소리 300ms 지속 | 특정 명령어 인식 |
+| TTS 중지 | `stopTtsInternal` | `stopTtsInternal` |
+| Voice Mode → 녹음 재시작 | 즉시 (사용자가 말하는 중) | 1초 대기 후 (명령 에코 방지) |
+| Non-Voice Mode | TTS 중지만 | TTS 중지만 |
+| Blazor 콜백 | `OnBargeIn()` | `OnVoiceCommand("stop")` |
+
+### 마이크 스트림 우선순위
+
+```
+persistentStream (Voice Mode) > bargeInMicStream (Auto TTS) > 없음
+```
+
+---
+
+## 8. Blazor ↔ JS 연동
+
+### 초기화 (OnAfterRenderAsync)
+
+```csharp
+_dotNetRef = DotNetObjectReference.Create(this);
+await JS.InvokeVoidAsync("voiceMachine.init", _dotNetRef);  // machine에 Blazor ref 전달
+await JS.InvokeVoidAsync("audioRecorder.init", _dotNetRef, EquipmentId);
+```
+
+### JS → Blazor 콜백 (JSInvokable)
+
+| 메서드 | 호출자 | 설명 |
+|---|---|---|
+| `OnTtsEnded()` | TTS 종료 콜백 (직접) | TTS 종료 — idempotent |
+| `OnTtsError(error)` | voiceMachine 액션 | TTS 에러 |
+| `OnBargeIn()` | voiceMachine 액션 | RMS barge-in 감지 |
+| `OnVoiceCommand(cmd)` | voiceMachine 액션 | 음성 명령 감지 |
+| `OnTranscriptionComplete(text)` | audioRecorder / voiceMachine | STT 완료 |
+| `OnTranscriptionError(error)` | audioRecorder / voiceMachine | STT 에러 |
+| `OnSendConfirm(stop, text)` | voiceMachine 액션 | TTS 중 전송 확인 |
+
+### Blazor → JS 이벤트 전송
+
+| C# 코드 | 머신 이벤트 | 시점 |
+|---|---|---|
+| `voiceMachine.setContext("autoTtsEnabled", true/false)` | `AUTO_TTS_ON`/`OFF` | ToggleAutoTts |
+| `voiceMachine.send("VOICE_ENTER")` | `VOICE_ENTER` | 마이크 버튼 (Voice Mode 진입) |
+| `voiceMachine.send("VOICE_EXIT")` | `VOICE_EXIT` | ExitVoiceModeAsync |
+
+---
+
+## 9. C# 레이어 상태 변수
+
+> XState 머신과 병렬로 C# 상태 변수가 여전히 사용됨 (점진적 마이그레이션 중).
 
 | 변수 | 타입 | 설명 |
 |---|---|---|
 | `_autoTtsEnabled` | `bool` | Auto TTS 토글 (localStorage 저장) |
-| `_isVoiceMode` | `bool` | 음성 대화 루프 활성 (STT→질문→TTS→반복) |
-| `_voicePhase` | `VoicePhase` | 음성 모드 내 세부 단계 |
+| `_isVoiceMode` | `bool` | 음성 대화 루프 활성 |
+| `_voicePhase` | `VoicePhase` | 음성 모드 세부 단계 |
 | `_isRecording` | `bool` | 마이크 녹음 중 |
-| `_isTranscribing` | `bool` | STT 변환 중 (Whisper 업로드) |
-| `_ttsPlayingIdx` | `int` | TTS 재생 중인 메시지 인덱스 (`-1` = 없음) |
+| `_isTranscribing` | `bool` | STT 변환 중 |
+| `_ttsPlayingIdx` | `int` | TTS 재생 중 메시지 인덱스 (`-1` = 없음) |
 | `_ttsStreamingActive` | `bool` | 스트리밍 TTS 진행 중 |
-| `_ttsSendConfirmVisible` | `bool` | TTS 중 새 질문 확인 배너 표시 |
+| `_ttsLoading` | `bool` | TTS 로딩 중 |
 
----
-
-## 2. VoicePhase 열거형
+### VoicePhase 열거형
 
 ```csharp
 private enum VoicePhase { Idle, Listening, Transcribing, Waiting, Speaking }
@@ -36,133 +364,39 @@ private enum VoicePhase { Idle, Listening, Transcribing, Waiting, Speaking }
 
 ---
 
-## 3. 전체 상태 전이 다이어그램
-
-### 3-1. Voice Mode (음성 대화 루프)
-
-`_autoTtsEnabled = true`, `_isVoiceMode = true` 일 때의 핸즈프리 루프.
+## 10. Voice Mode 전체 흐름 (E2E)
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
 
-    Idle --> Listening : 마이크 버튼 (autoTts ON)\nsetVoiceMode(true)
+    Idle --> Listening : 마이크 버튼\nVOICE_ENTER + VoiceStartListeningAsync
 
-    Listening --> Listening : interim 결과 수신\n_interimText 업데이트
+    Listening --> Listening : REC_INTERIM\ninterimText 갱신
     Listening --> Listening : STT 완료 (텍스트 없음)\n자동 재시작
     Listening --> Listening : STT 에러 (비치명적)\n자동 재시작
     Listening --> Transcribing : STT 완료 (텍스트 있음)
-    Listening --> Idle : STT 에러 (치명적)\nExitVoiceModeAsync
+    Listening --> Idle : STT 에러 (치명적)\nVOICE_EXIT
 
     Transcribing --> Waiting : VoiceAutoSendAsync(text)
 
-    Waiting --> Speaking : AI 응답 스트림 시작\nplayStream()
+    Waiting --> Speaking : TTS_STREAM_START\nplayStream()
 
-    Speaking --> Listening : TTS 완료 (OnTtsEnded)\nVoiceStartListeningAsync
-    Speaking --> Listening : Barge-in 감지 (OnBargeIn)\nTTS 중지 → 재시작
-    Speaking --> Listening : TTS 에러 (OnTtsError)\n재시작
-    Speaking --> Listening : 사용자 수동 TTS 중지
+    Speaking --> Listening : TTS_ENDED\nOnTtsEnded → VoiceStartListeningAsync
+    Speaking --> Listening : BARGE_IN\nOnBargeIn → VoiceStartListeningAsync (즉시)
+    Speaking --> Listening : VOICE_CMD\nOnVoiceCommand → 1초 대기 → VoiceStartListeningAsync
+    Speaking --> Listening : TTS_ERROR\nOnTtsError → 1초 대기 → 재시작
 
-    Listening --> Idle : Auto TTS OFF\nExitVoiceModeAsync
-    Transcribing --> Idle : Auto TTS OFF\nExitVoiceModeAsync
-    Waiting --> Idle : Auto TTS OFF\nExitVoiceModeAsync
-    Speaking --> Idle : Auto TTS OFF\nExitVoiceModeAsync
-    Listening --> Idle : WebSocket 끊김\nExitVoiceModeAsync
-    Speaking --> Idle : WebSocket 끊김\nExitVoiceModeAsync
-```
-
-### 3-2. Non-Voice Mode (일반 채팅 + Auto TTS)
-
-`_autoTtsEnabled = true`, `_isVoiceMode = false` 일 때. 텍스트 입력 후 응답을 TTS로 읽어줌.
-
-```mermaid
-stateDiagram-v2
-    [*] --> 대기
-
-    대기 --> 녹음중 : 마이크 버튼\naudioRecorder.start()
-    녹음중 --> STT변환 : 녹음 중지 (Whisper)
-    녹음중 --> 대기 : STT 완료\nUserMessage에 텍스트 입력
-    STT변환 --> 대기 : 변환 완료\nUserMessage에 텍스트 입력
-
-    대기 --> AI응답대기 : SendMessageAsync
-    AI응답대기 --> TTS재생 : 응답 완료\nautoTts → playStream()
-
-    TTS재생 --> 대기 : TTS 완료 (OnTtsEnded)
-    TTS재생 --> 대기 : Barge-in (OnBargeIn)\nTTS 중지
-    TTS재생 --> 확인배너 : 새 질문 전송 시도
-
-    확인배너 --> AI응답대기 : "끊고 새 질문"\nTTS 중지 → 전송
-    확인배너 --> TTS재생_전송 : "계속 듣기"\nTTS 유지 + 전송
-    확인배너 --> TTS재생 : "취소"\n배너 닫기
-
-    TTS재생_전송 --> 대기 : TTS 완료 후 응답 대기
-```
-
-### 3-3. 일회성 녹음 (Auto TTS OFF)
-
-`_autoTtsEnabled = false` 일 때. 수동 마이크 버튼으로 STT만 사용.
-
-```mermaid
-stateDiagram-v2
-    [*] --> 대기
-
-    대기 --> 녹음중 : 마이크 버튼\naudioRecorder.start()
-
-    녹음중 --> 녹음중 : interim 결과\n_interimText 업데이트
-    녹음중 --> STT변환 : 녹음 중지 (Whisper 엔진)
-    녹음중 --> 대기 : WebSpeech 완료\nUserMessage 설정
-
-    STT변환 --> 대기 : 변환 완료\nUserMessage 설정
-    STT변환 --> 대기 : 변환 에러
-
-    대기 --> 마이크버튼정지 : 마이크 버튼 (녹음중)\naudioRecorder.stop()
-    마이크버튼정지 --> 대기 : 완료
+    Listening --> Idle : AUTO_TTS_OFF\nVOICE_EXIT
+    Transcribing --> Idle : AUTO_TTS_OFF\nVOICE_EXIT
+    Waiting --> Idle : AUTO_TTS_OFF\nVOICE_EXIT
+    Speaking --> Idle : AUTO_TTS_OFF\nVOICE_EXIT
+    Listening --> Idle : WS_DISCONNECT\nVOICE_EXIT
 ```
 
 ---
 
-## 4. JS 레이어: Barge-in 감지 시스템
-
-TTS 재생 중 사용자 음성을 감지하여 TTS를 중단하는 메커니즘.
-
-```mermaid
-stateDiagram-v2
-    [*] --> 비활성
-
-    비활성 --> 마이크준비 : prepareMic()\n(Auto TTS 토글 시)
-    마이크준비 --> 감지중 : startBargeIn()\n(TTS 재생 시작)
-
-    감지중 --> 감지중 : RMS ≤ 0.02\n무음 → 타이머 리셋
-    감지중 --> 음성감지 : RMS > 0.02\n타이머 시작
-
-    음성감지 --> 감지중 : 300ms 미만 → 리셋
-    음성감지 --> TTS중지 : 300ms 이상 지속\nfabTts.stop()
-
-    TTS중지 --> 비활성 : OnBargeIn → Blazor 호출
-
-    감지중 --> 비활성 : stopBargeIn()\n(TTS 종료/중지 시)
-```
-
-### Barge-in 구성 요소
-
-| 구성요소 | 역할 |
-|---|---|
-| `fabTts.prepareMic()` | Auto TTS 토글 시 마이크 사전 획득 (user gesture) |
-| `fabTts.startBargeIn()` | TTS 시작 시 마이크 RMS 분석 시작 |
-| `fabTts._bargeInAnalyser` | Web Audio AnalyserNode — 실시간 음량 측정 |
-| RMS > 0.02 (300ms 지속) | `fabTts.stop()` + `OnBargeIn()` Blazor 호출 |
-| `fabTts.stopBargeIn()` | TTS 종료 시 감지기 정리 |
-| `fabTts.releaseMic()` | Auto TTS OFF 시 마이크 해제 |
-
-### 마이크 스트림 우선순위
-
-```
-persistentStream (Voice Mode) > bargeInMicStream (Auto TTS) > 없음
-```
-
----
-
-## 5. STT 엔진 선택 흐름
+## 11. STT 엔진 선택 흐름
 
 ```mermaid
 flowchart TD
@@ -183,45 +417,33 @@ flowchart TD
 
 ---
 
-## 6. TTS 재생 엔진 폴백 흐름
+## 12. TTS 재생 엔진 폴백 흐름
 
 ```mermaid
 flowchart TD
     A[TTS 재생 요청] --> B{AudioContext<br/>상태?}
-    B -->|suspended| C[ctx.resume()]
+    B -->|suspended| C[ctx.resume]
     B -->|running| D[서버 TTS 요청]
     C --> D
 
     D --> E{HTTP 응답?}
-    E -->|200 + audio| F[Web Audio 재생<br/>+ Barge-in 시작]
-    E -->|200 + JSON<br/>engine=Browser| G[SpeechSynthesis 재생<br/>+ Barge-in 시작]
-    E -->|에러/타임아웃| H[SpeechSynthesis 폴백<br/>+ Barge-in 시작]
+    E -->|200 + audio| F[Web Audio 재생]
+    E -->|200 + JSON<br/>engine=Browser| G[SpeechSynthesis 재생]
+    E -->|에러/타임아웃| H[SpeechSynthesis 폴백]
 
-    F --> I[재생 완료]
-    G --> I
-    H --> I
-    I --> J[OnTtsEnded → Blazor]
+    F --> I[source.start 후 TTS_PLAY]
+    G --> J[speechSynthesis.speak 후 TTS_PLAY]
+    H --> J
+
+    I --> K[source.onended]
+    J --> L[playNextChunk 완료]
+    K --> M[TTS_ENDED + OnTtsEnded 직접 호출]
+    L --> M
 ```
 
 ---
 
-## 7. TTS 중 새 질문 확인 흐름
-
-```mermaid
-flowchart TD
-    A[사용자 메시지 전송] --> B{TTS 재생 중?}
-    B -->|아니오| C[SendMessageAsync 진행]
-    B -->|예| D[확인 배너 표시]
-
-    D --> E{사용자 선택}
-    E -->|끊고 새 질문| F[fabTts.stop<br/>→ SendMessageAsync]
-    E -->|계속 듣기| G[TTS 유지<br/>→ SendMessageAsync]
-    E -->|취소| H[배너 닫기<br/>메시지 복원]
-```
-
----
-
-## 8. 에러 처리 정책
+## 13. 에러 처리 정책
 
 ### STT 에러
 
@@ -243,55 +465,30 @@ flowchart TD
 
 ---
 
-## 9. 음성 명령 처리 ("멈춰")
+## 14. 테스트
 
-TTS 재생 중 WebSpeech API를 백그라운드로 실행하여 음성 명령을 인식한다.
-기존 RMS barge-in과 병행 운영된다.
+`tests/voice-machine.test.js` — Node.js 기반 XState v5 머신 테스트 (78개).
 
-### 지원 명령어
-
-| 명령어 | 동작 |
-|---|---|
-| `멈춰`, `멈춰라` | TTS 즉시 중지 |
-| `그만`, `그만해` | TTS 즉시 중지 |
-| `중지`, `정지` | TTS 즉시 중지 |
-| `스톱`, `스탑`, `stop` | TTS 즉시 중지 |
-
-### 동작 흐름
-
-```mermaid
-flowchart TD
-    A[TTS 재생 시작] --> B[startBargeIn]
-    B --> C[RMS 음량 감지기 시작]
-    B --> D[WebSpeech 명령 리스너 시작]
-
-    C --> E{RMS > 0.02<br/>300ms 지속?}
-    E -->|아니오| C
-    E -->|예| F{명령 감지됨?}
-    F -->|예| G[무시 — 명령 리스너가 처리]
-    F -->|아니오| H[OnBargeIn<br/>TTS 중지 + 녹음 시작]
-
-    D --> I{음성 인식 결과}
-    I -->|명령어 키워드 매칭<br/>15자 이내| J[OnVoiceCommand 'stop'<br/>TTS 즉시 중지]
-    I -->|인식 실패/무음| D
-    I -->|TTS 에코 15자 초과| D
+```bash
+cd src/Client/FabCopilot.WebClient
+npm install   # xstate@5 설치
+node tests/voice-machine.test.js
 ```
 
-### OnBargeIn vs OnVoiceCommand 차이
+### 테스트 범위
 
-| 항목 | `OnBargeIn` (RMS) | `OnVoiceCommand` (WebSpeech) |
+| 카테고리 | 수 | 내용 |
 |---|---|---|
-| 트리거 | 아무 소리 300ms 지속 | 특정 명령어 인식 |
-| TTS 중지 | O | O |
-| Voice Mode → 녹음 재시작 | O (사용자가 말하는 중이므로) | X (명령일 뿐, Listening 대기) |
-| Non-Voice Mode | TTS 중지 | TTS 중지 |
-| 에코 필터 | 없음 | 15자 초과 무시 |
-
-### 구현 세부사항
-
-- **JS**: `fabTts._startCommandListener()` — TTS 시작 시 WebSpeech `continuous` 모드로 인식 시작
-- **JS**: `fabTts._STOP_COMMANDS` — 명령어 키워드 배열
-- **JS**: 에코 방지 — 인식 텍스트가 15자 초과이면 TTS 에코로 간주하고 무시
-- **JS**: `_commandDetected` 플래그 — 명령 감지 시 RMS barge-in이 `OnBargeIn`을 중복 호출하지 않도록 차단
-- **C#**: `OnVoiceCommand("stop")` — `_ttsPlayingIdx`/`_ttsStreamingActive` 리셋, Voice Mode에서 `Listening` 대기
-- **폴백**: WebSpeech API 미지원 브라우저에서는 기존 RMS 전용 barge-in으로 동작
+| 초기 상태 | 2 | 4개 병렬 리전 초기값, context 초기값 |
+| Mode 전이 | 8 | off↔autoTts↔voiceActive, entry/exit 액션 |
+| STT 전이 | 10 | idle↔recording↔transcribing, 모든 이벤트 |
+| TTS 전이 | 12 | idle↔playing↔streaming↔flushing, 모든 이벤트 |
+| Send Confirm | 4 | show/stop/keep/cancel 전이 |
+| 병렬 독립성 | 3 | 리전 간 간섭 없음 검증 |
+| E2E 사이클 | 3 | 전체 음성 루프, barge-in, voice command |
+| 버그 회귀 | 6 | TTS_ENDED 이중 호출, idle 무시, stopTtsInternal 누락 |
+| v5 시그니처 | 10 | `assign({ event })`, `({ context })` 디스트럭처링 |
+| Barge-in 수명주기 | 4 | entry/exit 시점, streaming→flushing 재시작 |
+| 액션 실행 순서 | 2 | exit → transition → entry 순서 보장 |
+| Context 무결성 | 4 | ttsPlayingIdx 리셋, interimText 초기화 |
+| 스트레스 | 3 | 1000회 TTS, 500회 voice mode, 500회 혼합 |

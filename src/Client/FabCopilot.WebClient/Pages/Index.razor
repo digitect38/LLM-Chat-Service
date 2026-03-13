@@ -1118,6 +1118,9 @@
 
             await JS.InvokeVoidAsync("audioRecorder.init", _dotNetRef, EquipmentId);
 
+            // Initialize voice state machine with Blazor ref
+            try { await JS.InvokeVoidAsync("voiceMachine.init", _dotNetRef); } catch { }
+
             // Mobile swipe navigation
             try { await JS.InvokeVoidAsync("panelSwipe.init", _dotNetRef); } catch { }
 
@@ -1136,10 +1139,10 @@
             var savedAutoTts = await JS.InvokeAsync<string>("clientSettings.getAutoTts");
             _autoTtsEnabled = savedAutoTts == "on";
 
-            // Pre-acquire mic & speaker permissions on startup if Auto TTS is enabled
+            // Sync auto TTS state with voice machine & pre-acquire permissions
             if (_autoTtsEnabled)
             {
-                try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
+                try { await JS.InvokeVoidAsync("voiceMachine.setContext", "autoTtsEnabled", true); } catch { }
                 try { await JS.InvokeVoidAsync("fabTts.requestPermissions"); } catch { }
             }
 
@@ -1362,8 +1365,12 @@
     [JSInvokable]
     public void OnTtsEnded()
     {
+        // Idempotent: skip if already handled (e.g., by OnBargeIn or OnVoiceCommand)
+        if (_ttsPlayingIdx < 0 && !_ttsStreamingActive && !_ttsLoading) return;
+
         _ttsPlayingIdx = -1;
         _ttsStreamingActive = false;
+        _ttsLoading = false;
 
         if (_isVoiceMode)
         {
@@ -1437,11 +1444,21 @@
 
             if (_isVoiceMode)
             {
-                // 음성 명령으로 TTS 중지 — Listening 대기 (자동 녹음 시작 안 함)
+                // 음성 명령으로 TTS 중지 — 1초 후 자동 녹음 재시작
+                // (바로 시작하면 "멈춰" 발화 잔여가 STT에 잡힐 수 있음)
                 _voicePhase = VoicePhase.Listening;
+                _ = InvokeAsync(async () =>
+                {
+                    StateHasChanged();
+                    await Task.Delay(1000);
+                    if (_isVoiceMode && _voicePhase == VoicePhase.Listening)
+                        await VoiceStartListeningAsync();
+                });
             }
-
-            _ = InvokeAsync(StateHasChanged);
+            else
+            {
+                _ = InvokeAsync(StateHasChanged);
+            }
         }
     }
 
@@ -1491,6 +1508,7 @@
                 }
 
                 _isVoiceMode = true;
+                try { await JS.InvokeVoidAsync("voiceMachine.send", "VOICE_ENTER"); } catch { }
                 StateHasChanged();
                 await VoiceStartListeningAsync();
                 return;
@@ -1607,18 +1625,11 @@
     {
         _autoTtsEnabled = !_autoTtsEnabled;
         await JS.InvokeVoidAsync("clientSettings.setAutoTts", _autoTtsEnabled ? "on" : "off");
-        if (_autoTtsEnabled)
+        // Voice machine handles unlockAudio, prepareMic/releaseMic via entry/exit actions
+        try { await JS.InvokeVoidAsync("voiceMachine.setContext", "autoTtsEnabled", _autoTtsEnabled); } catch { }
+        if (!_autoTtsEnabled && _isVoiceMode)
         {
-            try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
-            // Pre-acquire mic for barge-in detection (user gesture context)
-            try { await JS.InvokeVoidAsync("fabTts.prepareMic"); } catch { }
-        }
-        else
-        {
-            // Release barge-in mic
-            try { await JS.InvokeVoidAsync("fabTts.releaseMic"); } catch { }
-            if (_isVoiceMode)
-                await ExitVoiceModeAsync();
+            await ExitVoiceModeAsync();
         }
     }
 
@@ -1627,6 +1638,9 @@
         _isVoiceMode = false;
         _voicePhase = VoicePhase.Idle;
         _ttsStreamingActive = false;
+
+        // Notify voice state machine
+        try { await JS.InvokeVoidAsync("voiceMachine.send", "VOICE_EXIT"); } catch { }
 
         // Disable silence auto-stop
         try { await JS.InvokeVoidAsync("audioRecorder.setVoiceMode", false); } catch { }
