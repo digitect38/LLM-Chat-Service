@@ -2819,6 +2819,36 @@ code.language-toml::before      { content: "toml";       background: #555; color
     background: #f5f3ff;
 }
 
+/* ── TTS send confirmation banner ── */
+.tts-confirm-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 8px;
+    margin: 0 16px 6px;
+    font-size: 13px;
+    animation: fadeInRender 0.15s ease;
+}
+.tts-confirm-text { font-weight: 500; color: #92400e; flex: 1; }
+.tts-confirm-btn {
+    padding: 4px 12px;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.tts-confirm-stop { background: #ef4444; color: #fff; }
+.tts-confirm-stop:hover { background: #dc2626; }
+.tts-confirm-keep { background: #3b82f6; color: #fff; }
+.tts-confirm-keep:hover { background: #2563eb; }
+.tts-confirm-cancel { background: #e5e7eb; color: #374151; }
+.tts-confirm-cancel:hover { background: #d1d5db; }
+
 /* ── Inline waveform bars (status bar) ── */
 .waveform-bars-inline {
     display: inline-flex;

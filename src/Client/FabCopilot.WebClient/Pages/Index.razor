@@ -306,6 +306,16 @@
             </div>
         }
 
+        @if (_ttsSendConfirmVisible)
+        {
+            <div class="tts-confirm-banner">
+                <span class="tts-confirm-text">음성 재생 중입니다</span>
+                <button class="tts-confirm-btn tts-confirm-stop" @onclick="() => TtsSendConfirm(true)">끊고 새 질문</button>
+                <button class="tts-confirm-btn tts-confirm-keep" @onclick="() => TtsSendConfirm(false)">계속 듣기</button>
+                <button class="tts-confirm-btn tts-confirm-cancel" @onclick="TtsSendCancel">취소</button>
+            </div>
+        }
+
         <!-- Input Area -->
         <div class="chat-input-wrapper">
             <div class="chat-input-box">
@@ -826,6 +836,15 @@
         if (string.IsNullOrWhiteSpace(UserMessage) || _isSending || _isStopping)
             return;
 
+        // If TTS is playing, ask user whether to stop or continue
+        if (_ttsStreamingActive || _ttsPlayingIdx >= 0)
+        {
+            _ttsPendingMessage = UserMessage.Trim();
+            _ttsSendConfirmVisible = true;
+            StateHasChanged();
+            return;
+        }
+
         var text = UserMessage.Trim();
         UserMessage = string.Empty;
         _isSending = true;
@@ -877,6 +896,46 @@
         }
 
         try { await JS.InvokeVoidAsync("chatInput.resetHeight", "chatInput"); } catch { }
+    }
+
+    private async Task TtsSendConfirm(bool stopTts)
+    {
+        _ttsSendConfirmVisible = false;
+        var pending = _ttsPendingMessage;
+        _ttsPendingMessage = null;
+
+        if (string.IsNullOrWhiteSpace(pending)) return;
+
+        if (stopTts)
+        {
+            // Stop current TTS → new response will get TTS
+            if (_ttsStreamingActive) { _ttsStreamingActive = false; try { await JS.InvokeVoidAsync("fabTts.stop"); } catch { } }
+            else { try { await JS.InvokeVoidAsync("fabTts.stop"); } catch { } }
+            _ttsPlayingIdx = -1;
+        }
+        else
+        {
+            // Keep current TTS playing → disable TTS for this response only
+            _autoTtsEnabled = false;
+        }
+
+        UserMessage = pending;
+        StateHasChanged();
+        await SendMessageAsync();
+
+        // Restore autoTts if it was temporarily disabled
+        if (!stopTts)
+        {
+            var saved = await JS.InvokeAsync<string>("clientSettings.getAutoTts");
+            _autoTtsEnabled = saved == "on";
+        }
+    }
+
+    private void TtsSendCancel()
+    {
+        _ttsSendConfirmVisible = false;
+        _ttsPendingMessage = null;
+        StateHasChanged();
     }
 
     private async Task StopResponseAsync()
@@ -1077,6 +1136,13 @@
             var savedAutoTts = await JS.InvokeAsync<string>("clientSettings.getAutoTts");
             _autoTtsEnabled = savedAutoTts == "on";
 
+            // Pre-acquire mic & speaker permissions on startup if Auto TTS is enabled
+            if (_autoTtsEnabled)
+            {
+                try { await JS.InvokeVoidAsync("fabTts.unlockAudio"); } catch { }
+                try { await JS.InvokeVoidAsync("fabTts.requestPermissions"); } catch { }
+            }
+
             StateHasChanged();
         }
     }
@@ -1213,6 +1279,8 @@
     private bool _ttsStreamingActive;
     private bool _ttsInitPending;
     private bool _autoTtsEnabled;
+    private bool _ttsSendConfirmVisible;
+    private string? _ttsPendingMessage;
 
     private async Task PlayLastTts()
     {
@@ -1359,6 +1427,24 @@
         }
     }
 
+    [JSInvokable]
+    public void OnVoiceCommand(string command)
+    {
+        if (command == "stop")
+        {
+            _ttsPlayingIdx = -1;
+            _ttsStreamingActive = false;
+
+            if (_isVoiceMode)
+            {
+                // 음성 명령으로 TTS 중지 — Listening 대기 (자동 녹음 시작 안 함)
+                _voicePhase = VoicePhase.Listening;
+            }
+
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
     // ─── Voice Recording (STT) ─────────────────────────────────────────
 
     private async Task ToggleRecording()
@@ -1374,11 +1460,18 @@
         {
             _isRecording = false;
             _recordingSeconds = 0;
-            // For Whisper mode, show transcribing spinner while server processes
-            var engine = await JS.InvokeAsync<string>("audioRecorder.getEngine");
-            if (engine == "whisper")
-                _isTranscribing = true;
-            await JS.InvokeVoidAsync("audioRecorder.stop");
+            try
+            {
+                // For Whisper mode, show transcribing spinner while server processes
+                var engine = await JS.InvokeAsync<string>("audioRecorder.getEngine");
+                if (engine == "whisper")
+                    _isTranscribing = true;
+                await JS.InvokeVoidAsync("audioRecorder.stop");
+            }
+            catch
+            {
+                _isTranscribing = false;
+            }
         }
         else
         {
@@ -1465,7 +1558,10 @@
             return Task.CompletedTask;
         }
 
-        _connectionError = $"음성 인식 실패: {error}";
+        // Only show fatal errors (permission, server connection) — suppress transient STT errors
+        var showError = error.Contains("권한") || error.Contains("연결") || error.Contains("connect") || error.Contains("Gateway");
+        if (showError)
+            _connectionError = $"음성 인식 실패: {error}";
         StateHasChanged();
         return Task.CompletedTask;
     }
@@ -2072,7 +2168,7 @@
             if (_isVoiceMode && state != System.Net.WebSockets.WebSocketState.Open)
             {
                 try { await ExitVoiceModeAsync(); } catch { }
-                _connectionError = "서버 연결이 끊겨 음성 모드가 종료되었습니다.";
+                try { await JS.InvokeVoidAsync("console.warn", "[Blazor] Voice mode exited: WebSocket disconnected"); } catch { }
             }
             StateHasChanged();
         });

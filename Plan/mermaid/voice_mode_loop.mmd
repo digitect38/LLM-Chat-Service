@@ -1,0 +1,22 @@
+stateDiagram-v2
+    [*] --> Idle
+
+    Idle --> Listening : 마이크 버튼 (autoTts ON)<br/>setVoiceMode(true)
+
+    Listening --> Listening : interim 결과 수신<br/>interimText 업데이트
+    Listening --> Listening : STT 완료 (텍스트 없음)<br/>자동 재시작
+    Listening --> Listening : STT 에러 (비치명적)<br/>자동 재시작
+    Listening --> Transcribing : STT 완료 (텍스트 있음)
+    Listening --> Idle : STT 에러 (치명적)<br/>ExitVoiceModeAsync
+
+    Transcribing --> Waiting : VoiceAutoSendAsync(text)
+
+    Waiting --> Speaking : AI 응답 스트림 시작<br/>playStream()
+
+    Speaking --> Listening : TTS 완료 (OnTtsEnded)<br/>VoiceStartListeningAsync
+    Speaking --> Listening : Barge-in 감지 (OnBargeIn)<br/>TTS 중지 → 재시작
+    Speaking --> Listening : TTS 에러 (OnTtsError)
+
+    Listening --> Idle : Auto TTS OFF / WebSocket 끊김
+    Speaking --> Idle : Auto TTS OFF / WebSocket 끊김
+    Waiting --> Idle : Auto TTS OFF

@@ -1,5 +1,6 @@
 using FabCopilot.WebClient.Configuration;
 using FabCopilot.WebClient.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +23,15 @@ builder.Services.AddHttpClient("Gateway", client =>
 });
 
 var app = builder.Build();
+
+// Required for Cloudflare Tunnel: recognize HTTPS scheme and client IPs
+var fwdOpts = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+fwdOpts.KnownNetworks.Clear();
+fwdOpts.KnownProxies.Clear();
+app.UseForwardedHeaders(fwdOpts);
 
 if (!app.Environment.IsDevelopment())
 {

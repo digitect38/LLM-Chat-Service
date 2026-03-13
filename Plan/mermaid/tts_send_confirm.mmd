@@ -1,0 +1,9 @@
+flowchart TD
+    A["사용자 메시지 전송"] --> B{"TTS 재생 중?"}
+    B -->|아니오| C["SendMessageAsync 진행"]
+    B -->|예| D["확인 배너 표시"]
+
+    D --> E{"사용자 선택"}
+    E -->|"끊고 새 질문"| F["fabTts.stop\n→ SendMessageAsync"]
+    E -->|"계속 듣기"| G["TTS 유지\n→ SendMessageAsync"]
+    E -->|"취소"| H["배너 닫기\n메시지 복원"]

@@ -1,0 +1,19 @@
+stateDiagram-v2
+    [*] --> 대기
+
+    대기 --> 녹음중 : 마이크 버튼<br/>audioRecorder.start()
+    녹음중 --> STT변환 : 녹음 중지 (Whisper)
+    녹음중 --> 대기 : WebSpeech 완료<br/>UserMessage 설정
+    STT변환 --> 대기 : 변환 완료<br/>UserMessage 설정
+
+    대기 --> AI응답대기 : SendMessageAsync
+
+    AI응답대기 --> TTS재생 : 응답 완료<br/>autoTts → playStream()
+
+    TTS재생 --> 대기 : TTS 완료 (OnTtsEnded)
+    TTS재생 --> 대기 : Barge-in (OnBargeIn)<br/>TTS 중지
+    TTS재생 --> 확인배너 : 새 질문 전송 시도
+
+    확인배너 --> AI응답대기 : 끊고 새 질문<br/>TTS 중지 → 전송
+    확인배너 --> TTS재생 : 계속 듣기<br/>TTS 유지 + 전송
+    확인배너 --> TTS재생 : 취소<br/>배너 닫기

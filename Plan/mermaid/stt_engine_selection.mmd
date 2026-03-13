@@ -1,0 +1,14 @@
+flowchart TD
+    A["앱 시작"] --> B{"설정값 로드\nsttEngine"}
+    B -->|auto| C{"Whisper 서버\n헬스체크"}
+    B -->|whisper| D["Whisper 강제"]
+    B -->|webspeech| E["WebSpeech 강제"]
+
+    C -->|OK| F["Whisper 사용"]
+    C -->|실패| G{"WebSpeech API\n지원?"}
+    G -->|지원| H["WebSpeech 사용"]
+    G -->|미지원| I["STT 비활성화"]
+
+    D --> J{"서버 연결?"}
+    J -->|OK| F
+    J -->|실패| K["에러 표시 + 비활성화"]

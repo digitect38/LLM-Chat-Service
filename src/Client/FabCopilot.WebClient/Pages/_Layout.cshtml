@@ -617,6 +617,22 @@
                 }
             },
 
+            requestPermissions: async function() {
+                try {
+                    // Request mic permission — browser will show permission dialog
+                    var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach(function(t) { t.stop(); }); // Release immediately
+                    console.log('[TTS] Mic permission granted');
+                } catch(e) {
+                    console.warn('[TTS] Mic permission denied:', e.message);
+                }
+                // Ensure AudioContext is created
+                try {
+                    var ctx = this._ensureCtx();
+                    if (ctx.state === 'suspended') await ctx.resume();
+                } catch(e) {}
+            },
+
             play: async function(gatewayBaseIgnored, text, dotNetRef) {
                 this._dotNetRef = dotNetRef;
                 this.stop();
@@ -829,7 +845,7 @@
 
             _STREAM_VER: 'v5',  // bump on each change to verify fresh code
 
-            playStream: function(dotNetRef) {
+            playStream: async function(dotNetRef) {
                 var D = window._ttsDebug;
                 console.log('[StreamTTS ' + this._STREAM_VER + '] playStream called');
                 this.stop();
@@ -844,14 +860,15 @@
                 this._playing = true;
                 this._feedCount = 0;
                 this._streamGen = (this._streamGen || 0) + 1; // generation counter to invalidate stale _processQueue
-                // Ensure AudioContext is ready (non-blocking)
+                // Ensure AudioContext is ready — await resume so audio plays immediately
                 var ctx = this._ensureCtx();
                 if (ctx.state === 'suspended') {
-                    ctx.resume().then(function() {
+                    try {
+                        await ctx.resume();
                         console.log('[StreamTTS] AudioContext resumed');
-                    }).catch(function(e) {
+                    } catch(e) {
                         console.error('[StreamTTS] AudioContext resume failed:', e);
-                    });
+                    }
                 }
                 // Start barge-in detector AFTER initialization
                 this.startBargeIn();
@@ -1285,6 +1302,11 @@
             _bargeInMicStream: null,
             _bargeInReady: false,
 
+            // ─── Voice command recognition during TTS ───
+            _commandRecognition: null,
+            _commandDetected: false,
+            _STOP_COMMANDS: ['멈춰', '그만', '중지', '스톱', 'stop', '멈춰라', '그만해', '정지', '스탑'],
+
             // Pre-acquire mic for barge-in — call from user gesture (e.g. toggle Auto TTS)
             prepareMic: async function() {
                 var D = window._ttsDebug;
@@ -1329,7 +1351,12 @@
                     return;
                 }
                 this._stopBargeInDetector();
+                this._commandDetected = false;
                 var D = window._ttsDebug;
+
+                // Start voice command listener (WebSpeech) for "멈춰" etc.
+                this._startCommandListener();
+
                 try {
                     this._bargeInCtx = new (window.AudioContext || window.webkitAudioContext)();
                     var src = this._bargeInCtx.createMediaStreamSource(mic);
@@ -1346,6 +1373,8 @@
                     this._bargeInSpeechStart = 0;
                     this._bargeInInterval = setInterval(function() {
                         if (!self._playing || !self._bargeInAnalyser) return;
+                        // If voice command already handled it, skip RMS barge-in
+                        if (self._commandDetected) return;
                         self._bargeInAnalyser.getFloatTimeDomainData(buf);
                         var sum = 0;
                         for (var i = 0; i < bufLen; i++) sum += buf[i] * buf[i];
@@ -1371,6 +1400,79 @@
                 }
             },
 
+            // ─── Voice command listener: WebSpeech during TTS ───
+            _startCommandListener: function() {
+                var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    window._ttsDebug.log('[VoiceCmd] WebSpeech not available, RMS-only mode');
+                    return;
+                }
+                this._stopCommandListener();
+                var self = this;
+                var D = window._ttsDebug;
+
+                try {
+                    var rec = new SpeechRecognition();
+                    rec.lang = 'ko-KR';
+                    rec.interimResults = true;
+                    rec.continuous = true;
+                    rec.maxAlternatives = 1;
+
+                    rec.onresult = function(event) {
+                        for (var i = event.resultIndex; i < event.results.length; i++) {
+                            var text = event.results[i][0].transcript.trim();
+                            // Only check short utterances — long ones are likely TTS echo
+                            if (text.length === 0 || text.length > 15) continue;
+
+                            var lower = text.toLowerCase();
+                            var matched = false;
+                            for (var j = 0; j < self._STOP_COMMANDS.length; j++) {
+                                if (lower.indexOf(self._STOP_COMMANDS[j]) >= 0) {
+                                    matched = true;
+                                    break;
+                                }
+                            }
+
+                            if (matched) {
+                                D.log('[VoiceCmd] STOP command: "' + text + '" → stopping TTS');
+                                self._commandDetected = true;
+                                self.stop();
+                                if (self._dotNetRef) {
+                                    self._dotNetRef.invokeMethodAsync('OnVoiceCommand', 'stop');
+                                }
+                                return;
+                            }
+                        }
+                    };
+
+                    rec.onerror = function(event) {
+                        if (event.error !== 'aborted' && event.error !== 'no-speech') {
+                            D.log('[VoiceCmd] error: ' + event.error);
+                        }
+                    };
+
+                    rec.onend = function() {
+                        // Auto-restart while TTS is still playing
+                        if (self._playing && !self._commandDetected) {
+                            try { rec.start(); } catch(e) {}
+                        }
+                    };
+
+                    rec.start();
+                    this._commandRecognition = rec;
+                    D.log('[VoiceCmd] Command listener started (keywords: ' + this._STOP_COMMANDS.join(', ') + ')');
+                } catch(e) {
+                    D.log('[VoiceCmd] Failed to start: ' + e.message);
+                }
+            },
+
+            _stopCommandListener: function() {
+                if (this._commandRecognition) {
+                    try { this._commandRecognition.stop(); } catch(e) {}
+                    this._commandRecognition = null;
+                }
+            },
+
             _stopBargeInDetector: function() {
                 if (this._bargeInInterval) {
                     clearInterval(this._bargeInInterval);
@@ -1382,6 +1484,7 @@
                 }
                 this._bargeInAnalyser = null;
                 this._bargeInSpeechStart = 0;
+                this._stopCommandListener();
             },
 
             stopBargeIn: function() {
@@ -1389,26 +1492,31 @@
             }
         };
 
-        // ─── Auto-unlock AudioContext on first user gesture (iOS requirement) ───
-        // iOS WebKit requires AudioContext.resume() within a direct touch/click handler.
-        // Blazor Server's SignalR round-trip loses the user gesture context,
-        // so we hook the FIRST touch/click at document level to pre-unlock.
+        // ─── Auto-unlock AudioContext on user gesture (iOS requirement) ───
+        // Only activates when Auto TTS is enabled in settings.
+        // Keeps retrying until AudioContext is actually 'running'.
         (function() {
             var unlocked = false;
             function autoUnlock() {
                 if (unlocked) return;
-                unlocked = true;
-                document.removeEventListener('touchstart', autoUnlock, true);
-                document.removeEventListener('touchend', autoUnlock, true);
-                document.removeEventListener('click', autoUnlock, true);
-                if (window.fabTts) {
+                if (!window.fabTts) return;
+                try {
                     window.fabTts.unlockAudio();
-                    console.log('[TTS] Auto-unlocked AudioContext on first user gesture');
-                }
+                    var ctx = window.fabTts._audioCtx;
+                    if (ctx && ctx.state === 'running') {
+                        unlocked = true;
+                        document.removeEventListener('touchstart', autoUnlock, true);
+                        document.removeEventListener('touchend', autoUnlock, true);
+                        document.removeEventListener('click', autoUnlock, true);
+                        document.removeEventListener('keydown', autoUnlock, true);
+                        console.log('[TTS] AudioContext unlocked (state=running)');
+                    }
+                } catch(e) { console.warn('[TTS] autoUnlock error:', e); }
             }
             document.addEventListener('touchstart', autoUnlock, true);
             document.addEventListener('touchend', autoUnlock, true);
             document.addEventListener('click', autoUnlock, true);
+            document.addEventListener('keydown', autoUnlock, true);
         })();
 
         // ─── Audio Recorder (STT) — Dual Engine ─────────────────────────
@@ -1541,7 +1649,12 @@
 
                     this._recognition.onerror = function(event) {
                         self._stopTimer();
-                        var msg = '음성 인식 오류';
+                        // 'aborted' fires when user manually stops — not a real error
+                        if (event.error === 'aborted') {
+                            if (self._dotNetRef) self._dotNetRef.invokeMethodAsync('OnTranscriptionComplete', '');
+                            return;
+                        }
+                        var msg = '음성 인식 오류: ' + event.error;
                         if (event.error === 'not-allowed') msg = '마이크 권한이 거부되었습니다';
                         else if (event.error === 'no-speech') msg = '음성이 감지되지 않았습니다';
                         else if (event.error === 'network') msg = '네트워크 오류';
@@ -1714,11 +1827,12 @@
 
             stop: function() {
                 if (this._engine === 'webspeech' && this._recognition) {
-                    this._recognition.stop();
+                    try { this._recognition.stop(); } catch(e) { console.warn('[STT] recognition.stop() error:', e); }
                     this._recognition = null;
                 } else if (this._mediaRecorder && this._mediaRecorder.state === 'recording') {
-                    this._mediaRecorder.stop();
+                    try { this._mediaRecorder.stop(); } catch(e) { console.warn('[STT] mediaRecorder.stop() error:', e); }
                 }
+                this._stopTimer();
             },
 
             _getDomainPrompt: function() {

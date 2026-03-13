@@ -1,0 +1,10 @@
+stateDiagram-v2
+    [*] --> 대기
+
+    대기 --> 녹음중 : 마이크 버튼<br/>audioRecorder.start()
+
+    녹음중 --> 녹음중 : interim 결과<br/>interimText 업데이트
+    녹음중 --> STT변환 : 녹음 중지 (Whisper 엔진)
+    녹음중 --> 대기 : WebSpeech 완료<br/>UserMessage 설정
+
+    STT변환 --> 대기 : 변환 완료 / 에러

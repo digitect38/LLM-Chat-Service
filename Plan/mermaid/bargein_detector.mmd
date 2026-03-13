@@ -1,0 +1,15 @@
+stateDiagram-v2
+    [*] --> 비활성
+
+    비활성 --> 마이크준비 : prepareMic()<br/>(Auto TTS 토글 시)
+    마이크준비 --> 감지중 : startBargeIn()<br/>(TTS 재생 시작)
+
+    감지중 --> 감지중 : RMS ≤ 0.02<br/>무음 → 타이머 리셋
+    감지중 --> 음성감지 : RMS > 0.02<br/>타이머 시작
+
+    음성감지 --> 감지중 : 300ms 미만 → 리셋
+    음성감지 --> TTS중지 : 300ms 이상 지속<br/>fabTts.stop()
+
+    TTS중지 --> 비활성 : OnBargeIn → Blazor 호출
+
+    감지중 --> 비활성 : stopBargeIn()<br/>(TTS 종료/중지 시)

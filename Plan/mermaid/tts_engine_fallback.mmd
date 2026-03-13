@@ -1,0 +1,15 @@
+flowchart TD
+    A["TTS 재생 요청"] --> B{"AudioContext\n상태?"}
+    B -->|suspended| C["ctx.resume()"]
+    B -->|running| D["서버 TTS 요청"]
+    C --> D
+
+    D --> E{"HTTP 응답?"}
+    E -->|"200 + audio"| F["Web Audio 재생\n+ Barge-in 시작"]
+    E -->|"200 + JSON\nengine=Browser"| G["SpeechSynthesis 재생\n+ Barge-in 시작"]
+    E -->|"에러/타임아웃"| H["SpeechSynthesis 폴백\n+ Barge-in 시작"]
+
+    F --> I["재생 완료"]
+    G --> I
+    H --> I
+    I --> J["OnTtsEnded → Blazor"]
