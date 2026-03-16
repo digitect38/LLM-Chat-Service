@@ -38,7 +38,18 @@ RUN dotnet publish src/Services/FabCopilot.McpLogServer -c Release -o /publish -
 FROM build AS publish-rcaagent
 RUN dotnet publish src/Services/FabCopilot.RcaAgent -c Release -o /publish --no-restore
 
+# --- Voice Panel (React MFE) build stage ---
+FROM node:20-alpine AS voice-panel-build
+WORKDIR /app/voice-panel
+COPY src/Client/voice-panel/package*.json ./
+RUN npm ci --ignore-scripts
+COPY src/Client/voice-panel/ ./
+# Vite outDir resolves to /app/FabCopilot.WebClient/wwwroot/voice-panel/
+RUN npm run build
+
 FROM build AS publish-webclient
+# Copy React Voice Panel build output to wwwroot before .NET publish
+COPY --from=voice-panel-build /app/FabCopilot.WebClient/wwwroot/voice-panel/ src/Client/FabCopilot.WebClient/wwwroot/voice-panel/
 RUN dotnet publish src/Client/FabCopilot.WebClient -c Release -o /publish --no-restore
 
 FROM build AS publish-dashboard

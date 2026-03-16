@@ -1,7 +1,9 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using FabCopilot.Contracts.Enums;
 using FabCopilot.Contracts.Messages;
 using FabCopilot.Messaging.Extensions;
+using FabCopilot.Messaging.Interfaces;
 using FabCopilot.Redis.Extensions;
 using FabCopilot.Redis.Interfaces;
 using FabCopilot.Observability.Extensions;
@@ -275,6 +277,160 @@ app.MapPost("/api/tts/synthesize", async (HttpRequest req, TtsEngineResolver res
         req.HttpContext.Response.Headers["X-TTS-Fallback"] = synth.FallbackFrom;
     req.HttpContext.Response.Headers["X-TTS-Chain"] = string.Join(" > ", synth.Chain);
     return Results.File(synth.Result.AudioData, synth.Result.ContentType, "speech.wav");
+});
+
+// ═══ SSE Chat Stream endpoint — React Voice MFE direct communication ═══
+// Unlike the WebSocket endpoint, this is a single-request/response pattern:
+// POST request → NATS publish → NATS subscribe → SSE stream → complete.
+app.MapPost("/api/chat/stream", async (
+    HttpContext ctx,
+    IMessageBus messageBus,
+    IConversationStore conversationStore,
+    IAuditTrail auditTrail,
+    ILogger<Program> logger) =>
+{
+    var jsonOpts = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
+    ChatRequest? chatRequest;
+    try
+    {
+        chatRequest = await ctx.Request.ReadFromJsonAsync<ChatRequest>(jsonOpts, ctx.RequestAborted);
+    }
+    catch (JsonException ex)
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsJsonAsync(new { error = $"Invalid JSON: {ex.Message}" });
+        return;
+    }
+
+    if (chatRequest is null || string.IsNullOrWhiteSpace(chatRequest.UserMessage))
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsJsonAsync(new { error = "UserMessage is required" });
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(chatRequest.EquipmentId))
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsJsonAsync(new { error = "EquipmentId is required" });
+        return;
+    }
+
+    // Generate conversation ID if not provided
+    if (string.IsNullOrWhiteSpace(chatRequest.ConversationId))
+        chatRequest.ConversationId = Guid.NewGuid().ToString();
+
+    var conversationId = chatRequest.ConversationId;
+    var equipmentId = chatRequest.EquipmentId;
+
+    logger.LogInformation(
+        "SSE chat request from equipment {EquipmentId}, conversation {ConversationId}: {MessagePreview}",
+        equipmentId, conversationId,
+        chatRequest.UserMessage.Length > 80 ? chatRequest.UserMessage[..80] + "..." : chatRequest.UserMessage);
+
+    // Ensure conversation exists in Redis
+    var existing = await conversationStore.GetAsync(conversationId, ctx.RequestAborted);
+    if (existing is null)
+    {
+        var newConversation = new FabCopilot.Contracts.Models.Conversation
+        {
+            ConversationId = conversationId,
+            EquipmentId = equipmentId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            LastUpdatedAt = DateTimeOffset.UtcNow
+        };
+        await conversationStore.SaveAsync(newConversation, ctx.RequestAborted);
+    }
+
+    // Persist user message
+    var userMsg = new FabCopilot.Contracts.Models.ChatMessage
+    {
+        Role = FabCopilot.Contracts.Enums.MessageRole.User,
+        Text = chatRequest.UserMessage,
+        Timestamp = DateTimeOffset.UtcNow
+    };
+    await conversationStore.AppendMessageAsync(conversationId, userMsg, ctx.RequestAborted);
+
+    // Set SSE response headers
+    ctx.Response.ContentType = "text/event-stream";
+    ctx.Response.Headers["Cache-Control"] = "no-cache";
+    ctx.Response.Headers["X-Accel-Buffering"] = "no"; // nginx: disable buffering
+
+    // Subscribe to NATS chat.stream.{conversationId} BEFORE publishing
+    var streamSubject = FabCopilot.Contracts.Constants.NatsSubjects.ChatStream(conversationId);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+    cts.CancelAfter(TimeSpan.FromMinutes(3)); // 3-minute SSE timeout
+
+    // Publish request to NATS
+    var correlationId = Guid.NewGuid().ToString("N");
+    var envelope = MessageEnvelope<ChatRequest>.Create(
+        type: "chat.request",
+        payload: chatRequest,
+        equipmentId: equipmentId,
+        correlationId: correlationId);
+
+    await messageBus.PublishAsync(FabCopilot.Contracts.Constants.NatsSubjects.ChatRequest, envelope, ctx.RequestAborted);
+    _ = auditTrail.LogQueryAsync(equipmentId, conversationId, chatRequest.UserMessage, ctx.RequestAborted);
+
+    logger.LogInformation("SSE: Published chat request, subscribing to {Subject}", streamSubject);
+
+    // Stream SSE events from NATS subscription
+    try
+    {
+        await foreach (var chunkEnvelope in messageBus.SubscribeAsync<ChatStreamChunk>(
+            streamSubject, queueGroup: null, ct: cts.Token))
+        {
+            if (chunkEnvelope.Payload is null) continue;
+
+            var chunk = chunkEnvelope.Payload;
+            var json = JsonSerializer.Serialize(chunk, jsonOpts);
+
+            await ctx.Response.WriteAsync($"data: {json}\n\n", cts.Token);
+            await ctx.Response.Body.FlushAsync(cts.Token);
+
+            // Persist assistant response when stream completes
+            if (chunk.IsComplete)
+            {
+                if (!string.IsNullOrEmpty(chunk.Token))
+                {
+                    var assistantMsg = new FabCopilot.Contracts.Models.ChatMessage
+                    {
+                        Role = FabCopilot.Contracts.Enums.MessageRole.Assistant,
+                        Text = chunk.Token,
+                        Timestamp = DateTimeOffset.UtcNow
+                    };
+                    _ = conversationStore.AppendMessageAsync(conversationId, assistantMsg, CancellationToken.None);
+                }
+
+                logger.LogInformation("SSE: Stream completed for conversation {ConversationId}", conversationId);
+                break;
+            }
+
+            if (!string.IsNullOrEmpty(chunk.Error))
+            {
+                logger.LogWarning("SSE: Error chunk for conversation {ConversationId}: {Error}",
+                    conversationId, chunk.Error);
+                break;
+            }
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        logger.LogInformation("SSE: Client disconnected or timeout for conversation {ConversationId}", conversationId);
+    }
+
+    // Send final SSE event
+    try
+    {
+        await ctx.Response.WriteAsync("event: done\ndata: {}\n\n", CancellationToken.None);
+        await ctx.Response.Body.FlushAsync(CancellationToken.None);
+    }
+    catch { /* client may have disconnected */ }
 });
 
 // Feedback endpoint — logs user feedback to the audit trail

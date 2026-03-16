@@ -702,6 +702,19 @@ html, body {
     white-space: pre-wrap;
 }
 
+/* ===== SYNC Mode (sentence-by-sentence TTS reveal) ===== */
+.sync-text {
+    white-space: pre-wrap;
+}
+.sync-revealed {
+    opacity: 1;
+    transition: opacity 0.3s ease-in;
+}
+.sync-unrevealed {
+    opacity: 0.15;
+    transition: opacity 0.3s ease-in;
+}
+
 /* ===== Streaming Cursor ===== */
 .streaming-cursor {
     display: inline-block;
@@ -1131,6 +1144,15 @@ code.language-toml::before      { content: "toml";       background: #555; color
 
 .stop-btn:hover {
     background: #333;
+}
+
+.tts-stop-btn {
+    background: #dc2626;
+    color: #fff;
+}
+
+.tts-stop-btn:hover {
+    background: #b91c1c;
 }
 
 .input-disclaimer {
